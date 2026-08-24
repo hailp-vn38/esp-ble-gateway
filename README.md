@@ -42,21 +42,28 @@ Nếu dùng chip khác, chạy lại `idf.py set-target <chip>` và kiểm tra g
 
 ## Wi-Fi lần đầu
 
-Khi NVS chưa có Wi-Fi credentials, gateway tạo access point:
+Gateway thử kết nối bằng Wi-Fi credentials trong NVS khi khởi động. Nếu chưa có
+credentials hoặc không kết nối được trong thời gian cho phép, gateway tự chuyển
+sang provisioning mode và tạo access point:
 
 - SSID: `ESP32-Gateway-Setup`
 - Password: `gateway123`
-- Web UI: `http://192.168.4.1/`
+- Web cấu hình: `http://192.168.4.1/`
 
-Lưu Wi-Fi bằng request:
+Web cấu hình cho phép quét/chọn SSID, nhập mật khẩu và kiểm tra kết nối. Gateway
+chỉ lưu credentials sau khi nhận được IP từ mạng Wi-Fi đã chọn; sau đó tự khởi
+động lại và chạy ở STA mode. Nếu kiểm tra thất bại, SoftAP vẫn hoạt động để người
+dùng thử lại.
+
+Có thể thao tác bằng API:
 
 ```sh
+curl http://192.168.4.1/api/wifi/scan
+
 curl -X POST http://192.168.4.1/api/wifi \
   -H 'Content-Type: application/json' \
   -d '{"ssid":"TEN_WIFI","password":"MAT_KHAU"}'
 ```
-
-Sau khi lưu thành công, khởi động lại ESP32 để gateway vào STA mode.
 
 ## HTTP API
 
@@ -66,7 +73,8 @@ Sau khi lưu thành công, khởi động lại ESP32 để gateway vào STA mod
 - `DELETE /api/devices?device_id=...`: xóa thiết bị.
 - `GET /api/logs`: log gần đây.
 - `GET /api/status`: trạng thái gateway.
-- `POST /api/wifi`: lưu Wi-Fi credentials.
+- `GET /api/wifi/scan`: quét Wi-Fi khi đang ở provisioning mode.
+- `POST /api/wifi`: test Wi-Fi, lưu credentials nếu thành công và tự restart.
 - `POST /mcp`: JSON-RPC tối giản.
 
 Ví dụ gọi MCP:

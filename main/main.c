@@ -36,7 +36,10 @@ void app_main(void)
     log_buffer_init();
 
     // ---- 2. Module 2: wifi_provisioning (SoftAP hoac STA tuy NVS) ----
-    wifi_prov_init();
+    if (wifi_prov_init() != 0) {
+        ESP_LOGE(TAG, "Wi-Fi initialization failed; gateway services were not started");
+        return;
+    }
 
     // ---- 3. Module 3: ble_central (NimBLE Central role) ----
     ble_central_init(on_device_notify);
