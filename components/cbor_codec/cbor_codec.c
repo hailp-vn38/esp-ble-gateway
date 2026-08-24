@@ -1,151 +1,351 @@
-#include <string.h>
+#include <limits.h>
+#include <stdbool.h>
 #include <stdio.h>
-#include <stdlib.h>
+#include <string.h>
+
+#include "cJSON.h"
+#include "esp_log.h"
+#include "qcbor/qcbor_decode.h"
+#include "qcbor/qcbor_encode.h"
+#include "qcbor/qcbor_spiffy_decode.h"
+
 #include "cbor_codec.h"
 
-// PLACEHOLDER: binary layout don gian de build/test end-to-end ngay.
-// San xuat thuc te: thay bang QCBOR/libcbor, dong bo layout voi thiet bi con.
+static const char *TAG = "cbor_codec";
 
-int cbor_codec_decode(const uint8_t *buf, size_t len, gw_message_t *out_msg)
+enum {
+    CBOR_KEY_PROTOCOL_VERSION = 0,
+    CBOR_KEY_TYPE = 1,
+    CBOR_KEY_DEVICE_ID = 2,
+    CBOR_KEY_COMMAND = 3,
+    CBOR_KEY_INT_VALUE = 4,
+    CBOR_KEY_BOOL_VALUE = 5,
+    CBOR_KEY_NAME = 6,
+    CBOR_KEY_DEVICE_TYPE = 7,
+    CBOR_KEY_BLE_ADDR = 8,
+    CBOR_KEY_BLE_ADDR_TYPE = 9,
+};
+
+static bool valid_string(const char *value, size_t capacity, bool allow_empty)
 {
-    if (buf == NULL || out_msg == NULL || len < 3) return -1;
-    memset(out_msg, 0, sizeof(gw_message_t));
+    size_t length = strnlen(value, capacity);
+    return length < capacity && (allow_empty || length > 0);
+}
 
-    size_t offset = 0;
-
-    uint8_t type_len = buf[offset++];
-    if (type_len >= GW_MSG_TYPE_LEN || offset + type_len > len) return -1;
-    memcpy(out_msg->type, &buf[offset], type_len);
-    out_msg->type[type_len] = '\0';
-    offset += type_len;
-
-    if (offset >= len) return -1;
-    uint8_t id_len = buf[offset++];
-    if (id_len >= GW_MSG_DEVICE_ID_LEN || offset + id_len > len) return -1;
-    if (id_len > 0) {
-        memcpy(out_msg->device_id, &buf[offset], id_len);
-        out_msg->device_id[id_len] = '\0';
-        out_msg->has_device_id = 1;
-    }
-    offset += id_len;
-
-    if (offset >= len) return -1;
-    uint8_t cmd_len = buf[offset++];
-    if (cmd_len >= GW_MSG_COMMAND_LEN || offset + cmd_len + 5 > len) return -1;
-    memcpy(out_msg->command, &buf[offset], cmd_len);
-    out_msg->command[cmd_len] = '\0';
-    offset += cmd_len;
-
-    int32_t int_value;
-    memcpy(&int_value, &buf[offset], sizeof(int32_t));
-    out_msg->int_value = (int)int_value;
-    offset += sizeof(int32_t);
-
-    out_msg->bool_value = buf[offset];
+static int copy_text(UsefulBufC value, char *destination, size_t capacity,
+                     bool allow_empty)
+{
+    if (value.len >= capacity || (!allow_empty && value.len == 0)) return -1;
+    if (value.len > 0) memcpy(destination, value.ptr, value.len);
+    destination[value.len] = '\0';
     return 0;
+}
+
+static int hex_value(char c)
+{
+    if (c >= '0' && c <= '9') return c - '0';
+    if (c >= 'a' && c <= 'f') return c - 'a' + 10;
+    if (c >= 'A' && c <= 'F') return c - 'A' + 10;
+    return -1;
+}
+
+static int parse_ble_addr(const char *text, uint8_t address[6])
+{
+    if (text == NULL || address == NULL) return -1;
+    uint8_t display_order[6];
+    for (int i = 0; i < 6; i++) {
+        int high = hex_value(*text++);
+        int low = high >= 0 ? hex_value(*text++) : -1;
+        if (high < 0 || low < 0) return -1;
+        display_order[i] = (uint8_t)((high << 4) | low);
+        if (i < 5) {
+            if (*text != ':' && *text != '-') return -1;
+            text++;
+        }
+    }
+    if (*text != '\0') return -1;
+    for (int i = 0; i < 6; i++) address[i] = display_order[5 - i];
+    return 0;
+}
+
+static void format_ble_addr(const uint8_t address[6], char output[18])
+{
+    snprintf(output, 18, "%02X:%02X:%02X:%02X:%02X:%02X",
+             address[5], address[4], address[3], address[2], address[1], address[0]);
 }
 
 int cbor_codec_encode(const gw_message_t *msg, uint8_t *out_buf, size_t out_buf_cap)
 {
-    if (msg == NULL || out_buf == NULL) return -1;
-
-    size_t type_len = strnlen(msg->type, GW_MSG_TYPE_LEN - 1);
-    size_t id_len = msg->has_device_id ? strnlen(msg->device_id, GW_MSG_DEVICE_ID_LEN - 1) : 0;
-    size_t cmd_len = strnlen(msg->command, GW_MSG_COMMAND_LEN - 1);
-    size_t total = 1 + type_len + 1 + id_len + 1 + cmd_len + sizeof(int32_t) + 1;
-
-    if (total > out_buf_cap) return -1;
-
-    size_t offset = 0;
-    out_buf[offset++] = (uint8_t)type_len;
-    memcpy(&out_buf[offset], msg->type, type_len);
-    offset += type_len;
-
-    out_buf[offset++] = (uint8_t)id_len;
-    if (id_len > 0) {
-        memcpy(&out_buf[offset], msg->device_id, id_len);
-        offset += id_len;
+    if (msg == NULL || out_buf == NULL || out_buf_cap == 0 ||
+        msg->protocol_version > GW_PROTOCOL_VERSION ||
+        !valid_string(msg->type, sizeof(msg->type), false) ||
+        !valid_string(msg->command, sizeof(msg->command), false) ||
+        (msg->has_device_id && !valid_string(msg->device_id, sizeof(msg->device_id), false)) ||
+        !valid_string(msg->name, sizeof(msg->name), true) ||
+        !valid_string(msg->device_type, sizeof(msg->device_type), true)) {
+        return -1;
     }
 
-    out_buf[offset++] = (uint8_t)cmd_len;
-    memcpy(&out_buf[offset], msg->command, cmd_len);
-    offset += cmd_len;
+    QCBOREncodeContext context;
+    QCBOREncode_Init(&context, (UsefulBuf){out_buf, out_buf_cap});
+    QCBOREncode_OpenMap(&context);
+    QCBOREncode_AddUInt64ToMapN(&context, CBOR_KEY_PROTOCOL_VERSION,
+                                msg->protocol_version ? msg->protocol_version : GW_PROTOCOL_VERSION);
+    QCBOREncode_AddSZStringToMapN(&context, CBOR_KEY_TYPE, msg->type);
+    if (msg->has_device_id) {
+        QCBOREncode_AddSZStringToMapN(&context, CBOR_KEY_DEVICE_ID, msg->device_id);
+    }
+    QCBOREncode_AddSZStringToMapN(&context, CBOR_KEY_COMMAND, msg->command);
+    QCBOREncode_AddInt64ToMapN(&context, CBOR_KEY_INT_VALUE, msg->int_value);
+    QCBOREncode_AddBoolToMapN(&context, CBOR_KEY_BOOL_VALUE, msg->bool_value != 0);
+    if (msg->name[0] != '\0') {
+        QCBOREncode_AddSZStringToMapN(&context, CBOR_KEY_NAME, msg->name);
+    }
+    if (msg->device_type[0] != '\0') {
+        QCBOREncode_AddSZStringToMapN(&context, CBOR_KEY_DEVICE_TYPE, msg->device_type);
+    }
+    if (msg->has_ble_addr) {
+        QCBOREncode_AddBytesToMapN(&context, CBOR_KEY_BLE_ADDR,
+                                   (UsefulBufC){msg->ble_addr, sizeof(msg->ble_addr)});
+        QCBOREncode_AddUInt64ToMapN(&context, CBOR_KEY_BLE_ADDR_TYPE,
+                                    msg->ble_addr_type);
+    }
+    QCBOREncode_CloseMap(&context);
 
-    int32_t int_value = (int32_t)msg->int_value;
-    memcpy(&out_buf[offset], &int_value, sizeof(int32_t));
-    offset += sizeof(int32_t);
+    UsefulBufC encoded;
+    QCBORError error = QCBOREncode_Finish(&context, &encoded);
+    if (error != QCBOR_SUCCESS) {
+        ESP_LOGE(TAG, "CBOR encode failed: %d", error);
+        return -1;
+    }
+    return (int)encoded.len;
+}
 
-    out_buf[offset++] = (uint8_t)(msg->bool_value ? 1 : 0);
-    return (int)offset;
+static QCBORError get_optional_text(QCBORDecodeContext *context, int64_t key,
+                                    UsefulBufC *value)
+{
+    *value = NULLUsefulBufC;
+    QCBORDecode_GetTextStringInMapN(context, key, value);
+    return QCBORDecode_GetAndResetError(context);
+}
+
+int cbor_codec_decode(const uint8_t *buf, size_t len, gw_message_t *out_msg)
+{
+    if (buf == NULL || out_msg == NULL || len == 0 || len > GW_MSG_MAX_LEN) return -1;
+    memset(out_msg, 0, sizeof(*out_msg));
+    out_msg->protocol_version = GW_PROTOCOL_VERSION;
+
+    QCBORDecodeContext context;
+    QCBORDecode_Init(&context, (UsefulBufC){buf, len}, QCBOR_DECODE_MODE_NORMAL);
+    QCBORDecode_EnterMap(&context, NULL);
+    if (QCBORDecode_GetAndResetError(&context) != QCBOR_SUCCESS) return -1;
+
+    uint64_t protocol_version = GW_PROTOCOL_VERSION;
+    QCBORDecode_GetUInt64InMapN(&context, CBOR_KEY_PROTOCOL_VERSION, &protocol_version);
+    QCBORError error = QCBORDecode_GetAndResetError(&context);
+    if (error != QCBOR_SUCCESS && error != QCBOR_ERR_LABEL_NOT_FOUND) return -1;
+    if (protocol_version == 0 || protocol_version > GW_PROTOCOL_VERSION) {
+        ESP_LOGE(TAG, "Unsupported protocol version: %llu",
+                 (unsigned long long)protocol_version);
+        return -1;
+    }
+
+    UsefulBufC type_value = NULLUsefulBufC;
+    QCBORDecode_GetTextStringInMapN(&context, CBOR_KEY_TYPE, &type_value);
+    if (QCBORDecode_GetAndResetError(&context) != QCBOR_SUCCESS ||
+        copy_text(type_value, out_msg->type, sizeof(out_msg->type), false) != 0) {
+        return -1;
+    }
+
+    UsefulBufC command_value = NULLUsefulBufC;
+    QCBORDecode_GetTextStringInMapN(&context, CBOR_KEY_COMMAND, &command_value);
+    if (QCBORDecode_GetAndResetError(&context) != QCBOR_SUCCESS ||
+        copy_text(command_value, out_msg->command, sizeof(out_msg->command), false) != 0) {
+        return -1;
+    }
+
+    int64_t int_value = 0;
+    QCBORDecode_GetInt64InMapN(&context, CBOR_KEY_INT_VALUE, &int_value);
+    if (QCBORDecode_GetAndResetError(&context) != QCBOR_SUCCESS ||
+        int_value < INT_MIN || int_value > INT_MAX) {
+        return -1;
+    }
+
+    bool bool_value = false;
+    QCBORDecode_GetBoolInMapN(&context, CBOR_KEY_BOOL_VALUE, &bool_value);
+    if (QCBORDecode_GetAndResetError(&context) != QCBOR_SUCCESS) return -1;
+
+    UsefulBufC optional_value;
+    error = get_optional_text(&context, CBOR_KEY_DEVICE_ID, &optional_value);
+    if (error == QCBOR_SUCCESS) {
+        if (copy_text(optional_value, out_msg->device_id, sizeof(out_msg->device_id), false) != 0) {
+            return -1;
+        }
+        out_msg->has_device_id = 1;
+    } else if (error != QCBOR_ERR_LABEL_NOT_FOUND) {
+        return -1;
+    }
+
+    error = get_optional_text(&context, CBOR_KEY_NAME, &optional_value);
+    if (error == QCBOR_SUCCESS) {
+        if (copy_text(optional_value, out_msg->name, sizeof(out_msg->name), true) != 0) return -1;
+    } else if (error != QCBOR_ERR_LABEL_NOT_FOUND) {
+        return -1;
+    }
+
+    error = get_optional_text(&context, CBOR_KEY_DEVICE_TYPE, &optional_value);
+    if (error == QCBOR_SUCCESS) {
+        if (copy_text(optional_value, out_msg->device_type,
+                      sizeof(out_msg->device_type), true) != 0) return -1;
+    } else if (error != QCBOR_ERR_LABEL_NOT_FOUND) {
+        return -1;
+    }
+
+    UsefulBufC address_value = NULLUsefulBufC;
+    QCBORDecode_GetByteStringInMapN(&context, CBOR_KEY_BLE_ADDR, &address_value);
+    error = QCBORDecode_GetAndResetError(&context);
+    if (error == QCBOR_SUCCESS) {
+        if (address_value.len != sizeof(out_msg->ble_addr)) return -1;
+        memcpy(out_msg->ble_addr, address_value.ptr, sizeof(out_msg->ble_addr));
+        uint64_t address_type = 0;
+        QCBORDecode_GetUInt64InMapN(&context, CBOR_KEY_BLE_ADDR_TYPE, &address_type);
+        error = QCBORDecode_GetAndResetError(&context);
+        if (error != QCBOR_SUCCESS || address_type > UINT8_MAX) return -1;
+        out_msg->ble_addr_type = (uint8_t)address_type;
+        out_msg->has_ble_addr = 1;
+    } else if (error != QCBOR_ERR_LABEL_NOT_FOUND) {
+        return -1;
+    }
+
+    QCBORDecode_ExitMap(&context);
+    if (QCBORDecode_Finish(&context) != QCBOR_SUCCESS) return -1;
+
+    out_msg->protocol_version = (uint8_t)protocol_version;
+    out_msg->int_value = (int)int_value;
+    out_msg->bool_value = bool_value;
+    return 0;
 }
 
 int cbor_codec_msg_to_json(const gw_message_t *msg, char *out_json, size_t out_json_cap)
 {
-    if (msg == NULL || out_json == NULL) return -1;
+    if (msg == NULL || out_json == NULL || out_json_cap == 0) return -1;
 
-    int written = snprintf(out_json, out_json_cap,
-        "{\"type\":\"%s\",\"device_id\":\"%s\",\"command\":\"%s\","
-        "\"int_value\":%d,\"bool_value\":%s}",
-        msg->type, msg->has_device_id ? msg->device_id : "", msg->command,
-        msg->int_value, msg->bool_value ? "true" : "false");
+    cJSON *root = cJSON_CreateObject();
+    if (root == NULL) return -1;
+    cJSON_AddNumberToObject(root, "protocol_version",
+                            msg->protocol_version ? msg->protocol_version : GW_PROTOCOL_VERSION);
+    cJSON_AddStringToObject(root, "type", msg->type);
+    if (msg->has_device_id) cJSON_AddStringToObject(root, "device_id", msg->device_id);
+    cJSON_AddStringToObject(root, "command", msg->command);
+    cJSON_AddNumberToObject(root, "int_value", msg->int_value);
+    cJSON_AddBoolToObject(root, "bool_value", msg->bool_value != 0);
+    if (msg->name[0] != '\0') cJSON_AddStringToObject(root, "name", msg->name);
+    if (msg->device_type[0] != '\0') {
+        cJSON_AddStringToObject(root, "device_type", msg->device_type);
+    }
+    if (msg->has_ble_addr) {
+        char address[18];
+        format_ble_addr(msg->ble_addr, address);
+        cJSON_AddStringToObject(root, "ble_addr", address);
+        cJSON_AddNumberToObject(root, "ble_addr_type", msg->ble_addr_type);
+    }
 
-    if (written < 0 || (size_t)written >= out_json_cap) return -1;
-    return written;
+    bool printed = cJSON_PrintPreallocated(root, out_json, (int)out_json_cap, false);
+    cJSON_Delete(root);
+    return printed ? (int)strlen(out_json) : -1;
 }
 
-static int extract_json_string(const char *json, const char *key, char *out, size_t out_cap)
+static int copy_json_string(const cJSON *root, const char *key, char *destination,
+                            size_t capacity, bool required)
 {
-    char pattern[48];
-    snprintf(pattern, sizeof(pattern), "\"%s\":\"", key);
-    const char *pos = strstr(json, pattern);
-    if (pos == NULL) return -1;
-    pos += strlen(pattern);
-    const char *end = strchr(pos, '"');
-    if (end == NULL) return -1;
-    size_t val_len = end - pos;
-    if (val_len >= out_cap) val_len = out_cap - 1;
-    memcpy(out, pos, val_len);
-    out[val_len] = '\0';
-    return 0;
-}
-
-static int extract_json_int(const char *json, const char *key, int *out)
-{
-    char pattern[48];
-    snprintf(pattern, sizeof(pattern), "\"%s\":", key);
-    const char *pos = strstr(json, pattern);
-    if (pos == NULL) return -1;
-    *out = atoi(pos + strlen(pattern));
-    return 0;
-}
-
-static int extract_json_bool(const char *json, const char *key, int *out)
-{
-    char pattern[48];
-    snprintf(pattern, sizeof(pattern), "\"%s\":", key);
-    const char *pos = strstr(json, pattern);
-    if (pos == NULL) return -1;
-    pos += strlen(pattern);
-    *out = (strncmp(pos, "true", 4) == 0) ? 1 : 0;
+    const cJSON *item = cJSON_GetObjectItemCaseSensitive(root, key);
+    if (item == NULL && !required) return 1;
+    if (!cJSON_IsString(item) || item->valuestring == NULL ||
+        !valid_string(item->valuestring, capacity, !required)) {
+        return -1;
+    }
+    strlcpy(destination, item->valuestring, capacity);
     return 0;
 }
 
 int cbor_codec_json_to_msg(const char *json_str, gw_message_t *out_msg)
 {
     if (json_str == NULL || out_msg == NULL) return -1;
-    memset(out_msg, 0, sizeof(gw_message_t));
+    memset(out_msg, 0, sizeof(*out_msg));
+    out_msg->protocol_version = GW_PROTOCOL_VERSION;
 
-    extract_json_string(json_str, "type", out_msg->type, sizeof(out_msg->type));
-    extract_json_string(json_str, "command", out_msg->command, sizeof(out_msg->command));
-
-    if (extract_json_string(json_str, "device_id", out_msg->device_id,
-                             sizeof(out_msg->device_id)) == 0 && strlen(out_msg->device_id) > 0) {
-        out_msg->has_device_id = 1;
+    cJSON *root = cJSON_Parse(json_str);
+    if (!cJSON_IsObject(root)) {
+        cJSON_Delete(root);
+        return -1;
     }
 
-    extract_json_int(json_str, "int_value", &out_msg->int_value);
-    extract_json_bool(json_str, "bool_value", &out_msg->bool_value);
+    int result = -1;
+    if (copy_json_string(root, "type", out_msg->type, sizeof(out_msg->type), true) != 0 ||
+        copy_json_string(root, "command", out_msg->command,
+                         sizeof(out_msg->command), true) != 0) {
+        goto cleanup;
+    }
 
-    if (strlen(out_msg->type) == 0) return -1;
-    return 0;
+    int field_result = copy_json_string(root, "device_id", out_msg->device_id,
+                                        sizeof(out_msg->device_id), false);
+    if (field_result < 0) goto cleanup;
+    out_msg->has_device_id = field_result == 0 && out_msg->device_id[0] != '\0';
+
+    if (copy_json_string(root, "name", out_msg->name, sizeof(out_msg->name), false) < 0 ||
+        copy_json_string(root, "device_type", out_msg->device_type,
+                         sizeof(out_msg->device_type), false) < 0) {
+        goto cleanup;
+    }
+
+    const cJSON *protocol = cJSON_GetObjectItemCaseSensitive(root, "protocol_version");
+    if (protocol != NULL) {
+        if (!cJSON_IsNumber(protocol) || protocol->valuedouble < 1 ||
+            protocol->valuedouble > GW_PROTOCOL_VERSION ||
+            protocol->valuedouble != (double)protocol->valueint) {
+            goto cleanup;
+        }
+        out_msg->protocol_version = (uint8_t)protocol->valueint;
+    }
+
+    const cJSON *int_item = cJSON_GetObjectItemCaseSensitive(root, "int_value");
+    if (int_item != NULL) {
+        if (!cJSON_IsNumber(int_item) || int_item->valuedouble < INT_MIN ||
+            int_item->valuedouble > INT_MAX ||
+            int_item->valuedouble != (double)int_item->valueint) {
+            goto cleanup;
+        }
+        out_msg->int_value = int_item->valueint;
+    }
+
+    const cJSON *bool_item = cJSON_GetObjectItemCaseSensitive(root, "bool_value");
+    if (bool_item != NULL) {
+        if (!cJSON_IsBool(bool_item)) goto cleanup;
+        out_msg->bool_value = cJSON_IsTrue(bool_item);
+    }
+
+    const cJSON *address_item = cJSON_GetObjectItemCaseSensitive(root, "ble_addr");
+    if (address_item != NULL) {
+        if (!cJSON_IsString(address_item) || address_item->valuestring == NULL ||
+            parse_ble_addr(address_item->valuestring, out_msg->ble_addr) != 0) {
+            goto cleanup;
+        }
+        const cJSON *address_type = cJSON_GetObjectItemCaseSensitive(root, "ble_addr_type");
+        if (address_type != NULL) {
+            if (!cJSON_IsNumber(address_type) || address_type->valueint < 0 ||
+                address_type->valueint > UINT8_MAX ||
+                address_type->valuedouble != (double)address_type->valueint) {
+                goto cleanup;
+            }
+            out_msg->ble_addr_type = (uint8_t)address_type->valueint;
+        }
+        out_msg->has_ble_addr = 1;
+    }
+
+    result = 0;
+
+cleanup:
+    cJSON_Delete(root);
+    if (result != 0) memset(out_msg, 0, sizeof(*out_msg));
+    return result;
 }

@@ -1,61 +1,63 @@
 # ESP32 BLE Gateway
 
-Firmware ESP-IDF cho ESP32-S3, đóng vai trò BLE Central kết nối tới các thiết bị DIY và cung cấp Web UI cùng endpoint JSON-RPC qua Wi-Fi.
+Firmware ESP-IDF cho ESP32-S3, hoạt động như một BLE Central kết nối tới các
+thiết bị DIY và cung cấp Web UI, REST API cùng endpoint JSON-RPC qua Wi-Fi.
 
-## Chức năng hiện có
+## Chức năng
 
-- NimBLE Central/GATT Client, hỗ trợ tối đa 9 kết nối trên cấu hình ESP32-S3 hiện tại.
-- Wi-Fi STA nếu đã có thông tin đăng nhập trong NVS; nếu chưa có, thiết bị mở SoftAP để cấu hình.
-- HTTP Web UI quản lý danh sách thiết bị và xem log gần đây.
-- Endpoint `/mcp` dùng JSON-RPC tối giản với `list_tools` và `call_tool`.
-- Lưu cấu hình Wi-Fi và danh sách thiết bị trong NVS.
-- Mã hóa message nhị phân tạm thời qua lớp `cbor_codec`.
+- Device Store lưu tối đa 16 thiết bị, metadata và địa chỉ BLE trong NVS; có
+  migration schema và API snapshot an toàn khi nhiều task cùng truy cập.
+- Wi-Fi dùng STA khi credentials đã được kiểm tra, tự fallback về SoftAP có
+  captive DNS khi kết nối thất bại, và chuyển sang STA-only không cần restart.
+- NimBLE Central quét theo service UUID, quản lý tối đa 9 link trên ESP32-S3,
+  pairing/bonding, GATT discovery, subscribe CCCD, reconnect và discovery
+  timeout.
+- Message BLE là CBOR chuẩn qua QCBOR 1.6.1; JSON dùng cJSON 1.7.19~2.
+- Dispatcher có registry động, định tuyến gateway/device command và chờ ACK
+  riêng cho từng thiết bị.
+- Web UI quản lý Wi-Fi, quét BLE, CRUD thiết bị, gửi lệnh và xem log/status.
+- `POST /mcp` hỗ trợ subset JSON-RPC 2.0 gồm `list_tools`/`tools/list` và
+  `call_tool`/`tools/call`, bao gồm notification không có `id`.
 
-## Cấu trúc
+## Giao thức BLE
 
-```text
-main/
-  main.c                     Điểm khởi động ứng dụng
-components/
-  ble_central/               NimBLE Central và GATT Client
-  cbor_codec/                Chuyển đổi message nhị phân/JSON
-  command_dispatcher/        Registry và định tuyến lệnh
-  device_store/              Danh sách thiết bị trong NVS
-  log_buffer/                Circular buffer trong RAM
-  mcp_endpoint/              JSON-RPC endpoint tại /mcp
-  web_server/                Web UI và REST API
-  wifi_provisioning/         Wi-Fi STA/SoftAP provisioning
-old_code/                    Bản source cũ được giữ lại để đối chiếu
-```
+Thiết bị con cần quảng bá và triển khai các UUID 16-bit sau:
+
+- Service: `0xABF0`
+- Command characteristic (write without response): `0xABF1`
+- Status characteristic (notify): `0xABF2`
+- CCCD chuẩn: `0x2902`
+
+Gateway dùng protocol version `1`. Payload CBOR là map có key số để giảm kích
+thước; schema nằm trong `components/cbor_codec/cbor_codec.c`.
 
 ## Build và flash
 
-Project đang đặt target mặc định là ESP32-S3 và dùng partition single-app 1500 KiB trên flash 2 MiB.
+Project được kiểm tra với ESP-IDF 6.1-beta1, target ESP32-S3 và flash 2 MiB.
+QCBOR được ghim bằng Git submodule; cJSON được ESP-IDF Component Manager tải
+theo manifest.
 
 ```sh
+git submodule update --init --recursive
 idf.py set-target esp32s3
 idf.py build
 idf.py -p <PORT> flash monitor
 ```
 
-Nếu dùng chip khác, chạy lại `idf.py set-target <chip>` và kiểm tra giới hạn kết nối NimBLE của target đó.
+Nếu đổi target, cần kiểm tra lại giới hạn `CONFIG_BT_NIMBLE_MAX_CONNECTIONS`
+và dung lượng partition.
 
 ## Wi-Fi lần đầu
 
-Gateway thử kết nối bằng Wi-Fi credentials trong NVS khi khởi động. Nếu chưa có
-credentials hoặc không kết nối được trong thời gian cho phép, gateway tự chuyển
-sang provisioning mode và tạo access point:
+Khi chưa có credentials hợp lệ, gateway tạo mạng provisioning:
 
 - SSID: `ESP32-Gateway-Setup`
 - Password: `gateway123`
-- Web cấu hình: `http://192.168.4.1/`
+- URL: `http://192.168.4.1/`
 
-Web cấu hình cho phép quét/chọn SSID, nhập mật khẩu và kiểm tra kết nối. Gateway
-chỉ lưu credentials sau khi nhận được IP từ mạng Wi-Fi đã chọn; sau đó tự khởi
-động lại và chạy ở STA mode. Nếu kiểm tra thất bại, SoftAP vẫn hoạt động để người
-dùng thử lại.
-
-Có thể thao tác bằng API:
+Gateway chỉ ghi credentials vào NVS sau khi STA thực sự nhận được IP. Sau khi
+HTTP response được gửi xong, SoftAP và captive DNS được tắt, còn STA tiếp tục
+hoạt động.
 
 ```sh
 curl http://192.168.4.1/api/wifi/scan
@@ -65,19 +67,35 @@ curl -X POST http://192.168.4.1/api/wifi \
   -d '{"ssid":"TEN_WIFI","password":"MAT_KHAU"}'
 ```
 
-## HTTP API
+## REST API
 
-- `GET /`: Web UI.
-- `GET /api/devices`: danh sách thiết bị.
-- `POST /api/devices`: thêm thiết bị.
-- `DELETE /api/devices?device_id=...`: xóa thiết bị.
-- `GET /api/logs`: log gần đây.
-- `GET /api/status`: trạng thái gateway.
-- `GET /api/wifi/scan`: quét Wi-Fi khi đang ở provisioning mode.
-- `POST /api/wifi`: test Wi-Fi, lưu credentials nếu thành công và tự restart.
-- `POST /mcp`: JSON-RPC tối giản.
+| Method | Path | Mục đích |
+|---|---|---|
+| `GET` | `/` | Web UI |
+| `GET` | `/api/status` | Trạng thái Wi-Fi/BLE, heap và uptime |
+| `GET` | `/api/devices` | Danh sách thiết bị |
+| `POST` | `/api/devices` | Thêm thiết bị |
+| `PUT` | `/api/devices` | Sửa tên hoặc loại thiết bị |
+| `DELETE` | `/api/devices?device_id=...` | Xóa thiết bị |
+| `POST` | `/api/command` | Gửi lệnh tới thiết bị và chờ ACK |
+| `GET` | `/api/logs` | Circular log gần đây |
+| `GET` | `/api/wifi/scan` | Quét Wi-Fi trong provisioning mode |
+| `POST` | `/api/wifi` | Kiểm tra và lưu credentials |
+| `GET` | `/api/ble/scan` | Kết quả quét BLE đã cache |
+| `POST` | `/api/ble/scan` | Bắt đầu quét BLE |
+| `POST` | `/mcp` | JSON-RPC cho AI/tool client |
 
-Ví dụ gọi MCP:
+Ví dụ thêm thiết bị:
+
+```sh
+curl -X POST http://<GATEWAY_IP>/api/devices \
+  -H 'Content-Type: application/json' \
+  -d '{"device_id":"lamp-1","name":"Đèn bàn","type":"light","ble_addr":"11:22:33:44:55:66","ble_addr_type":0}'
+```
+
+## JSON-RPC
+
+Liệt kê tool động từ command registry:
 
 ```sh
 curl -X POST http://<GATEWAY_IP>/mcp \
@@ -85,8 +103,60 @@ curl -X POST http://<GATEWAY_IP>/mcp \
   -d '{"jsonrpc":"2.0","method":"list_tools","id":1}'
 ```
 
-## Trạng thái triển khai
+Gọi theo dạng tương thích cũ:
 
-Source đã được tích hợp vào cấu trúc component chuẩn và build thành công. `device_store` có thể nhận `device_id` ở dạng địa chỉ MAC (`AA:BB:CC:DD:EE:FF`), lưu địa chỉ vào NVS và thử khôi phục kết nối BLE khi khởi động lại. Hiện Web UI chưa có trường MAC riêng, vì vậy cần dùng chính địa chỉ MAC làm `device_id` nếu muốn dùng luồng này.
+```sh
+curl -X POST http://<GATEWAY_IP>/mcp \
+  -H 'Content-Type: application/json' \
+  -d '{"jsonrpc":"2.0","method":"call_tool","params":{"device_id":"lamp-1","command":"toggle","bool_value":true},"id":2}'
+```
 
-`cbor_codec` hiện dùng binary layout nội bộ để kiểm thử end-to-end, chưa phải CBOR chuẩn. Khi ghép với firmware thiết bị con, cần thay bằng QCBOR/libcbor hoặc đảm bảo hai phía dùng cùng layout.
+Hoặc theo dạng `name` + `arguments`:
+
+```json
+{
+  "jsonrpc": "2.0",
+  "method": "tools/call",
+  "params": {
+    "name": "get_status",
+    "arguments": {}
+  },
+  "id": "status-1"
+}
+```
+
+Endpoint này là JSON-RPC/MCP subset cho LAN, không phải MCP server đầy đủ và
+chưa có authentication. Không nên expose trực tiếp ra Internet.
+
+## Unit test
+
+Test app riêng bao phủ Device Store/NVS, CBOR-QCBOR/JSON và Dispatcher. Test
+được compile tách biệt khỏi firmware production:
+
+```sh
+cd test
+idf.py set-target esp32s3
+idf.py build
+idf.py -p <PORT> flash monitor
+```
+
+Các test tự chạy một lượt khi boot rồi mở Unity menu. Test end-to-end Wi-Fi,
+BLE discovery, reconnect và ACK vẫn cần board ESP32-S3 thật cùng một peripheral
+triển khai service `0xABF0`.
+
+## Cấu trúc
+
+```text
+main/                         Khởi động và nối các module
+components/device_store/      NVS device registry
+components/wifi_provisioning/ Wi-Fi STA/SoftAP và captive DNS
+components/ble_central/       NimBLE Central/GATT Client
+components/cbor_codec/        QCBOR và JSON codec
+components/command_dispatcher/ Command registry, ACK routing
+components/web_server/        Web UI và REST API
+components/mcp_endpoint/      JSON-RPC endpoint
+components/log_buffer/        Circular log thread-safe
+components/qcbor_lib/         QCBOR 1.6.1 submodule wrapper
+test/                         Unity unit-test application
+docs/                         Thiết kế, kế hoạch module và test plan
+```

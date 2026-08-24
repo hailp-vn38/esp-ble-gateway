@@ -8,14 +8,23 @@
 #define GW_MSG_TYPE_LEN         24
 #define GW_MSG_DEVICE_ID_LEN    32
 #define GW_MSG_COMMAND_LEN      32
+#define GW_MSG_NAME_LEN         32
+#define GW_MSG_DEVICE_TYPE_LEN  16
+#define GW_PROTOCOL_VERSION      1
 
 typedef struct {
+    uint8_t protocol_version;
     char type[GW_MSG_TYPE_LEN];
     char device_id[GW_MSG_DEVICE_ID_LEN];
     char command[GW_MSG_COMMAND_LEN];
     int  int_value;
     int  bool_value;
     int  has_device_id;
+    char name[GW_MSG_NAME_LEN];
+    char device_type[GW_MSG_DEVICE_TYPE_LEN];
+    uint8_t ble_addr[6];
+    uint8_t ble_addr_type;
+    int has_ble_addr;
 } gw_message_t;
 
 int cbor_codec_decode(const uint8_t *buf, size_t len, gw_message_t *out_msg);

@@ -1,5 +1,5 @@
 idf_component_register(
     SRCS "log_buffer.c"
     INCLUDE_DIRS "include"
-    REQUIRES esp_timer
+    REQUIRES esp_timer freertos
 )
