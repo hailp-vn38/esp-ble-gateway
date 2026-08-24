@@ -6,6 +6,7 @@
 #include "esp_event.h"
 #include "esp_log.h"
 #include "esp_netif.h"
+#include "esp_system.h"
 #include "esp_wifi.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/event_groups.h"
@@ -35,6 +36,7 @@ static volatile bool s_provisioning_active;
 static volatile bool s_connect_requested;
 static volatile bool s_testing_credentials;
 static volatile bool s_fallback_scheduled;
+static volatile bool s_restart_scheduled;
 static int s_retry_count;
 static esp_netif_t *s_sta_netif;
 static esp_netif_t *s_ap_netif;
@@ -237,6 +239,12 @@ int wifi_prov_init(void)
     }
 
     if (esp_wifi_start() != ESP_OK) return -1;
+    error = esp_wifi_set_ps(WIFI_PS_NONE);
+    if (error != ESP_OK) {
+        ESP_LOGW(TAG, "Could not disable Wi-Fi power save: %s", esp_err_to_name(error));
+    } else {
+        ESP_LOGI(TAG, "Wi-Fi power save disabled for low-latency gateway operation");
+    }
 
     if (has_credentials) {
         EventBits_t bits = xEventGroupWaitBits(
@@ -252,6 +260,7 @@ int wifi_prov_init(void)
         }
     } else {
         dns_hijack_start();
+        ESP_LOGI(TAG, "SoftAP ready: SSID=%s, URL=http://192.168.4.1", SOFTAP_SSID);
     }
     return 0;
 }
@@ -389,31 +398,36 @@ int wifi_prov_save_and_connect(const char *ssid, const char *password)
     return wifi_prov_test_and_save(ssid, password);
 }
 
-static void sta_only_task(void *arg)
+static void restart_task(void *arg)
 {
     unsigned delay_ms = (unsigned)(uintptr_t)arg;
     vTaskDelay(pdMS_TO_TICKS(delay_ms));
-    if (xSemaphoreTake(s_operation_mutex, pdMS_TO_TICKS(5000)) == pdTRUE) {
-        if (s_sta_connected) {
-            dns_hijack_stop();
-            esp_err_t error = esp_wifi_set_mode(WIFI_MODE_STA);
-            if (error == ESP_OK) {
-                s_provisioning_active = false;
-                s_state = WIFI_PROV_STATE_CONNECTED;
-                ESP_LOGI(TAG, "Hot-switched to STA-only mode");
-            } else {
-                ESP_LOGE(TAG, "Could not switch to STA-only: %s", esp_err_to_name(error));
-            }
-        }
-        xSemaphoreGive(s_operation_mutex);
-    }
-    vTaskDelete(NULL);
+    ESP_LOGI(TAG, "Restarting to apply verified Wi-Fi credentials");
+    esp_restart();
 }
 
-int wifi_prov_schedule_sta_only(unsigned delay_ms)
+int wifi_prov_schedule_restart(unsigned delay_ms)
 {
-    return xTaskCreate(sta_only_task, "wifi_sta_only", 3072,
-                       (void *)(uintptr_t)delay_ms, 5, NULL) == pdPASS ? 0 : -1;
+    if (s_operation_mutex == NULL ||
+        xSemaphoreTake(s_operation_mutex, pdMS_TO_TICKS(1000)) != pdTRUE) {
+        return -1;
+    }
+    if (s_restart_scheduled) {
+        xSemaphoreGive(s_operation_mutex);
+        return 0;
+    }
+    s_restart_scheduled = true;
+    xSemaphoreGive(s_operation_mutex);
+
+    if (xTaskCreate(restart_task, "wifi_restart", 2048,
+                    (void *)(uintptr_t)delay_ms, 5, NULL) != pdPASS) {
+        if (xSemaphoreTake(s_operation_mutex, pdMS_TO_TICKS(1000)) == pdTRUE) {
+            s_restart_scheduled = false;
+            xSemaphoreGive(s_operation_mutex);
+        }
+        return -1;
+    }
+    return 0;
 }
 
 void wifi_prov_get_ip(char *out_ip, size_t out_ip_len)

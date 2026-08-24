@@ -1,6 +1,7 @@
 #include <stdbool.h>
 #include <stdint.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 
 #include "cJSON.h"
@@ -24,6 +25,9 @@ static const char *TAG = "web_server";
 #define REQUEST_BODY_MAX_LEN 1024
 #define BLE_SCAN_CACHE_SIZE   20
 #define BLE_SCAN_DURATION_MS  6000
+#define LOG_API_MAX_ENTRIES   24
+#define COMMAND_WORKER_COUNT   3
+#define COMMAND_WORKER_STACK 8192
 
 typedef struct {
     ble_scan_result_t result;
@@ -33,7 +37,9 @@ typedef struct {
 static scan_cache_entry_t s_scan_cache[BLE_SCAN_CACHE_SIZE];
 static int s_scan_cache_count;
 static SemaphoreHandle_t s_scan_mutex;
+static SemaphoreHandle_t s_command_slots;
 static volatile bool s_scan_stop_task_active;
+static log_entry_t s_log_snapshot[LOG_API_MAX_ENTRIES];
 
 static const char INDEX_HTML[] =
 "<!doctype html><html lang='vi'><head><meta charset='utf-8'>"
@@ -51,7 +57,7 @@ static const char INDEX_HTML[] =
 "<section class='card'><h2>Thêm thiết bị</h2><div class='row'><input id='deviceId' placeholder='device_id'><input id='deviceName' placeholder='Tên'><input id='deviceType' value='generic' placeholder='Loại'><input id='deviceAddr' placeholder='AA:BB:CC:DD:EE:FF'><input id='deviceAddrType' type='number' value='0' min='0' max='255'><button onclick='addDevice()'>Thêm</button></div><div id='deviceMessage'></div></section>"
 "<section class='card'><h2>Danh sách thiết bị</h2><table><thead><tr><th>ID</th><th>Tên</th><th>Loại</th><th>BLE</th><th>Thao tác</th></tr></thead><tbody id='deviceRows'></tbody></table></section>"
 "<section class='card'><h2>Log gần đây</h2><div id='logs'></div></section></main>"
-"<script>const $=id=>document.getElementById(id);let busy=false;function note(id,text,ok){let e=$(id);e.textContent=text;e.className=ok?'ok':'error'}"
+"<script>const $=id=>document.getElementById(id);let busy=false,refreshBusy=false,lastLogsAt=0;function note(id,text,ok){let e=$(id);e.textContent=text;e.className=ok?'ok':'error'}"
 "async function jsonFetch(url,options){let r=await fetch(url,options);let data=await r.json();if(!r.ok||data.success===false)throw new Error(data.message||('HTTP '+r.status));return data}"
 "async function status(){try{let s=await jsonFetch('/api/status');$('summary').textContent=`Wi-Fi: ${s.wifi_state} · IP: ${s.ip} · BLE: ${s.connected_count}/${s.device_count} thiết bị · heap ${s.free_heap} B`;$('wifiCard').hidden=!s.provisioning;$('gatewayPanel').hidden=s.provisioning;if(s.provisioning&&$('wifiList').children.length===0&&!busy)scanWifi()}catch(e){$('summary').textContent=e.message}}"
 "async function scanWifi(){if(busy)return;busy=true;note('wifiMessage','Đang quét…',true);try{let d=await jsonFetch('/api/wifi/scan');let list=$('wifiList');list.replaceChildren();for(let n of d.networks){let o=document.createElement('option');o.value=n.ssid;o.label=`${n.rssi} dBm${n.secure?' · bảo mật':''}`;list.appendChild(o)}note('wifiMessage',`Tìm thấy ${d.networks.length} mạng.`,true)}catch(e){note('wifiMessage',e.message,false)}finally{busy=false}}"
@@ -66,7 +72,29 @@ static const char INDEX_HTML[] =
 "async function customCommand(id){let command=prompt('Tên lệnh','toggle');if(command)sendCommand(id,command,true)}"
 "async function loadDevices(){if($('gatewayPanel').hidden)return;try{let list=await jsonFetch('/api/devices'),body=$('deviceRows');body.replaceChildren();for(let d of list){let r=document.createElement('tr');td(r,d.device_id);td(r,d.name);td(r,d.type);td(r,d.connected?'Đã kết nối':(d.ble_addr||'Chưa có MAC'));let a=td(r,'');a.append(button('Toggle',()=>sendCommand(d.device_id,'toggle',true)));a.append(button('Lệnh…',()=>customCommand(d.device_id),'secondary'));a.append(button('Sửa',()=>editDevice(d),'secondary'));a.append(button('Xóa',()=>deleteDevice(d.device_id),'danger'));body.appendChild(r)}}catch(e){note('deviceMessage',e.message,false)}}"
 "async function loadLogs(){if($('gatewayPanel').hidden)return;try{let logs=await jsonFetch('/api/logs');$('logs').textContent=logs.map(x=>`[${x.timestamp_ms}] ${x.text}`).join('\\n')}catch(e){$('logs').textContent=e.message}}"
-"async function refresh(){await status();if(!$('gatewayPanel').hidden){await Promise.all([loadDevices(),loadLogs()])}}setInterval(refresh,3000);refresh();</script></body></html>";
+"async function refresh(){if(refreshBusy)return;refreshBusy=true;try{await status();if(!$('gatewayPanel').hidden){let work=[loadDevices()];if(Date.now()-lastLogsAt>=10000){lastLogsAt=Date.now();work.push(loadLogs())}await Promise.all(work)}}finally{refreshBusy=false}}async function refreshLoop(){await refresh();setTimeout(refreshLoop,5000)}refreshLoop();</script></body></html>";
+
+static const char PROVISIONING_HTML[] =
+"<!doctype html><html lang='vi'><head><meta charset='utf-8'>"
+"<meta name='viewport' content='width=device-width,initial-scale=1'>"
+"<title>Cấu hình ESP32 Gateway</title><style>"
+":root{font-family:system-ui,sans-serif;color:#172033;background:#f4f7fb}body{margin:0 auto;max-width:620px;padding:24px}"
+".card{background:white;border:1px solid #d9e1ec;border-radius:12px;padding:20px;margin-top:20px;box-shadow:0 4px 14px #21354710}"
+"input,button{box-sizing:border-box;width:100%;padding:11px;margin:6px 0;border:1px solid #b8c4d4;border-radius:7px}"
+"button{cursor:pointer;background:#1769e0;color:white;border-color:#1769e0}button.secondary{background:white;color:#1769e0}button:disabled{opacity:.6}.muted{color:#667085}.ok{color:#087443}.error{color:#b42318}"
+"</style></head><body><h1>ESP32 BLE Gateway</h1><div id='status' class='muted'>Đang lấy trạng thái…</div>"
+"<section class='card'><h2>Cấu hình Wi-Fi</h2><p>Gateway chỉ lưu thông tin sau khi kết nối và nhận IP thành công.</p>"
+"<input id='ssid' list='networks' placeholder='SSID'><datalist id='networks'></datalist>"
+"<button class='secondary' id='scanButton' onclick='scanWifi()'>Quét Wi-Fi</button>"
+"<input id='password' type='password' placeholder='Mật khẩu'>"
+"<button id='saveButton' onclick='saveWifi()'>Kiểm tra và lưu</button><div id='message'></div></section>"
+"<script>const $=id=>document.getElementById(id);"
+"async function jsonFetch(url,options){let r=await fetch(url,options),d=await r.json();if(!r.ok||d.success===false)throw new Error(d.message||('HTTP '+r.status));return d}"
+"function message(text,ok){$('message').textContent=text;$('message').className=ok?'ok':'error'}"
+"async function loadStatus(){try{let s=await jsonFetch('/api/status');$('status').textContent=`Chế độ: ${s.wifi_state} · IP: ${s.ip}`;}catch(e){$('status').textContent=e.message}}"
+"async function scanWifi(){$('scanButton').disabled=true;message('Đang quét…',true);try{let d=await jsonFetch('/api/wifi/scan'),list=$('networks');list.replaceChildren();for(let n of d.networks){let o=document.createElement('option');o.value=n.ssid;o.label=`${n.rssi} dBm${n.secure?' · bảo mật':''}`;list.appendChild(o)}message(`Tìm thấy ${d.networks.length} mạng.`,true)}catch(e){message(e.message,false)}finally{$('scanButton').disabled=false}}"
+"async function saveWifi(){let ssid=$('ssid').value.trim(),password=$('password').value;if(!ssid)return message('Vui lòng nhập SSID.',false);$('saveButton').disabled=true;$('scanButton').disabled=true;message('Đang kiểm tra kết nối…',true);try{await jsonFetch('/api/wifi',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({ssid,password})});message('Đã lưu Wi-Fi. Gateway đang khởi động lại…',true)}catch(e){$('saveButton').disabled=false;$('scanButton').disabled=false;message(e.message,false)}}"
+"loadStatus();scanWifi();</script></body></html>";
 
 static esp_err_t send_json(httpd_req_t *request, cJSON *json)
 {
@@ -175,6 +203,12 @@ static esp_err_t index_get_handler(httpd_req_t *request)
 {
     httpd_resp_set_type(request, "text/html; charset=utf-8");
     return httpd_resp_send(request, INDEX_HTML, HTTPD_RESP_USE_STRLEN);
+}
+
+static esp_err_t provisioning_index_get_handler(httpd_req_t *request)
+{
+    httpd_resp_set_type(request, "text/html; charset=utf-8");
+    return httpd_resp_send(request, PROVISIONING_HTML, HTTPD_RESP_USE_STRLEN);
 }
 
 static esp_err_t captive_redirect_handler(httpd_req_t *request)
@@ -288,6 +322,25 @@ static esp_err_t devices_delete_handler(httpd_req_t *request)
     return send_dispatch_result(request, &result);
 }
 
+typedef struct {
+    httpd_req_t *request;
+    gw_message_t message;
+} command_async_context_t;
+
+static void command_http_worker(void *arg)
+{
+    command_async_context_t *context = arg;
+    dispatch_result_t result;
+    command_dispatcher_handle(&context->message, &result);
+    send_dispatch_result(context->request, &result);
+    if (httpd_req_async_handler_complete(context->request) != ESP_OK) {
+        ESP_LOGW(TAG, "Could not complete asynchronous command request");
+    }
+    free(context);
+    xSemaphoreGive(s_command_slots);
+    vTaskDelete(NULL);
+}
+
 static esp_err_t command_post_handler(httpd_req_t *request)
 {
     char body[REQUEST_BODY_MAX_LEN];
@@ -324,21 +377,45 @@ static esp_err_t command_post_handler(httpd_req_t *request)
     }
     cJSON_Delete(json);
 
-    dispatch_result_t result;
-    command_dispatcher_handle(&message, &result);
-    return send_dispatch_result(request, &result);
+    if (s_command_slots == NULL || xSemaphoreTake(s_command_slots, 0) != pdTRUE) {
+        return send_api_error(request, "503 Service Unavailable",
+                              "All command workers are busy");
+    }
+
+    command_async_context_t *context = calloc(1, sizeof(*context));
+    if (context == NULL) {
+        xSemaphoreGive(s_command_slots);
+        return send_api_error(request, "503 Service Unavailable",
+                              "Could not allocate command worker");
+    }
+    context->message = message;
+    esp_err_t error = httpd_req_async_handler_begin(request, &context->request);
+    if (error != ESP_OK) {
+        free(context);
+        xSemaphoreGive(s_command_slots);
+        return send_api_error(request, "503 Service Unavailable",
+                              "Could not start asynchronous command");
+    }
+    if (xTaskCreate(command_http_worker, "http_command", COMMAND_WORKER_STACK,
+                    context, 5, NULL) != pdPASS) {
+        send_api_error(context->request, "503 Service Unavailable",
+                       "Could not start command worker");
+        httpd_req_async_handler_complete(context->request);
+        free(context);
+        xSemaphoreGive(s_command_slots);
+    }
+    return ESP_OK;
 }
 
 static esp_err_t logs_get_handler(httpd_req_t *request)
 {
-    log_entry_t entries[LOG_BUFFER_CAPACITY];
-    int count = log_buffer_get_all(entries);
+    int count = log_buffer_get_recent(s_log_snapshot, LOG_API_MAX_ENTRIES);
     if (count < 0) return send_api_error(request, "500 Internal Server Error", "Could not read logs");
     cJSON *array = cJSON_CreateArray();
     for (int i = 0; i < count; i++) {
         cJSON *item = cJSON_CreateObject();
-        cJSON_AddStringToObject(item, "text", entries[i].text);
-        cJSON_AddNumberToObject(item, "timestamp_ms", entries[i].timestamp_ms);
+        cJSON_AddStringToObject(item, "text", s_log_snapshot[i].text);
+        cJSON_AddNumberToObject(item, "timestamp_ms", s_log_snapshot[i].timestamp_ms);
         cJSON_AddItemToArray(array, item);
     }
     return send_json(request, array);
@@ -358,6 +435,21 @@ static esp_err_t status_get_handler(httpd_req_t *request)
     cJSON_AddNumberToObject(json, "device_count", count);
     cJSON_AddNumberToObject(json, "connected_count", connected);
     cJSON_AddNumberToObject(json, "ble_link_count", ble_central_active_count());
+    cJSON_AddStringToObject(json, "ip", ip);
+    cJSON_AddBoolToObject(json, "wifi_connected", wifi_prov_is_connected());
+    cJSON_AddBoolToObject(json, "provisioning", wifi_prov_is_provisioning());
+    cJSON_AddStringToObject(json, "wifi_state",
+                            wifi_prov_state_name(wifi_prov_get_state()));
+    cJSON_AddNumberToObject(json, "free_heap", esp_get_free_heap_size());
+    cJSON_AddNumberToObject(json, "uptime_ms", esp_timer_get_time() / 1000);
+    return send_json(request, json);
+}
+
+static esp_err_t provisioning_status_get_handler(httpd_req_t *request)
+{
+    char ip[16];
+    wifi_prov_get_ip(ip, sizeof(ip));
+    cJSON *json = cJSON_CreateObject();
     cJSON_AddStringToObject(json, "ip", ip);
     cJSON_AddBoolToObject(json, "wifi_connected", wifi_prov_is_connected());
     cJSON_AddBoolToObject(json, "provisioning", wifi_prov_is_provisioning());
@@ -416,12 +508,16 @@ static esp_err_t wifi_post_handler(httpd_req_t *request)
         return send_api_error(request, rc == -2 ? "409 Conflict" : "400 Bad Request", message);
     }
 
+    if (wifi_prov_schedule_restart(2500) != 0) {
+        return send_api_error(request, "500 Internal Server Error",
+                              "Wi-Fi saved but restart could not be scheduled");
+    }
+
     cJSON *response = cJSON_CreateObject();
     cJSON_AddBoolToObject(response, "success", true);
-    cJSON_AddStringToObject(response, "message", "Wi-Fi verified and saved");
-    esp_err_t send_result = send_json(request, response);
-    wifi_prov_schedule_sta_only(1500);
-    return send_result;
+    cJSON_AddStringToObject(response, "message",
+                            "Wi-Fi verified and saved; gateway is restarting");
+    return send_json(request, response);
 }
 
 static void on_ble_scan_result(const ble_scan_result_t *result)
@@ -500,19 +596,47 @@ static esp_err_t ble_scan_get_handler(httpd_req_t *request)
     return send_json(request, json);
 }
 
-httpd_handle_t web_server_start(void)
+static httpd_handle_t start_server(const httpd_uri_t *routes, size_t route_count,
+                                   unsigned max_handlers, unsigned stack_size,
+                                   const char *mode_name)
 {
-    if (s_scan_mutex == NULL) s_scan_mutex = xSemaphoreCreateMutex();
-    if (s_scan_mutex == NULL) return NULL;
-
     httpd_config_t config = HTTPD_DEFAULT_CONFIG();
-    config.max_uri_handlers = 20;
-    config.stack_size = 12288;
+    config.max_uri_handlers = max_handlers;
+    config.stack_size = stack_size;
+    config.task_priority = tskIDLE_PRIORITY + 6;
+    config.lru_purge_enable = true;
+    config.keep_alive_enable = true;
+    config.keep_alive_idle = 5;
+    config.keep_alive_interval = 5;
+    config.keep_alive_count = 3;
     config.recv_wait_timeout = 5;
     config.send_wait_timeout = 5;
 
     httpd_handle_t server = NULL;
     if (httpd_start(&server, &config) != ESP_OK) return NULL;
+
+    for (size_t i = 0; i < route_count; i++) {
+        esp_err_t error = httpd_register_uri_handler(server, &routes[i]);
+        if (error != ESP_OK) {
+            ESP_LOGE(TAG, "Could not register %s: %s", routes[i].uri,
+                     esp_err_to_name(error));
+            httpd_stop(server);
+            return NULL;
+        }
+    }
+    ESP_LOGI(TAG, "%s web server started with %u routes", mode_name,
+             (unsigned)route_count);
+    return server;
+}
+
+httpd_handle_t web_server_start(void)
+{
+    if (s_scan_mutex == NULL) s_scan_mutex = xSemaphoreCreateMutex();
+    if (s_command_slots == NULL) {
+        s_command_slots = xSemaphoreCreateCounting(COMMAND_WORKER_COUNT,
+                                                   COMMAND_WORKER_COUNT);
+    }
+    if (s_scan_mutex == NULL || s_command_slots == NULL) return NULL;
 
     const httpd_uri_t routes[] = {
         {.uri = "/", .method = HTTP_GET, .handler = index_get_handler},
@@ -523,26 +647,26 @@ httpd_handle_t web_server_start(void)
         {.uri = "/api/command", .method = HTTP_POST, .handler = command_post_handler},
         {.uri = "/api/logs", .method = HTTP_GET, .handler = logs_get_handler},
         {.uri = "/api/status", .method = HTTP_GET, .handler = status_get_handler},
-        {.uri = "/api/wifi/scan", .method = HTTP_GET, .handler = wifi_scan_get_handler},
-        {.uri = "/api/wifi", .method = HTTP_POST, .handler = wifi_post_handler},
         {.uri = "/api/ble/scan", .method = HTTP_GET, .handler = ble_scan_get_handler},
         {.uri = "/api/ble/scan", .method = HTTP_POST, .handler = ble_scan_post_handler},
+    };
+    return start_server(routes, sizeof(routes) / sizeof(routes[0]),
+                        14, 12288, "Gateway");
+}
+
+httpd_handle_t web_server_start_provisioning(void)
+{
+    const httpd_uri_t routes[] = {
+        {.uri = "/", .method = HTTP_GET, .handler = provisioning_index_get_handler},
+        {.uri = "/api/status", .method = HTTP_GET,
+         .handler = provisioning_status_get_handler},
+        {.uri = "/api/wifi/scan", .method = HTTP_GET, .handler = wifi_scan_get_handler},
+        {.uri = "/api/wifi", .method = HTTP_POST, .handler = wifi_post_handler},
         {.uri = "/generate_204", .method = HTTP_GET, .handler = captive_redirect_handler},
         {.uri = "/hotspot-detect.html", .method = HTTP_GET, .handler = captive_redirect_handler},
         {.uri = "/connecttest.txt", .method = HTTP_GET, .handler = captive_redirect_handler},
         {.uri = "/ncsi.txt", .method = HTTP_GET, .handler = captive_redirect_handler},
     };
-
-    for (size_t i = 0; i < sizeof(routes) / sizeof(routes[0]); i++) {
-        esp_err_t error = httpd_register_uri_handler(server, &routes[i]);
-        if (error != ESP_OK) {
-            ESP_LOGE(TAG, "Could not register %s: %s", routes[i].uri,
-                     esp_err_to_name(error));
-            httpd_stop(server);
-            return NULL;
-        }
-    }
-    ESP_LOGI(TAG, "Web server started with %u routes",
-             (unsigned)(sizeof(routes) / sizeof(routes[0])));
-    return server;
+    return start_server(routes, sizeof(routes) / sizeof(routes[0]),
+                        10, 8192, "Provisioning");
 }

@@ -6,5 +6,6 @@
 // Tra ve httpd_handle_t da start (de mcp_endpoint dang ky them route /mcp
 // vao CUNG mot server), hoac NULL neu loi.
 httpd_handle_t web_server_start(void);
+httpd_handle_t web_server_start_provisioning(void);
 
 #endif // WEB_SERVER_H

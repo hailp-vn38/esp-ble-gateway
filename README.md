@@ -7,8 +7,9 @@ thiết bị DIY và cung cấp Web UI, REST API cùng endpoint JSON-RPC qua Wi-
 
 - Device Store lưu tối đa 16 thiết bị, metadata và địa chỉ BLE trong NVS; có
   migration schema và API snapshot an toàn khi nhiều task cùng truy cập.
-- Wi-Fi dùng STA khi credentials đã được kiểm tra, tự fallback về SoftAP có
-  captive DNS khi kết nối thất bại, và chuyển sang STA-only không cần restart.
+- Wi-Fi dùng STA khi credentials đã được kiểm tra và tự fallback về SoftAP có
+  captive DNS khi kết nối thất bại. Provisioning chạy ở boot mode tối giản và
+  restart sau khi lưu credentials thành công.
 - NimBLE Central quét theo service UUID, quản lý tối đa 9 link trên ESP32-S3,
   pairing/bonding, GATT discovery, subscribe CCCD, reconnect và discovery
   timeout.
@@ -16,6 +17,8 @@ thiết bị DIY và cung cấp Web UI, REST API cùng endpoint JSON-RPC qua Wi-
 - Dispatcher có registry động, định tuyến gateway/device command và chờ ACK
   riêng cho từng thiết bị.
 - Web UI quản lý Wi-Fi, quét BLE, CRUD thiết bị, gửi lệnh và xem log/status.
+- Dashboard không chồng request định kỳ: trạng thái/thiết bị cập nhật mỗi 5 giây,
+  log mỗi 10 giây; lệnh thiết bị chạy trên worker riêng để không khóa HTTP task.
 - `POST /mcp` hỗ trợ subset JSON-RPC 2.0 gồm `list_tools`/`tools/list` và
   `call_tool`/`tools/call`, bao gồm notification không có `id`.
 
@@ -33,7 +36,7 @@ thước; schema nằm trong `components/cbor_codec/cbor_codec.c`.
 
 ## Build và flash
 
-Project được kiểm tra với ESP-IDF 6.1-beta1, target ESP32-S3 và flash 2 MiB.
+Project được kiểm tra với ESP-IDF 5.4.4, target ESP32-S3 và flash 16 MiB.
 QCBOR được ghim bằng Git submodule; cJSON được ESP-IDF Component Manager tải
 theo manifest.
 
@@ -55,9 +58,22 @@ Khi chưa có credentials hợp lệ, gateway tạo mạng provisioning:
 - Password: `gateway123`
 - URL: `http://192.168.4.1/`
 
+Ở provisioning boot, firmware chỉ khởi tạo NVS, Wi-Fi APSTA, captive DNS và
+HTTP server với 8 route cấu hình. Device Store, Dispatcher, BLE Central,
+reconnect supervisor và MCP chưa được khởi tạo.
+
+Captive DNS (`dns_hijack`) chỉ chạy trong provisioning: mọi truy vấn tên miền
+được trả về `192.168.4.1` để điện thoại/máy tính mở trang cấu hình. Task này giữ
+hoạt động trong lúc kiểm tra Wi-Fi và được hệ thống giải phóng khi gateway
+restart sang STA-only.
+
 Gateway chỉ ghi credentials vào NVS sau khi STA thực sự nhận được IP. Sau khi
-HTTP response được gửi xong, SoftAP và captive DNS được tắt, còn STA tiếp tục
-hoạt động.
+HTTP response được gửi xong, thiết bị chờ 2,5 giây rồi restart. Ở lần boot kế
+tiếp, firmware kiểm tra Wi-Fi đã lưu, chạy STA-only và chỉ sau khi nhận IP mới
+khởi tạo toàn bộ module gateway.
+
+Ở gateway boot, Wi-Fi power-save được tắt để giảm độ trễ REST/BLE. Cấu hình này
+phù hợp thiết bị dùng nguồn liên tục nhưng sẽ tăng mức tiêu thụ điện.
 
 ```sh
 curl http://192.168.4.1/api/wifi/scan
@@ -71,16 +87,16 @@ curl -X POST http://192.168.4.1/api/wifi \
 
 | Method | Path | Mục đích |
 |---|---|---|
-| `GET` | `/` | Web UI |
-| `GET` | `/api/status` | Trạng thái Wi-Fi/BLE, heap và uptime |
+| `GET` | `/` | Web UI theo boot mode |
+| `GET` | `/api/status` | Trạng thái provisioning hoặc gateway |
 | `GET` | `/api/devices` | Danh sách thiết bị |
 | `POST` | `/api/devices` | Thêm thiết bị |
 | `PUT` | `/api/devices` | Sửa tên hoặc loại thiết bị |
 | `DELETE` | `/api/devices?device_id=...` | Xóa thiết bị |
 | `POST` | `/api/command` | Gửi lệnh tới thiết bị và chờ ACK |
-| `GET` | `/api/logs` | Circular log gần đây |
-| `GET` | `/api/wifi/scan` | Quét Wi-Fi trong provisioning mode |
-| `POST` | `/api/wifi` | Kiểm tra và lưu credentials |
+| `GET` | `/api/logs` | 24 circular log mới nhất |
+| `GET` | `/api/wifi/scan` | Quét Wi-Fi, chỉ đăng ký trong provisioning boot |
+| `POST` | `/api/wifi` | Kiểm tra, lưu credentials và restart; chỉ provisioning |
 | `GET` | `/api/ble/scan` | Kết quả quét BLE đã cache |
 | `POST` | `/api/ble/scan` | Bắt đầu quét BLE |
 | `POST` | `/mcp` | JSON-RPC cho AI/tool client |
@@ -130,8 +146,8 @@ chưa có authentication. Không nên expose trực tiếp ra Internet.
 
 ## Unit test
 
-Test app riêng bao phủ Device Store/NVS, CBOR-QCBOR/JSON và Dispatcher. Test
-được compile tách biệt khỏi firmware production:
+Test app riêng bao phủ Device Store/NVS, CBOR-QCBOR/JSON, Dispatcher và truy
+vấn circular log gần nhất. Test được compile tách biệt khỏi firmware production:
 
 ```sh
 cd test

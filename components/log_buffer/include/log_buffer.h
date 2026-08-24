@@ -12,5 +12,6 @@ typedef struct {
 void log_buffer_init(void);
 void log_buffer_push(const char *text);
 int log_buffer_get_all(log_entry_t *out_entries);
+int log_buffer_get_recent(log_entry_t *out_entries, int max_entries);
 
 #endif // LOG_BUFFER_H

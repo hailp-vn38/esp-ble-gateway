@@ -26,16 +26,30 @@ void app_main(void)
     }
     ESP_ERROR_CHECK(ret);
 
+    if (wifi_prov_init() != 0) {
+        ESP_LOGE(TAG, "Wi-Fi initialization failed; gateway services were not started");
+        return;
+    }
+
+    if (wifi_prov_is_provisioning()) {
+        if (web_server_start_provisioning() == NULL) {
+            ESP_LOGE(TAG, "Provisioning web server failed to start");
+            return;
+        }
+        ESP_LOGI(TAG, "Provisioning mode started; gateway modules are deferred until restart");
+        return;
+    }
+
+    if (!wifi_prov_is_connected()) {
+        ESP_LOGE(TAG, "Wi-Fi is neither connected nor provisioning; gateway services deferred");
+        return;
+    }
+
     if (device_store_init() != 0) {
         ESP_LOGE(TAG, "Device store initialization failed");
         return;
     }
     log_buffer_init();
-
-    if (wifi_prov_init() != 0) {
-        ESP_LOGE(TAG, "Wi-Fi initialization failed; gateway services were not started");
-        return;
-    }
 
     if (command_dispatcher_init() != 0) {
         ESP_LOGE(TAG, "Command dispatcher initialization failed");

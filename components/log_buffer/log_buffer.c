@@ -46,3 +46,19 @@ int log_buffer_get_all(log_entry_t *out_entries)
     xSemaphoreGive(s_mutex);
     return count;
 }
+
+int log_buffer_get_recent(log_entry_t *out_entries, int max_entries)
+{
+    if (out_entries == NULL || max_entries <= 0 || s_mutex == NULL ||
+        xSemaphoreTake(s_mutex, pdMS_TO_TICKS(1000)) != pdTRUE) return -1;
+
+    int count = s_count < max_entries ? s_count : max_entries;
+    int oldest = (s_count < LOG_BUFFER_CAPACITY) ? 0 : s_head;
+    int skip = s_count - count;
+    for (int i = 0; i < count; i++) {
+        int idx = (oldest + skip + i) % LOG_BUFFER_CAPACITY;
+        out_entries[i] = s_buffer[idx];
+    }
+    xSemaphoreGive(s_mutex);
+    return count;
+}
