@@ -19,10 +19,8 @@
       "inheritDefault": "hidden"
     }
   },
-  "idf.openOcdConfigs": [
-    "board/esp32s3-builtin.cfg"
-  ],
-  "idf.port": "detect",
+  "idf.openOcdConfigs": ["board/esp32s3-builtin.cfg"],
+  "idf.port": "/dev/tty.usbmodem2101",
   "idf.currentSetup": "/Users/lamphuchai/.espressif/v6.1-beta1/esp-idf",
   "idf.customExtraVars": {
     "IDF_TARGET": "esp32s3"
@@ -31,6 +29,7 @@
   "clangd.arguments": [
     "--background-index",
     "--query-driver=**",
-    "--compile-commands-dir=/Users/lamphuchai/Desktop/ESP_NimBLE_GATT/build"
-  ]
+    "--compile-commands-dir=${workspaceFolder}/build"
+  ],
+  "idf.flashType": "UART"
 }
