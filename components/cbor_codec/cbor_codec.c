@@ -24,6 +24,7 @@ enum {
     CBOR_KEY_DEVICE_TYPE = 7,
     CBOR_KEY_BLE_ADDR = 8,
     CBOR_KEY_BLE_ADDR_TYPE = 9,
+    CBOR_KEY_REQUEST_ID = 10,
 };
 
 static bool valid_string(const char *value, size_t capacity, bool allow_empty)
@@ -96,6 +97,9 @@ int cbor_codec_encode(const gw_message_t *msg, uint8_t *out_buf, size_t out_buf_
         QCBOREncode_AddSZStringToMapN(&context, CBOR_KEY_DEVICE_ID, msg->device_id);
     }
     QCBOREncode_AddSZStringToMapN(&context, CBOR_KEY_COMMAND, msg->command);
+    if (msg->has_request_id) {
+        QCBOREncode_AddUInt64ToMapN(&context, CBOR_KEY_REQUEST_ID, msg->request_id);
+    }
     QCBOREncode_AddInt64ToMapN(&context, CBOR_KEY_INT_VALUE, msg->int_value);
     QCBOREncode_AddBoolToMapN(&context, CBOR_KEY_BOOL_VALUE, msg->bool_value != 0);
     if (msg->name[0] != '\0') {
@@ -175,6 +179,17 @@ int cbor_codec_decode(const uint8_t *buf, size_t len, gw_message_t *out_msg)
     QCBORDecode_GetBoolInMapN(&context, CBOR_KEY_BOOL_VALUE, &bool_value);
     if (QCBORDecode_GetAndResetError(&context) != QCBOR_SUCCESS) return -1;
 
+    uint64_t request_id = 0;
+    QCBORDecode_GetUInt64InMapN(&context, CBOR_KEY_REQUEST_ID, &request_id);
+    error = QCBORDecode_GetAndResetError(&context);
+    if (error == QCBOR_SUCCESS) {
+        if (request_id == 0 || request_id > UINT32_MAX) return -1;
+        out_msg->request_id = (uint32_t)request_id;
+        out_msg->has_request_id = 1;
+    } else if (error != QCBOR_ERR_LABEL_NOT_FOUND) {
+        return -1;
+    }
+
     UsefulBufC optional_value;
     error = get_optional_text(&context, CBOR_KEY_DEVICE_ID, &optional_value);
     if (error == QCBOR_SUCCESS) {
@@ -237,6 +252,7 @@ int cbor_codec_msg_to_json(const gw_message_t *msg, char *out_json, size_t out_j
     cJSON_AddStringToObject(root, "type", msg->type);
     if (msg->has_device_id) cJSON_AddStringToObject(root, "device_id", msg->device_id);
     cJSON_AddStringToObject(root, "command", msg->command);
+    if (msg->has_request_id) cJSON_AddNumberToObject(root, "request_id", msg->request_id);
     cJSON_AddNumberToObject(root, "int_value", msg->int_value);
     cJSON_AddBoolToObject(root, "bool_value", msg->bool_value != 0);
     if (msg->name[0] != '\0') cJSON_AddStringToObject(root, "name", msg->name);
@@ -306,6 +322,17 @@ int cbor_codec_json_to_msg(const char *json_str, gw_message_t *out_msg)
             goto cleanup;
         }
         out_msg->protocol_version = (uint8_t)protocol->valueint;
+    }
+
+    const cJSON *request_id_item = cJSON_GetObjectItemCaseSensitive(root, "request_id");
+    if (request_id_item != NULL) {
+        if (!cJSON_IsNumber(request_id_item) || request_id_item->valuedouble < 1 ||
+            request_id_item->valuedouble > UINT32_MAX ||
+            request_id_item->valuedouble != (double)request_id_item->valueint) {
+            goto cleanup;
+        }
+        out_msg->request_id = (uint32_t)request_id_item->valueint;
+        out_msg->has_request_id = 1;
     }
 
     const cJSON *int_item = cJSON_GetObjectItemCaseSensitive(root, "int_value");

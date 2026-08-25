@@ -169,21 +169,19 @@ int ble_central_disconnect(const char *device_id)
     return ble_gap_terminate(handle, BLE_ERR_REM_USER_CONN_TERM) == 0 ? 0 : -1;
 }
 
-int ble_central_forget_device(const char *device_id)
+int ble_central_forget_peer(const char *device_id, const uint8_t ble_addr[6],
+                            uint8_t ble_addr_type, bool has_ble_addr)
 {
     if (device_id == NULL || !ble_central_lock_connections()) return -1;
     ble_conn_slot_t *slot = ble_central_find_slot_unlocked(device_id);
     ble_addr_t peer_address = {0};
-    bool has_peer_address = false;
-    if (slot == NULL) {
-        ble_central_unlock_connections();
-        device_entry_t entry;
-        if (device_store_get(device_id, &entry) == 0 && entry.has_ble_addr) {
-            peer_address.type = entry.ble_addr_type;
-            memcpy(peer_address.val, entry.ble_addr, sizeof(peer_address.val));
-            has_peer_address = true;
-        }
-    } else {
+    bool has_peer_address = has_ble_addr && ble_addr != NULL;
+    if (has_peer_address) {
+        peer_address.type = ble_addr_type;
+        memcpy(peer_address.val, ble_addr, sizeof(peer_address.val));
+    }
+    if (slot != NULL) {
+        // The runtime connection always knows the freshest peer identity.
         peer_address = slot->peer_addr;
         has_peer_address = true;
     }
@@ -198,19 +196,24 @@ int ble_central_forget_device(const char *device_id)
         } else {
             slot->forget_requested = true;
         }
-        ble_central_unlock_connections();
     }
+    ble_central_unlock_connections();
 
     if (state == BLE_CONN_SLOT_CONNECTING) {
         ble_gap_conn_cancel();
     } else if (handle != BLE_HS_CONN_HANDLE_NONE) {
         ble_gap_terminate(handle, BLE_ERR_REM_USER_CONN_TERM);
     }
-    if (has_peer_address && g_ble_host_synced) {
-        int rc = ble_store_util_delete_peer(&peer_address);
-        if (rc != 0 && rc != BLE_HS_ENOENT) {
-            ESP_LOGW(TAG, "[%s] Could not delete bond: %d", device_id, rc);
-        }
+
+    if (!has_peer_address) return 0;
+    if (!g_ble_host_synced) {
+        ESP_LOGW(TAG, "[%s] BLE host not synced; bond not deleted", device_id);
+        return -1;
+    }
+    int rc = ble_store_util_delete_peer(&peer_address);
+    if (rc != 0 && rc != BLE_HS_ENOENT) {
+        ESP_LOGE(TAG, "[%s] Could not delete bond: %d", device_id, rc);
+        return -1;
     }
     return 0;
 }

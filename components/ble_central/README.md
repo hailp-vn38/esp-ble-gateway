@@ -831,18 +831,21 @@ Do đó nếu reconnect supervisor đang chạy, thiết bị có thể được
 
 ---
 
-# 23. Forget device
+# 23. Forget peer
 
 API:
 
 ```c
-int ble_central_forget_device(
-    const char *device_id);
+int ble_central_forget_peer(
+    const char *device_id,
+    const uint8_t ble_addr[6],
+    uint8_t ble_addr_type,
+    bool has_ble_addr);
 ```
 
 Khác với `disconnect()`.
 
-`forget_device()` thực hiện:
+`forget_peer()` thực hiện:
 
 ```text
 disconnect/cancel connection
@@ -851,6 +854,11 @@ remove runtime slot
         +
 delete BLE bond
 ```
+
+Caller (command dispatcher) phải truyền peer identity lấy từ snapshot
+`device_store` TRƯỚC khi entry bị xóa — BLE layer không quay lại lookup
+store sau khi entry đã bị remove. Nếu runtime connection slot tồn tại,
+addr của slot được ưu tiên.
 
 Nếu thiết bị đang `IDLE`, slot được xoá ngay.
 
@@ -869,7 +877,9 @@ ble_store_util_delete_peer(
     &peer_address);
 ```
 
-để xóa bonding information khỏi NimBLE store.
+để xóa bonding information khỏi NimBLE store. Return value propagate kết quả
+thực tế: `0` = thành công (bao gồm case idempotent "bond không tồn tại" /
+`BLE_HS_ENOENT`), `-1` = bond xóa thất bại hoặc BLE host chưa synced.
 
 ---
 
@@ -1499,8 +1509,11 @@ int ble_central_connect(
 int ble_central_disconnect(
     const char *device_id);
 
-int ble_central_forget_device(
-    const char *device_id);
+int ble_central_forget_peer(
+    const char *device_id,
+    const uint8_t ble_addr[6],
+    uint8_t ble_addr_type,
+    bool has_ble_addr);
 
 int ble_central_send_command(
     const char *device_id,

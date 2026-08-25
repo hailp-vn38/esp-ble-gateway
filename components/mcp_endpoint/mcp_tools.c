@@ -59,7 +59,7 @@ static cJSON *create_input_schema(void)
 
 cJSON *mcp_tools_list(void)
 {
-    const char *names[DISPATCHER_MAX_COMMANDS];
+    char names[DISPATCHER_MAX_COMMANDS][GW_MSG_COMMAND_LEN];
     int count = command_dispatcher_get_registered_names(
         names, DISPATCHER_MAX_COMMANDS);
     if (count < 0) return NULL;
@@ -194,15 +194,27 @@ cJSON *mcp_tools_call(const cJSON *params, mcp_rpc_error_t *error)
     dispatch_result_t dispatch_result;
     command_dispatcher_handle(&message, &dispatch_result);
 
+    bool ok = dispatch_result_is_ok(&dispatch_result);
     cJSON *result = cJSON_CreateObject();
     if (result == NULL) {
         *error = (mcp_rpc_error_t){-32603, "out of memory"};
         return NULL;
     }
-    cJSON_AddBoolToObject(result, "success", dispatch_result.success != 0);
-    cJSON_AddStringToObject(result, "message", dispatch_result.message);
+    cJSON_AddBoolToObject(result, "success", ok);
+    cJSON_AddNumberToObject(result, "status", (int)dispatch_result.status);
+    cJSON_AddStringToObject(
+        result, "message",
+        dispatch_result.format == DISPATCH_RESULT_TEXT ? dispatch_result.payload
+                                                       : "");
 
-    cJSON *data = cJSON_Parse(dispatch_result.message);
-    if (data != NULL) cJSON_AddItemToObject(result, "data", data);
+    if (dispatch_result.format == DISPATCH_RESULT_JSON) {
+        cJSON *data = cJSON_Parse(dispatch_result.payload);
+        if (data != NULL) cJSON_AddItemToObject(result, "data", data);
+        else {
+            cJSON_Delete(result);
+            *error = (mcp_rpc_error_t){-32603, "dispatcher returned invalid JSON"};
+            return NULL;
+        }
+    }
     return result;
 }

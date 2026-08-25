@@ -55,15 +55,45 @@ static int parse_ble_addr(const char *text, uint8_t address[6])
     return 0;
 }
 
+static const char *http_status_for(const dispatch_result_t *result)
+{
+    switch (result->status) {
+    case DISPATCH_STATUS_OK:
+        return "200 OK";
+    case DISPATCH_STATUS_INVALID_ARGUMENT:
+        return "400 Bad Request";
+    case DISPATCH_STATUS_NOT_FOUND:
+        return "404 Not Found";
+    case DISPATCH_STATUS_BUSY:
+        return "409 Conflict";
+    case DISPATCH_STATUS_TIMEOUT:
+        return "504 Gateway Timeout";
+    case DISPATCH_STATUS_NOT_CONNECTED:
+    case DISPATCH_STATUS_TRANSPORT_ERROR:
+    case DISPATCH_STATUS_DEVICE_ERROR:
+        return "502 Bad Gateway";
+    default:
+        return "500 Internal Server Error";
+    }
+}
+
 static esp_err_t send_dispatch_result(httpd_req_t *request,
                                       const dispatch_result_t *result)
 {
+    bool ok = dispatch_result_is_ok(result);
+    if (!ok) httpd_resp_set_status(request, http_status_for(result));
+
     cJSON *json = cJSON_CreateObject();
     if (json != NULL) {
-        cJSON_AddBoolToObject(json, "success", result->success != 0);
-        cJSON_AddStringToObject(json, "message", result->message);
-        cJSON *data = cJSON_Parse(result->message);
-        if (data != NULL) cJSON_AddItemToObject(json, "data", data);
+        cJSON_AddBoolToObject(json, "success", ok);
+        cJSON_AddNumberToObject(json, "status", (int)result->status);
+        cJSON_AddStringToObject(
+            json, "message",
+            result->format == DISPATCH_RESULT_TEXT ? result->payload : "");
+        if (result->format == DISPATCH_RESULT_JSON) {
+            cJSON *data = cJSON_Parse(result->payload);
+            if (data != NULL) cJSON_AddItemToObject(json, "data", data);
+        }
     }
     return web_send_json(request, json);
 }
@@ -76,12 +106,13 @@ static esp_err_t devices_get_handler(httpd_req_t *request)
 
     dispatch_result_t result;
     command_dispatcher_handle(&message, &result);
-    if (!result.success) {
+    if (!dispatch_result_is_ok(&result) ||
+        result.format != DISPATCH_RESULT_JSON) {
         return web_send_api_error(request, "500 Internal Server Error",
-                                  result.message);
+                                  result.payload);
     }
 
-    cJSON *array = cJSON_Parse(result.message);
+    cJSON *array = cJSON_Parse(result.payload);
     if (!cJSON_IsArray(array)) {
         cJSON_Delete(array);
         return web_send_api_error(request, "500 Internal Server Error",

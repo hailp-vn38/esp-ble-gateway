@@ -55,6 +55,10 @@ void app_main(void)
         ESP_LOGE(TAG, "Command dispatcher initialization failed");
         return;
     }
+    if (command_dispatcher_freeze_registry() != 0) {
+        ESP_LOGE(TAG, "Command dispatcher registry freeze failed");
+        return;
+    }
     if (ble_central_init(on_device_notify) != 0) {
         ESP_LOGE(TAG, "BLE central initialization failed");
         return;

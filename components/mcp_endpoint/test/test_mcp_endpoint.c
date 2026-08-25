@@ -5,7 +5,7 @@
 
 #include "cbor_codec.h"
 #include "command_dispatcher.h"
-#include "mcp_endpoint_internal.h"
+#include "../mcp_endpoint_internal.h"
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -13,7 +13,9 @@
 
 static void ensure_dispatcher(void)
 {
-    command_dispatcher_init();
+    int rc = command_dispatcher_init();
+    TEST_ASSERT_TRUE(rc == 0 || rc == ESP_ERR_INVALID_STATE);
+    TEST_ASSERT_EQUAL_INT(0, command_dispatcher_freeze_registry());
 }
 
 static cJSON *make_params(const char *json_str)

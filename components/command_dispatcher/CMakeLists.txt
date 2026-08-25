@@ -3,6 +3,8 @@ idf_component_register(
          "command_registry.c"
          "gateway_commands.c"
          "device_command.c"
+         "device_request_manager.c"
     INCLUDE_DIRS "include"
+    PRIV_INCLUDE_DIRS "."
     REQUIRES cbor_codec ble_central device_store freertos espressif__cjson
 )

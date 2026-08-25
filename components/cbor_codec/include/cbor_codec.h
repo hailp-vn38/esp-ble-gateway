@@ -10,13 +10,15 @@
 #define GW_MSG_COMMAND_LEN      32
 #define GW_MSG_NAME_LEN         32
 #define GW_MSG_DEVICE_TYPE_LEN  16
-#define GW_PROTOCOL_VERSION      1
+#define GW_PROTOCOL_VERSION      2
 
 typedef struct {
     uint8_t protocol_version;
     char type[GW_MSG_TYPE_LEN];
     char device_id[GW_MSG_DEVICE_ID_LEN];
     char command[GW_MSG_COMMAND_LEN];
+    uint32_t request_id;
+    int has_request_id;
     int  int_value;
     int  bool_value;
     int  has_device_id;

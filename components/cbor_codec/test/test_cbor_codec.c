@@ -59,6 +59,37 @@ TEST_CASE("CBOR omits optional device fields", "[cbor_codec]")
     TEST_ASSERT_EQUAL_INT(-5, decoded.int_value);
 }
 
+TEST_CASE("CBOR encode/decode preserves request_id", "[cbor_codec]")
+{
+    const gw_message_t input = {
+        .protocol_version = GW_PROTOCOL_VERSION,
+        .type = "device_command",
+        .device_id = "relay-1",
+        .command = "set_power",
+        .request_id = 1042,
+        .has_request_id = 1,
+        .has_device_id = 1,
+    };
+    uint8_t encoded[GW_MSG_MAX_LEN];
+    int encoded_length = cbor_codec_encode(&input, encoded, sizeof(encoded));
+    TEST_ASSERT_GREATER_THAN(0, encoded_length);
+
+    gw_message_t decoded;
+    TEST_ASSERT_EQUAL_INT(0, cbor_codec_decode(encoded, encoded_length, &decoded));
+    TEST_ASSERT_TRUE(decoded.has_request_id);
+    TEST_ASSERT_EQUAL_UINT32(1042, decoded.request_id);
+
+    // Messages without request_id decode with the flag cleared.
+    gw_message_t plain = input;
+    plain.request_id = 0;
+    plain.has_request_id = 0;
+    encoded_length = cbor_codec_encode(&plain, encoded, sizeof(encoded));
+    TEST_ASSERT_GREATER_THAN(0, encoded_length);
+    TEST_ASSERT_EQUAL_INT(0,
+                          cbor_codec_decode(encoded, encoded_length, &decoded));
+    TEST_ASSERT_FALSE(decoded.has_request_id);
+}
+
 TEST_CASE("JSON conversion validates and preserves values", "[cbor_codec]")
 {
     const char *json =

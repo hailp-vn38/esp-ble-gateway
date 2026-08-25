@@ -3,180 +3,119 @@
 
 #include "esp_log.h"
 #include "freertos/FreeRTOS.h"
-#include "freertos/semphr.h"
 
 #include "ble_central.h"
 #include "command_dispatcher.h"
 #include "command_dispatcher_internal.h"
-#include "device_store.h"
+#include "device_request_manager.h"
 
 static const char *TAG = "dispatcher";
 
-#define DISPATCHER_MAX_PENDING_ACKS DEVICE_STORE_MAX_DEVICES
-
-typedef struct {
-    bool in_use;
-    char device_id[GW_MSG_DEVICE_ID_LEN];
-    char command[GW_MSG_COMMAND_LEN];
-    gw_message_t response;
-    SemaphoreHandle_t semaphore;
-} pending_ack_t;
-
-static SemaphoreHandle_t s_ack_mutex;
-static pending_ack_t s_pending_acks[DISPATCHER_MAX_PENDING_ACKS];
-
-static pending_ack_t *allocate_pending_ack(const gw_message_t *msg)
+static int ble_send_command_hook(const char *device_id, const gw_message_t *msg)
 {
-    if (xSemaphoreTake(s_ack_mutex, pdMS_TO_TICKS(1000)) != pdTRUE) return NULL;
-
-    pending_ack_t *available = NULL;
-    for (int i = 0; i < DISPATCHER_MAX_PENDING_ACKS; i++) {
-        if (s_pending_acks[i].in_use &&
-            strcmp(s_pending_acks[i].device_id, msg->device_id) == 0) {
-            xSemaphoreGive(s_ack_mutex);
-            return NULL;
-        }
-        if (!s_pending_acks[i].in_use && available == NULL) {
-            available = &s_pending_acks[i];
-        }
-    }
-
-    if (available != NULL) {
-        while (xSemaphoreTake(available->semaphore, 0) == pdTRUE) {}
-        available->in_use = true;
-        strlcpy(available->device_id, msg->device_id, sizeof(available->device_id));
-        strlcpy(available->command, msg->command, sizeof(available->command));
-        memset(&available->response, 0, sizeof(available->response));
-    }
-    xSemaphoreGive(s_ack_mutex);
-    return available;
+    return ble_central_send_command(device_id, msg);
 }
 
-static void release_pending_ack(pending_ack_t *pending)
+static int ble_is_connected_hook(const char *device_id)
 {
-    if (pending == NULL ||
-        xSemaphoreTake(s_ack_mutex, pdMS_TO_TICKS(1000)) != pdTRUE) {
-        return;
+    return ble_central_is_connected(device_id);
+}
+
+static device_command_hooks_t s_hooks = {
+    .send_command = ble_send_command_hook,
+    .is_connected = ble_is_connected_hook,
+};
+
+void device_command_set_hooks(const device_command_hooks_t *hooks)
+{
+    if (hooks == NULL) {
+        s_hooks.send_command = ble_send_command_hook;
+        s_hooks.is_connected = ble_is_connected_hook;
+    } else {
+        s_hooks = *hooks;
     }
-    pending->in_use = false;
-    pending->device_id[0] = '\0';
-    pending->command[0] = '\0';
-    xSemaphoreGive(s_ack_mutex);
 }
 
 int device_command_init(void)
 {
-    if (s_ack_mutex == NULL) s_ack_mutex = xSemaphoreCreateMutex();
-    if (s_ack_mutex == NULL ||
-        xSemaphoreTake(s_ack_mutex, pdMS_TO_TICKS(1000)) != pdTRUE) {
-        return -1;
-    }
-
-    for (int i = 0; i < DISPATCHER_MAX_PENDING_ACKS; i++) {
-        if (s_pending_acks[i].semaphore == NULL) {
-            s_pending_acks[i].semaphore = xSemaphoreCreateBinary();
-        }
-        s_pending_acks[i].in_use = false;
-        s_pending_acks[i].device_id[0] = '\0';
-        s_pending_acks[i].command[0] = '\0';
-        if (s_pending_acks[i].semaphore == NULL) {
-            xSemaphoreGive(s_ack_mutex);
-            return -1;
-        }
-        while (xSemaphoreTake(s_pending_acks[i].semaphore, 0) == pdTRUE) {}
-    }
-
-    xSemaphoreGive(s_ack_mutex);
-    return 0;
+    return device_request_manager_init();
 }
 
 void device_command_handle(const gw_message_t *msg, dispatch_result_t *result)
 {
-    if (!msg->has_device_id) {
-        command_dispatcher_set_result(result, false, "Missing device_id");
-        return;
-    }
-    if (!ble_central_is_connected(msg->device_id)) {
-        command_dispatcher_set_result(result, false, "Device %s is not connected",
-                                      msg->device_id);
-        return;
-    }
-    if (s_ack_mutex == NULL) {
-        command_dispatcher_set_result(result, false, "Command dispatcher is not initialized");
+    // Boundary validation for device_id/command presence already ran in
+    // command_dispatcher_handle(); only transport readiness is checked here.
+    if (s_hooks.is_connected(msg->device_id) <= 0) {
+        command_dispatcher_set_text_result(result,
+                                           DISPATCH_STATUS_NOT_CONNECTED,
+                                           "Device %s is not connected",
+                                           msg->device_id);
         return;
     }
 
-    pending_ack_t *pending = allocate_pending_ack(msg);
-    if (pending == NULL) {
-        command_dispatcher_set_result(result, false,
-                                      "Another command for %s is pending",
-                                      msg->device_id);
+    pending_request_t *pending = NULL;
+    int allocate_rc = device_request_allocate(msg->device_id, msg->command,
+                                              &pending);
+    if (allocate_rc != 0) {
+        command_dispatcher_set_text_result(result, DISPATCH_STATUS_BUSY,
+                                           "Another command for %s is pending",
+                                           msg->device_id);
         return;
     }
 
-    int send_rc = ble_central_send_command(msg->device_id, msg);
-    ESP_LOGI(TAG, "[SENT] device=%s command=%s success=%d", msg->device_id,
-             msg->command, send_rc == 0);
+    // The caller's message is immutable: correlation metadata belongs to the
+    // dispatcher, so a local wire copy carries the freshly assigned request_id.
+    gw_message_t wire_msg = *msg;
+    wire_msg.protocol_version = GW_PROTOCOL_VERSION;
+    wire_msg.request_id = pending->request_id;
+    wire_msg.has_request_id = 1;
 
+    ESP_LOGI(TAG, "[CMD_SEND] device=%s request_id=%lu command=%s",
+             wire_msg.device_id, (unsigned long)wire_msg.request_id,
+             wire_msg.command);
+
+    int send_rc = s_hooks.send_command(wire_msg.device_id, &wire_msg);
     if (send_rc != 0) {
-        release_pending_ack(pending);
-        command_dispatcher_set_result(result, false, "Could not send command to %s",
-                                      msg->device_id);
+        ESP_LOGW(TAG, "[CMD_SEND_FAILED] device=%s request_id=%lu command=%s",
+                 wire_msg.device_id, (unsigned long)wire_msg.request_id,
+                 wire_msg.command);
+        device_request_release(pending);
+        command_dispatcher_set_text_result(result,
+                                           DISPATCH_STATUS_TRANSPORT_ERROR,
+                                           "Could not send command to %s",
+                                           msg->device_id);
         return;
     }
 
-    if (xSemaphoreTake(pending->semaphore,
-                       pdMS_TO_TICKS(DISPATCHER_ACK_TIMEOUT_MS)) != pdTRUE) {
-        release_pending_ack(pending);
-        command_dispatcher_set_result(result, false,
-                                      "No ACK from %s within %d ms", msg->device_id,
-                                      DISPATCHER_ACK_TIMEOUT_MS);
+    if (device_request_wait(pending,
+                            pdMS_TO_TICKS(DISPATCHER_ACK_TIMEOUT_MS)) != 0) {
+        ESP_LOGW(TAG, "[CMD_TIMEOUT] device=%s request_id=%lu command=%s timeout_ms=%d",
+                 msg->device_id, (unsigned long)pending->request_id,
+                 msg->command, DISPATCHER_ACK_TIMEOUT_MS);
+        device_request_release(pending);
+        command_dispatcher_set_text_result(result, DISPATCH_STATUS_TIMEOUT,
+                                           "No ACK from %s within %d ms",
+                                           msg->device_id,
+                                           DISPATCHER_ACK_TIMEOUT_MS);
         return;
     }
 
-    gw_message_t response;
-    if (xSemaphoreTake(s_ack_mutex, pdMS_TO_TICKS(1000)) == pdTRUE) {
-        response = pending->response;
-        pending->in_use = false;
-        pending->device_id[0] = '\0';
-        pending->command[0] = '\0';
-        xSemaphoreGive(s_ack_mutex);
-    } else {
-        release_pending_ack(pending);
-        command_dispatcher_set_result(result, false, "Could not read ACK from %s",
-                                      msg->device_id);
-        return;
-    }
+    gw_message_t response = pending->response;
+    bool accepted = response.bool_value != 0;
+    device_request_release(pending);
 
-    command_dispatcher_set_result(
-        result, response.bool_value != 0,
-        response.bool_value ? "Device %s acknowledged '%s'"
-                            : "Device %s rejected '%s'",
+    ESP_LOGI(TAG, "[CMD_ACK] device=%s request_id=%lu command=%s result=%s",
+             msg->device_id, (unsigned long)response.request_id,
+             msg->command, accepted ? "ok" : "rejected");
+
+    command_dispatcher_set_text_result(
+        result,
+        accepted ? DISPATCH_STATUS_OK : DISPATCH_STATUS_DEVICE_ERROR,
+        accepted ? "Device %s acknowledged '%s'" : "Device %s rejected '%s'",
         msg->device_id, msg->command);
 }
 
 void device_command_on_notify(const char *device_id, const gw_message_t *msg)
 {
-    if (device_id == NULL || msg == NULL) return;
-
-    bool matched = false;
-    if (s_ack_mutex != NULL &&
-        xSemaphoreTake(s_ack_mutex, pdMS_TO_TICKS(1000)) == pdTRUE) {
-        for (int i = 0; i < DISPATCHER_MAX_PENDING_ACKS; i++) {
-            pending_ack_t *pending = &s_pending_acks[i];
-            if (pending->in_use && strcmp(pending->device_id, device_id) == 0 &&
-                (msg->command[0] == '\0' ||
-                 strcmp(pending->command, msg->command) == 0)) {
-                pending->response = *msg;
-                xSemaphoreGive(pending->semaphore);
-                matched = true;
-                break;
-            }
-        }
-        xSemaphoreGive(s_ack_mutex);
-    }
-
-    ESP_LOGI(TAG, "%s device=%s command=%s success=%d value=%d",
-             matched ? "[ACK]" : "[NOTIFY]", device_id, msg->command,
-             msg->bool_value != 0, msg->int_value);
+    device_request_complete(device_id, msg);
 }
