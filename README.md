@@ -67,20 +67,24 @@ Captive DNS (`dns_hijack`) chỉ chạy trong provisioning: mọi truy vấn tê
 hoạt động trong lúc kiểm tra Wi-Fi và được hệ thống giải phóng khi gateway
 restart sang STA-only.
 
-Gateway chỉ ghi credentials vào NVS sau khi STA thực sự nhận được IP. Sau khi
-HTTP response được gửi xong, thiết bị chờ 2,5 giây rồi restart. Ở lần boot kế
-tiếp, firmware kiểm tra Wi-Fi đã lưu, chạy STA-only và chỉ sau khi nhận IP mới
-khởi tạo toàn bộ module gateway.
+Gateway chỉ ghi credentials vào NVS sau khi STA thực sự nhận được IP. Scan và
+kiểm tra credentials chạy trong worker task để không chặn web server. Lệnh cấu
+hình trả về ngay; UI polling trạng thái và gateway restart sau 4 giây khi kết
+nối thành công. Ở lần boot kế tiếp, firmware kiểm tra Wi-Fi đã lưu, chạy
+STA-only và chỉ sau khi nhận IP mới khởi tạo toàn bộ module gateway.
 
 Ở gateway boot, Wi-Fi power-save được tắt để giảm độ trễ REST/BLE. Cấu hình này
 phù hợp thiết bị dùng nguồn liên tục nhưng sẽ tăng mức tiêu thụ điện.
 
 ```sh
+curl -X POST http://192.168.4.1/api/wifi/scan
 curl http://192.168.4.1/api/wifi/scan
 
 curl -X POST http://192.168.4.1/api/wifi \
   -H 'Content-Type: application/json' \
   -d '{"ssid":"TEN_WIFI","password":"MAT_KHAU"}'
+
+curl http://192.168.4.1/api/wifi
 ```
 
 ## REST API
@@ -94,9 +98,11 @@ curl -X POST http://192.168.4.1/api/wifi \
 | `PUT` | `/api/devices` | Sửa tên hoặc loại thiết bị |
 | `DELETE` | `/api/devices?device_id=...` | Xóa thiết bị |
 | `POST` | `/api/command` | Gửi lệnh tới thiết bị và chờ ACK |
-| `GET` | `/api/logs` | 24 circular log mới nhất |
-| `GET` | `/api/wifi/scan` | Quét Wi-Fi, chỉ đăng ký trong provisioning boot |
-| `POST` | `/api/wifi` | Kiểm tra, lưu credentials và restart; chỉ provisioning |
+| `GET` | `/api/logs` | 64 circular log mới nhất |
+| `POST` | `/api/wifi/scan` | Bắt đầu quét Wi-Fi nền; chỉ provisioning |
+| `GET` | `/api/wifi/scan` | Trạng thái và kết quả Wi-Fi scan đã cache |
+| `POST` | `/api/wifi` | Bắt đầu kiểm tra credentials nền; chỉ provisioning |
+| `GET` | `/api/wifi` | Trạng thái job cấu hình Wi-Fi |
 | `GET` | `/api/ble/scan` | Kết quả quét BLE đã cache |
 | `POST` | `/api/ble/scan` | Bắt đầu quét BLE |
 | `POST` | `/mcp` | JSON-RPC cho AI/tool client |

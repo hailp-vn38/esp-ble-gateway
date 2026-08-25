@@ -1,0 +1,1435 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ESP32 BLE Gateway</title>
+    <link href="/dashboard.css" rel="stylesheet">
+    <link href="/icons.css" rel="stylesheet">
+    <style>
+        /* Custom scrollbar for log area */
+        .log-container::-webkit-scrollbar {
+            width: 8px;
+        }
+        .log-container::-webkit-scrollbar-track {
+            background: #1e293b; 
+        }
+        .log-container::-webkit-scrollbar-thumb {
+            background: #475569; 
+            border-radius: 4px;
+        }
+        .log-container::-webkit-scrollbar-thumb:hover {
+            background: #64748b; 
+        }
+        
+        /* Modal transition */
+        .modal-enter { opacity: 0; transform: scale(0.95); }
+        .modal-enter-active { opacity: 1; transform: scale(1); transition: opacity 0.2s, transform 0.2s; }
+        .modal-leave { opacity: 1; transform: scale(1); }
+        .modal-leave-active { opacity: 0; transform: scale(0.95); transition: opacity 0.2s, transform 0.2s; }
+        
+        /* Pulse animation for scanning */
+        @keyframes radar-ping {
+            0% { transform: scale(0.5); opacity: 0.8; }
+            100% { transform: scale(2); opacity: 0; }
+        }
+        .animate-radar {
+            animation: radar-ping 2s cubic-bezier(0, 0, 0.2, 1) infinite;
+        }
+    </style>
+</head>
+<body class="bg-gray-50 text-gray-900 font-sans h-screen flex overflow-hidden selection:bg-brand-500 selection:text-white">
+
+    <!-- Sidebar -->
+    <aside class="w-64 bg-dark-bg text-gray-300 flex flex-col shadow-xl z-20 flex-shrink-0 transition-transform duration-300 ease-in-out absolute md:relative -translate-x-full md:translate-x-0 h-full" id="sidebar">
+        <!-- Logo/Header -->
+        <div class="h-16 flex items-center px-6 border-b border-dark-border bg-gray-900">
+            <i class="ph ph-cpu text-brand-500 text-2xl mr-3"></i>
+            <h1 class="text-white font-bold tracking-wide">ESP32 Gateway</h1>
+        </div>
+
+        <!-- Navigation Links -->
+        <nav class="flex-1 px-4 py-6 space-y-2 overflow-y-auto">
+            <button onclick="nav.switchTab('devices')" id="nav-devices" class="w-full flex items-center px-4 py-3 text-sm font-medium rounded-lg transition-colors bg-brand-600 text-white shadow-md shadow-brand-500/20">
+                <i class="ph ph-devices text-lg mr-3"></i> My Devices
+            </button>
+            <button onclick="nav.switchTab('scanner')" id="nav-scanner" class="w-full flex items-center px-4 py-3 text-sm font-medium rounded-lg transition-colors hover:bg-dark-surface hover:text-white text-gray-300">
+                <i class="ph ph-broadcast text-lg mr-3"></i> Add Device
+            </button>
+            <button onclick="nav.switchTab('logs')" id="nav-logs" class="w-full flex items-center px-4 py-3 text-sm font-medium rounded-lg transition-colors hover:bg-dark-surface hover:text-white text-gray-300">
+                <i class="ph ph-terminal-window text-lg mr-3"></i> System Logs
+            </button>
+            <button onclick="nav.switchTab('settings')" id="nav-settings" class="w-full flex items-center px-4 py-3 text-sm font-medium rounded-lg transition-colors hover:bg-dark-surface hover:text-white text-gray-300">
+                <i class="ph ph-gear text-lg mr-3"></i> Gateway Settings
+            </button>
+        </nav>
+
+        <!-- Status Area -->
+        <div class="p-4 border-t border-dark-border bg-dark-surface/50">
+            <div class="flex items-center justify-between text-xs">
+                <span class="flex items-center">
+                    <span id="sidebar-status-dot" class="w-2 h-2 rounded-full bg-gray-500 mr-2"></span>
+                    <span id="sidebar-status-text">Checking gateway…</span>
+                </span>
+                <span id="sidebar-ip" class="text-gray-500 font-mono">0.0.0.0</span>
+            </div>
+        </div>
+    </aside>
+
+    <!-- Main Content Area -->
+    <main class="flex-1 flex flex-col h-full overflow-hidden relative w-full">
+        <!-- Mobile Header (Visible only on small screens) -->
+        <header class="md:hidden h-16 bg-white border-b border-gray-200 flex items-center justify-between px-4 z-10 flex-shrink-0">
+            <div class="flex items-center">
+                <i class="ph ph-cpu text-brand-600 text-xl mr-2"></i>
+                <span class="font-bold text-gray-800">ESP32 Gateway</span>
+            </div>
+            <button onclick="nav.toggleSidebar()" class="text-gray-600 hover:text-brand-600 focus:outline-none p-2 bg-gray-100 rounded-md">
+                <i class="ph ph-list text-2xl"></i>
+            </button>
+        </header>
+
+        <!-- Overlay for mobile sidebar -->
+        <div id="mobile-overlay" onclick="nav.toggleSidebar()" class="fixed inset-0 bg-gray-900/50 z-10 hidden md:hidden backdrop-blur-sm transition-opacity"></div>
+
+        <!-- Scrollable View Container -->
+        <div class="flex-1 overflow-y-auto bg-gray-50/50 p-4 md:p-8 relative w-full">
+            
+            <!-- VIEW: DEVICES -->
+            <section id="view-devices" class="max-w-6xl mx-auto block pb-20">
+                <div class="flex flex-col sm:flex-row sm:items-center justify-between mb-8 gap-4">
+                    <div>
+                        <h2 class="text-2xl font-bold text-gray-900">Managed Devices</h2>
+                        <p class="text-gray-500 text-sm mt-1">Manage BLE devices saved on this gateway.</p>
+                    </div>
+                    <button onclick="nav.switchTab('scanner')" class="inline-flex items-center justify-center px-4 py-2 bg-brand-600 text-white rounded-lg hover:bg-brand-700 transition-colors shadow-sm text-sm font-medium">
+                        <i class="ph ph-plus mr-2"></i> Add New Device
+                    </button>
+                </div>
+
+                <!-- Empty State -->
+                <div id="devices-empty" class="hidden flex-col items-center justify-center py-16 px-4 text-center bg-white rounded-2xl border border-gray-200 shadow-sm">
+                    <div class="w-16 h-16 bg-gray-100 rounded-full flex items-center justify-center mb-4 text-gray-400">
+                        <i class="ph ph-plugs text-3xl"></i>
+                    </div>
+                    <h3 class="text-lg font-semibold text-gray-900 mb-2">No devices configured</h3>
+                    <p class="text-gray-500 mb-6 max-w-sm">Scan your surroundings to find BLE devices and add them to your gateway network.</p>
+                    <button onclick="nav.switchTab('scanner')" class="px-5 py-2.5 bg-white border border-gray-300 text-gray-700 font-medium rounded-lg hover:bg-gray-50 transition-colors shadow-sm">
+                        Go to Scanner
+                    </button>
+                </div>
+
+                <!-- Devices Grid -->
+                <div id="devices-grid" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+                    <!-- Devices will be injected here by JS -->
+                </div>
+            </section>
+
+            <!-- VIEW: DEVICE DETAIL -->
+            <section id="view-device-detail" class="max-w-6xl mx-auto hidden pb-20 h-full flex flex-col">
+                <div class="mb-6 flex-shrink-0">
+                    <button onclick="nav.switchTab('devices')" class="flex items-center text-gray-500 hover:text-brand-600 transition-colors mb-4 text-sm font-medium">
+                        <i class="ph ph-arrow-left mr-2"></i> Back to Devices
+                    </button>
+                    
+                    <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-4 bg-white p-6 rounded-xl border border-gray-200 shadow-sm">
+                        <div class="flex items-center">
+                            <div id="detail-icon" class="w-12 h-12 rounded-lg flex items-center justify-center mr-4 text-2xl">
+                                <!-- Icon injected by JS -->
+                            </div>
+                            <div>
+                                <h2 id="detail-name" class="text-2xl font-bold text-gray-900">Device Name</h2>
+                                <p id="detail-mac" class="text-gray-500 text-sm font-mono mt-1">00:00:00:00:00:00</p>
+                            </div>
+                        </div>
+                        
+                        <div class="flex gap-2">
+                            <button onclick="devices.openEditModal()" class="px-4 py-2 bg-white border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 transition-colors shadow-sm text-sm font-medium flex items-center">
+                                <i class="ph ph-pencil-simple mr-2"></i> Edit
+                            </button>
+                            <button onclick="devices.confirmDeleteDetail()" class="px-4 py-2 bg-white border border-red-200 text-red-600 rounded-lg hover:bg-red-50 transition-colors shadow-sm text-sm font-medium flex items-center">
+                                <i class="ph ph-trash mr-2"></i> Remove
+                            </button>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="grid grid-cols-1 md:grid-cols-3 gap-6 flex-1 min-h-0">
+                    <!-- Info Sidebar -->
+                    <div class="md:col-span-1 space-y-6 overflow-y-auto">
+                        <div class="bg-white p-5 rounded-xl border border-gray-200 shadow-sm">
+                            <h3 class="font-semibold text-gray-900 mb-4 border-b border-gray-100 pb-2">Status</h3>
+                            <div class="space-y-3">
+                                <div class="flex justify-between items-center">
+                                    <span class="text-sm text-gray-500">Connection</span>
+                                    <span id="detail-status" class="flex items-center text-sm font-medium">
+                                        <!-- Status injected by JS -->
+                                    </span>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div class="bg-white p-5 rounded-xl border border-gray-200 shadow-sm">
+                            <h3 class="font-semibold text-gray-900 mb-4 border-b border-gray-100 pb-2">Details</h3>
+                            <div class="space-y-3">
+                                <div class="flex justify-between items-center">
+                                    <span class="text-sm text-gray-500">Type</span>
+                                    <span id="detail-type" class="text-sm font-medium text-gray-700 capitalize">Unknown</span>
+                                </div>
+                                <div class="flex justify-between items-center">
+                                    <span class="text-sm text-gray-500">Device ID</span>
+                                    <span id="detail-device-id" class="text-sm font-medium text-gray-700 font-mono truncate max-w-[140px]">Unknown</span>
+                                </div>
+                                <div class="flex justify-between items-center">
+                                    <span class="text-sm text-gray-500">BLE Address</span>
+                                    <span id="detail-ble-address" class="text-sm font-medium text-gray-700 font-mono">Unknown</span>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div class="bg-white p-5 rounded-xl border border-gray-200 shadow-sm">
+                            <h3 class="font-semibold text-gray-900 mb-4 border-b border-gray-100 pb-2">Device Command</h3>
+                            <div class="space-y-3">
+                                <button id="btn-device-toggle" onclick="devices.sendToggle()" class="w-full px-4 py-2.5 bg-brand-600 text-white rounded-lg hover:bg-brand-700 transition-colors shadow-sm text-sm font-medium flex items-center justify-center">
+                                    <i class="ph ph-power mr-2"></i> Toggle
+                                </button>
+                                <div class="flex gap-2">
+                                    <input id="input-device-command" type="text" value="toggle" maxlength="31" class="min-w-0 flex-1 px-3 py-2 border border-gray-300 rounded-lg text-sm" aria-label="Custom command">
+                                    <button onclick="devices.sendCustomCommand()" class="px-4 py-2 bg-white border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 text-sm font-medium">Send</button>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Device Logs -->
+                    <div class="md:col-span-2 bg-dark-bg rounded-xl border border-dark-border shadow-inner flex flex-col h-full min-h-[400px]">
+                        <div class="h-12 bg-gray-900 border-b border-dark-border flex items-center justify-between px-4 flex-shrink-0 rounded-t-xl">
+                            <div class="flex items-center gap-2">
+                                <i class="ph ph-terminal-window text-gray-400"></i>
+                                <span class="text-sm text-gray-300 font-medium">Device Logs</span>
+                            </div>
+                            <button onclick="logger.clearDeviceLogs()" class="text-gray-400 hover:text-white transition-colors p-1" title="Clear Device Logs">
+                                <i class="ph ph-trash"></i>
+                            </button>
+                        </div>
+                        
+                        <div id="device-log-content" class="flex-1 p-4 overflow-y-auto font-mono text-sm space-y-1 log-container">
+                            <div class="text-gray-500 italic text-center py-4">Waiting for device data...</div>
+                        </div>
+                    </div>
+                </div>
+            </section>
+
+            <!-- VIEW: SCANNER -->
+            <section id="view-scanner" class="max-w-4xl mx-auto hidden pb-20">
+                <div class="mb-8">
+                    <h2 class="text-2xl font-bold text-gray-900">BLE Scanner</h2>
+                    <p class="text-gray-500 text-sm mt-1">Discover nearby Bluetooth Low Energy devices.</p>
+                </div>
+
+                <div class="bg-white rounded-2xl border border-gray-200 shadow-sm overflow-hidden mb-6">
+                    <div class="p-6 border-b border-gray-100 flex flex-col sm:flex-row items-center justify-between gap-4">
+                        <div class="flex items-center">
+                            <div class="relative w-12 h-12 flex items-center justify-center mr-4">
+                                <div id="scan-radar" class="absolute inset-0 bg-brand-100 rounded-full hidden"></div>
+                                <div id="scan-radar-ring" class="absolute inset-0 border-2 border-brand-500 rounded-full hidden"></div>
+                                <div class="w-10 h-10 bg-brand-50 text-brand-600 rounded-full flex items-center justify-center relative z-10">
+                                    <i class="ph ph-broadcast text-xl"></i>
+                                </div>
+                            </div>
+                            <div>
+                                <h3 class="font-semibold text-gray-900" id="scan-status-text">Ready to scan</h3>
+                                <p class="text-xs text-gray-500" id="scan-status-sub">Ensure target devices are in pairing mode.</p>
+                            </div>
+                        </div>
+                        <button id="btn-toggle-scan" onclick="scanner.toggleScan()" class="w-full sm:w-auto px-6 py-2.5 bg-brand-600 text-white rounded-lg hover:bg-brand-700 transition-colors shadow-sm font-medium flex items-center justify-center">
+                            <i class="ph ph-play-circle mr-2 text-lg"></i> 
+                            <span id="btn-scan-text">Start Scan</span>
+                        </button>
+                    </div>
+
+                    <!-- Scan Results List -->
+                    <div class="max-h-[500px] overflow-y-auto relative min-h-[200px]" id="scan-results">
+                        
+                        <!-- Initial State -->
+                        <div id="scan-initial" class="absolute inset-0 flex flex-col items-center justify-center text-gray-400 p-8 text-center bg-gray-50/50">
+                            <i class="ph ph-magnifying-glass text-4xl mb-3 opacity-50"></i>
+                            <p class="text-sm">Click "Start Scan" to discover devices.</p>
+                        </div>
+                        
+                        <!-- Scanning State (Empty initially) -->
+                        <div id="scan-loading" class="hidden absolute inset-0 flex flex-col items-center justify-center text-brand-600 bg-white z-10 p-8 text-center">
+                            <i class="ph ph-spinner animate-spin text-3xl mb-3"></i>
+                            <p class="text-sm font-medium">Scanning for devices...</p>
+                            <p class="text-xs text-gray-500 mt-1">This may take a few seconds.</p>
+                        </div>
+
+                        <!-- Dynamic results are isolated so loading/empty states stay in the DOM. -->
+                        <div id="scan-items" class="divide-y divide-gray-100"></div>
+                    </div>
+                </div>
+            </section>
+
+            <!-- VIEW: LOGS -->
+            <section id="view-logs" class="max-w-6xl mx-auto hidden flex h-full pb-8 flex-col">
+                <div class="flex flex-col sm:flex-row sm:items-center justify-between mb-4 gap-4 flex-shrink-0">
+                    <div>
+                        <h2 class="text-2xl font-bold text-gray-900">System Logs</h2>
+                        <p class="text-gray-500 text-sm mt-1">Live event stream from the ESP32 Gateway.</p>
+                    </div>
+                    <div class="flex gap-2">
+                        <button onclick="logger.clear()" class="px-3 py-1.5 bg-white border border-gray-300 text-gray-600 rounded-md hover:bg-gray-50 transition-colors text-sm font-medium flex items-center">
+                            <i class="ph ph-trash mr-1.5"></i> Clear
+                        </button>
+                        <button onclick="logger.download()" class="px-3 py-1.5 bg-white border border-gray-300 text-gray-600 rounded-md hover:bg-gray-50 transition-colors text-sm font-medium flex items-center">
+                            <i class="ph ph-download-simple mr-1.5"></i> Export
+                        </button>
+                    </div>
+                </div>
+
+                <!-- Terminal-like Log Container -->
+                <div class="flex-1 bg-dark-bg rounded-xl border border-dark-border shadow-inner overflow-hidden flex flex-col min-h-[400px]">
+                    <div class="h-8 bg-gray-900 border-b border-dark-border flex items-center px-4 gap-2 flex-shrink-0">
+                        <div class="w-3 h-3 rounded-full bg-red-500"></div>
+                        <div class="w-3 h-3 rounded-full bg-yellow-500"></div>
+                        <div class="w-3 h-3 rounded-full bg-green-500"></div>
+                        <span class="text-xs text-gray-500 font-mono ml-2">gateway.log</span>
+                    </div>
+                    
+                    <div id="log-content" class="flex-1 p-4 overflow-y-auto font-mono text-sm space-y-1 log-container">
+                        <!-- Logs injected here -->
+                    </div>
+                </div>
+            </section>
+
+            <!-- VIEW: SETTINGS -->
+            <section id="view-settings" class="max-w-5xl mx-auto hidden pb-20">
+                <div class="mb-8">
+                    <h2 class="text-2xl font-bold text-gray-900">Gateway Settings</h2>
+                    <p class="text-gray-500 text-sm mt-1">View system and network status.</p>
+                </div>
+
+                <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                    <!-- Column 1 -->
+                    <div class="space-y-6">
+                        <!-- System Info -->
+                        <div class="bg-white rounded-xl border border-gray-200 p-6 shadow-sm">
+                            <h3 class="font-semibold text-gray-900 mb-4 flex items-center border-b border-gray-100 pb-3">
+                                <i class="ph ph-cpu text-brand-600 text-xl mr-2"></i> System Information
+                            </h3>
+                            <div class="space-y-3">
+                                <div class="flex justify-between items-center py-1">
+                                    <span class="text-sm text-gray-500">Firmware Version</span>
+                                    <span id="set-fw-version" class="text-sm font-medium text-gray-900 font-mono">Checking…</span>
+                                </div>
+                                <div class="flex justify-between items-center py-1">
+                                    <span class="text-sm text-gray-500">Uptime</span>
+                                    <span id="set-uptime" class="text-sm font-medium text-gray-900">0h 0m</span>
+                                </div>
+                                <div class="flex justify-between items-center py-1">
+                                    <span class="text-sm text-gray-500">Free Heap Memory</span>
+                                    <span id="set-heap" class="text-sm font-medium text-gray-900 font-mono">0 KB</span>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Actions -->
+                        <div class="bg-white rounded-xl border border-gray-200 p-6 shadow-sm">
+                            <h3 class="font-semibold text-red-600 mb-4 flex items-center border-b border-gray-100 pb-3">
+                                <i class="ph ph-warning-circle text-red-600 text-xl mr-2"></i> Danger Zone
+                            </h3>
+                            <p class="text-sm text-gray-500 mb-4">Rebooting the gateway will temporarily drop all active BLE connections.</p>
+                            <button onclick="settings.restartGateway()" class="w-full px-4 py-2.5 bg-red-50 text-red-600 border border-red-200 rounded-lg hover:bg-red-100 transition-colors font-medium text-sm flex items-center justify-center">
+                                <i class="ph ph-power mr-2 text-lg"></i> Restart Gateway
+                            </button>
+                        </div>
+                    </div>
+
+                    <!-- Column 2 -->
+                    <div class="space-y-6">
+                        <!-- Network Status -->
+                        <div class="bg-white rounded-xl border border-gray-200 p-6 shadow-sm">
+                            <h3 class="font-semibold text-gray-900 mb-4 flex items-center border-b border-gray-100 pb-3">
+                                <i class="ph ph-wifi-high text-brand-600 text-xl mr-2"></i> Network Status
+                            </h3>
+                            <div class="space-y-3">
+                                <div class="flex justify-between items-center py-1">
+                                    <span class="text-sm text-gray-500">Current SSID</span>
+                                    <span id="set-ssid" class="text-sm font-medium text-gray-900">Disconnected</span>
+                                </div>
+                                <div class="flex justify-between items-center py-1">
+                                    <span class="text-sm text-gray-500">IP Address</span>
+                                    <span id="set-ip" class="text-sm font-medium text-gray-900 font-mono">0.0.0.0</span>
+                                </div>
+                                <div class="flex justify-between items-center py-1">
+                                    <span class="text-sm text-gray-500">MAC Address</span>
+                                    <span id="set-mac" class="text-sm font-medium text-gray-900 font-mono">00:00:00:00:00:00</span>
+                                </div>
+                                <div class="flex justify-between items-center py-1">
+                                    <span class="text-sm text-gray-500">Signal Strength</span>
+                                    <span id="set-wifi-rssi" class="text-sm font-medium text-gray-900">- dBm</span>
+                                </div>
+                            </div>
+                        </div>
+
+                    </div>
+                </div>
+            </section>
+
+        </div>
+    </main>
+
+    <!-- Restarting Overlay -->
+    <div id="overlay-restarting" class="fixed inset-0 bg-gray-900/80 backdrop-blur-sm z-[100] hidden flex-col items-center justify-center text-white transition-opacity opacity-0">
+        <i class="ph ph-spinner animate-spin text-5xl mb-4 text-brand-500"></i>
+        <h2 class="text-2xl font-bold mb-2">Restarting Gateway</h2>
+        <p class="text-gray-300">Please wait while the system reboots. This may take a minute...</p>
+        <p class="text-sm text-gray-400 mt-6 font-mono" id="restart-countdown">Reconnecting in 15s...</p>
+    </div>
+
+    <!-- MODAL: ADD DEVICE -->
+    <div id="modal-add-device" class="fixed inset-0 z-50 hidden items-center justify-center p-4">
+        <div class="absolute inset-0 bg-gray-900/60 backdrop-blur-sm transition-opacity opacity-0" id="modal-backdrop" onclick="ui.closeModal()"></div>
+        
+        <div class="bg-white rounded-2xl shadow-2xl w-full max-w-md transform transition-all scale-95 opacity-0 z-10 flex flex-col max-h-[90vh]" id="modal-content">
+            <div class="px-6 py-5 border-b border-gray-100 flex justify-between items-center bg-gray-50/50 rounded-t-2xl">
+                <h3 class="text-lg font-bold text-gray-900 flex items-center">
+                    <i class="ph ph-plus-circle text-brand-600 mr-2 text-xl"></i>
+                    Add New Device
+                </h3>
+                <button onclick="ui.closeModal()" class="text-gray-400 hover:text-gray-600 hover:bg-gray-100 p-1.5 rounded-md transition-colors">
+                    <i class="ph ph-x text-lg"></i>
+                </button>
+            </div>
+            
+            <div class="p-6 overflow-y-auto">
+                <p class="text-sm text-gray-600 mb-6">You are adding a new BLE device to the gateway. Please assign a friendly name to identify it easily.</p>
+                
+                <!-- Target Device Info -->
+                <div class="bg-gray-50 rounded-lg p-4 border border-gray-100 mb-6">
+                    <div class="flex justify-between items-center mb-2">
+                        <span class="text-xs font-semibold text-gray-500 uppercase tracking-wider">Device Info</span>
+                        <span class="text-xs font-mono bg-white px-2 py-0.5 rounded border border-gray-200 text-gray-600" id="modal-dev-mac">00:00:00:00:00</span>
+                    </div>
+                    <div class="font-medium text-gray-900" id="modal-dev-name">Unknown Device</div>
+                    <div class="flex items-center mt-2 text-xs text-gray-500">
+                        <i class="ph ph-wifi-high mr-1 text-green-500"></i>
+                        RSSI: <span id="modal-dev-rssi" class="ml-1 font-mono">-0 dBm</span>
+                    </div>
+                </div>
+
+                <!-- Input Form -->
+                <div class="space-y-4">
+                    <div>
+                        <label for="input-custom-name" class="block text-sm font-medium text-gray-700 mb-1">Custom Name <span class="text-red-500">*</span></label>
+                        <input type="text" id="input-custom-name" placeholder="e.g., Living Room Sensor" class="w-full px-4 py-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-brand-500 focus:border-brand-500 outline-none transition-shadow" autocomplete="off">
+                    </div>
+                    <div>
+                        <label for="input-device-type" class="block text-sm font-medium text-gray-700 mb-1">Device Category</label>
+                        <select id="input-device-type" class="w-full px-4 py-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-brand-500 focus:border-brand-500 outline-none bg-white">
+                            <option value="generic">Generic BLE Device</option>
+                            <option value="sensor">Sensor Node</option>
+                            <option value="actuator">Actuator / Relay</option>
+                            <option value="beacon">BLE Beacon</option>
+                            <option value="other">Other / Generic</option>
+                        </select>
+                    </div>
+                </div>
+            </div>
+            
+            <div class="px-6 py-4 border-t border-gray-100 bg-gray-50/50 rounded-b-2xl flex justify-end gap-3 shrink-0">
+                <button onclick="ui.closeModal()" class="px-4 py-2 text-gray-700 bg-white border border-gray-300 rounded-lg hover:bg-gray-50 transition-colors font-medium text-sm">Cancel</button>
+                <button id="btn-confirm-add" onclick="devices.addDeviceFromModal()" class="px-6 py-2 bg-brand-600 text-white rounded-lg hover:bg-brand-700 transition-colors shadow-sm font-medium text-sm flex items-center">
+                    <i class="ph ph-check-circle mr-1.5 text-lg"></i> Save Device
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- MODAL: EDIT DEVICE -->
+    <div id="modal-edit-device" class="fixed inset-0 z-50 hidden items-center justify-center p-4">
+        <div class="absolute inset-0 bg-gray-900/60 backdrop-blur-sm transition-opacity opacity-0" id="modal-edit-backdrop" onclick="ui.closeEditModal()"></div>
+        
+        <div class="bg-white rounded-2xl shadow-2xl w-full max-w-md transform transition-all scale-95 opacity-0 z-10 flex flex-col max-h-[90vh]" id="modal-edit-content">
+            <div class="px-6 py-5 border-b border-gray-100 flex justify-between items-center bg-gray-50/50 rounded-t-2xl">
+                <h3 class="text-lg font-bold text-gray-900 flex items-center">
+                    <i class="ph ph-pencil-simple text-brand-600 mr-2 text-xl"></i>
+                    Edit Device
+                </h3>
+                <button onclick="ui.closeEditModal()" class="text-gray-400 hover:text-gray-600 hover:bg-gray-100 p-1.5 rounded-md transition-colors">
+                    <i class="ph ph-x text-lg"></i>
+                </button>
+            </div>
+            
+            <div class="p-6 overflow-y-auto">
+                <div class="space-y-4">
+                    <div>
+                        <label for="input-edit-name" class="block text-sm font-medium text-gray-700 mb-1">Device Name <span class="text-red-500">*</span></label>
+                        <input type="text" id="input-edit-name" class="w-full px-4 py-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-brand-500 focus:border-brand-500 outline-none transition-shadow" autocomplete="off">
+                    </div>
+                    <div>
+                        <label for="input-edit-type" class="block text-sm font-medium text-gray-700 mb-1">Device Category</label>
+                        <select id="input-edit-type" class="w-full px-4 py-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-brand-500 focus:border-brand-500 outline-none bg-white">
+                            <option value="generic">Generic BLE Device</option>
+                            <option value="sensor">Sensor Node</option>
+                            <option value="actuator">Actuator / Relay</option>
+                            <option value="beacon">BLE Beacon</option>
+                            <option value="other">Other / Generic</option>
+                        </select>
+                    </div>
+                </div>
+            </div>
+            
+            <div class="px-6 py-4 border-t border-gray-100 bg-gray-50/50 rounded-b-2xl flex justify-end gap-3 shrink-0">
+                <button onclick="ui.closeEditModal()" class="px-4 py-2 text-gray-700 bg-white border border-gray-300 rounded-lg hover:bg-gray-50 transition-colors font-medium text-sm">Cancel</button>
+                <button onclick="devices.saveEdit()" class="px-6 py-2 bg-brand-600 text-white rounded-lg hover:bg-brand-700 transition-colors shadow-sm font-medium text-sm flex items-center">
+                    <i class="ph ph-floppy-disk mr-1.5 text-lg"></i> Save Changes
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Toast Notifications Container -->
+    <div id="toast-container" class="fixed bottom-4 right-4 z-50 flex flex-col gap-2 pointer-events-none"></div>
+
+    <script>
+        
+        // --- Configuration & State ---
+        const state = {
+            activeTab: 'devices',
+            isScanning: false,
+            scannedDevices: [],
+            connectedDevices: [],
+            selectedDeviceForAdd: null,
+            selectedDeviceDetail: null,
+            systemLogs: [],
+            logCutoff: -1,
+            deviceLogCutoffs: {}
+        };
+
+        const escapeHtml = value => String(value).replace(/[&<>'"]/g, character => ({
+            '&': '&amp;', '<': '&lt;', '>': '&gt;', "'": '&#39;', '"': '&quot;'
+        })[character]);
+
+        // --- ESP32 API Interface ---
+        const api = {
+            async request(path, options = {}) {
+                const response = await fetch(path, options);
+                let data;
+                try {
+                    data = await response.json();
+                } catch (_) {
+                    throw new Error(`Invalid response from ${path}`);
+                }
+                if (!response.ok || data.success === false) {
+                    throw new Error(data.message || `HTTP ${response.status}`);
+                }
+                return data;
+            },
+            async getDevices() {
+                const list = await this.request('/api/devices');
+                return list.map(device => ({
+                    id: device.device_id,
+                    mac: device.ble_addr || device.device_id,
+                    addrType: device.ble_addr_type || 0,
+                    customName: device.name,
+                    type: device.type || 'other',
+                    status: device.connected ? 'online' : 'offline',
+                    rssi: null
+                }));
+            },
+            async addDevice(data) {
+                return this.request('/api/devices', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({
+                        device_id: data.id,
+                        name: data.customName,
+                        type: data.type,
+                        ble_addr: data.mac,
+                        ble_addr_type: data.addrType
+                    })
+                });
+            },
+            async removeDevice(deviceId) {
+                return this.request(`/api/devices?device_id=${encodeURIComponent(deviceId)}`, {
+                    method: 'DELETE'
+                });
+            },
+            async startScan() {
+                return this.request('/api/ble/scan', {method: 'POST'});
+            },
+            async stopScan() {
+                return this.request('/api/ble/scan', {method: 'DELETE'});
+            },
+            async getScanResults() {
+                const result = await this.request('/api/ble/scan');
+                return {
+                    scanning: result.scanning,
+                    devices: result.devices.map(device => ({
+                        mac: device.ble_addr,
+                        addrType: device.addr_type || 0,
+                        name: device.name || 'Unknown Device',
+                        rssi: device.rssi
+                    }))
+                };
+            },
+            async updateDevice(deviceId, data) {
+                return this.request('/api/devices', {
+                    method: 'PUT',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({
+                        device_id: deviceId,
+                        name: data.customName,
+                        type: data.type
+                    })
+                });
+            },
+            getStatus() {
+                return this.request('/api/status');
+            },
+            getLogs() {
+                return this.request('/api/logs');
+            },
+            sendCommand(deviceId, command, boolValue = true) {
+                return this.request('/api/command', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({device_id: deviceId, command, bool_value: boolValue})
+                });
+            },
+            restart() {
+                return this.request('/api/restart', {method: 'POST'});
+            }
+        };
+
+        
+        // --- Navigation Controller ---
+        const nav = {
+            switchTab(tabId) {
+                // Update state
+                state.activeTab = tabId;
+                
+                // Hide all views
+                ['devices', 'scanner', 'logs', 'device-detail', 'settings'].forEach(id => {
+                    const el = document.getElementById(`view-${id}`);
+                    if(el) el.classList.add('hidden');
+                });
+                
+                // Reset nav button styling
+                ['devices', 'scanner', 'logs', 'settings'].forEach(id => {
+                    const btn = document.getElementById(`nav-${id}`);
+                    if(btn) btn.className = 'w-full flex items-center px-4 py-3 text-sm font-medium rounded-lg transition-colors hover:bg-dark-surface hover:text-white text-gray-300';
+                });
+                
+                // Show target view
+                const view = document.getElementById(`view-${tabId}`);
+                if(view) view.classList.remove('hidden');
+                
+                // Style active nav button (if applicable)
+                const activeBtn = document.getElementById(`nav-${tabId}`);
+                if(activeBtn) {
+                     activeBtn.className = 'w-full flex items-center px-4 py-3 text-sm font-medium rounded-lg transition-colors bg-brand-600 text-white shadow-md shadow-brand-500/20';
+                } else if (tabId === 'device-detail') {
+                    // If showing details, keep 'devices' tab highlighted
+                    const devicesBtn = document.getElementById('nav-devices');
+                    if(devicesBtn) devicesBtn.className = 'w-full flex items-center px-4 py-3 text-sm font-medium rounded-lg transition-colors bg-brand-600 text-white shadow-md shadow-brand-500/20';
+                }
+
+                // Close mobile sidebar on navigation
+                if (window.innerWidth < 768) {
+                    this.closeSidebar();
+                }
+
+                // Trigger specific view logic
+                if(tabId === 'devices') devices.renderGrid();
+                if(tabId === 'settings') settings.load();
+                if(tabId === 'scanner') {
+                    if(!state.isScanning && state.scannedDevices.length === 0) {
+                        // Optional: auto-start scan on view open
+                    }
+                }
+            },
+            toggleSidebar() {
+                const sidebar = document.getElementById('sidebar');
+                const overlay = document.getElementById('mobile-overlay');
+                if (sidebar.classList.contains('-translate-x-full')) {
+                    sidebar.classList.remove('-translate-x-full');
+                    overlay.classList.remove('hidden');
+                } else {
+                    this.closeSidebar();
+                }
+            },
+            closeSidebar() {
+                const sidebar = document.getElementById('sidebar');
+                const overlay = document.getElementById('mobile-overlay');
+                sidebar.classList.add('-translate-x-full');
+                overlay.classList.add('hidden');
+            }
+        };
+
+        // --- UI Utilities ---
+        const ui = {
+            openModal(deviceInfo) {
+                state.selectedDeviceForAdd = deviceInfo;
+                
+                // Populate modal data
+                document.getElementById('modal-dev-name').innerText = deviceInfo.name || 'Unknown Device';
+                document.getElementById('modal-dev-mac').innerText = deviceInfo.mac;
+                document.getElementById('modal-dev-rssi').innerText = deviceInfo.rssi + ' dBm';
+                
+                // Pre-fill input
+                const input = document.getElementById('input-custom-name');
+                input.value = deviceInfo.name !== 'Unknown Device' ? deviceInfo.name : '';
+                
+                const modal = document.getElementById('modal-add-device');
+                const backdrop = document.getElementById('modal-backdrop');
+                const content = document.getElementById('modal-content');
+                
+                modal.classList.remove('hidden');
+                modal.classList.add('flex');
+                
+                // Trigger reflow
+                void modal.offsetWidth;
+                
+                backdrop.classList.remove('opacity-0');
+                content.classList.remove('scale-95', 'opacity-0');
+                
+                setTimeout(() => input.focus(), 200);
+            },
+            closeModal() {
+                const modal = document.getElementById('modal-add-device');
+                const backdrop = document.getElementById('modal-backdrop');
+                const content = document.getElementById('modal-content');
+                
+                backdrop.classList.add('opacity-0');
+                content.classList.add('scale-95', 'opacity-0');
+                
+                setTimeout(() => {
+                    modal.classList.add('hidden');
+                    modal.classList.remove('flex');
+                    state.selectedDeviceForAdd = null;
+                }, 200); // match transition duration
+            },
+            openEditModal() {
+                if(!state.selectedDeviceDetail) return;
+                
+                // Populate modal data
+                document.getElementById('input-edit-name').value = state.selectedDeviceDetail.customName;
+                document.getElementById('input-edit-type').value = state.selectedDeviceDetail.type;
+                
+                const modal = document.getElementById('modal-edit-device');
+                const backdrop = document.getElementById('modal-edit-backdrop');
+                const content = document.getElementById('modal-edit-content');
+                
+                modal.classList.remove('hidden');
+                modal.classList.add('flex');
+                
+                // Trigger reflow
+                void modal.offsetWidth;
+                
+                backdrop.classList.remove('opacity-0');
+                content.classList.remove('scale-95', 'opacity-0');
+                
+                setTimeout(() => document.getElementById('input-edit-name').focus(), 200);
+            },
+            closeEditModal() {
+                const modal = document.getElementById('modal-edit-device');
+                const backdrop = document.getElementById('modal-edit-backdrop');
+                const content = document.getElementById('modal-edit-content');
+                
+                backdrop.classList.add('opacity-0');
+                content.classList.add('scale-95', 'opacity-0');
+                
+                setTimeout(() => {
+                    modal.classList.add('hidden');
+                    modal.classList.remove('flex');
+                }, 200);
+            },
+            showToast(message, type = 'info') {
+                const container = document.getElementById('toast-container');
+                const toast = document.createElement('div');
+                
+                // Icon mapping based on Phosphor icons
+                const icons = {
+                    success: '<i class="ph ph-check-circle text-green-500 text-xl mr-3"></i>',
+                    error: '<i class="ph ph-warning-circle text-red-500 text-xl mr-3"></i>',
+                    info: '<i class="ph ph-info text-blue-500 text-xl mr-3"></i>'
+                };
+                
+                toast.className = `flex items-center p-4 bg-white rounded-lg shadow-lg border border-gray-100 transform transition-all duration-300 translate-y-10 opacity-0 min-w-[300px] pointer-events-auto`;
+                toast.innerHTML = icons[type] || icons.info;
+                const text = document.createElement('p');
+                text.className = 'text-sm font-medium text-gray-800';
+                text.textContent = message;
+                toast.appendChild(text);
+                
+                container.appendChild(toast);
+                
+                // Animate in
+                requestAnimationFrame(() => {
+                    toast.classList.remove('translate-y-10', 'opacity-0');
+                });
+                
+                // Remove after 3s
+                setTimeout(() => {
+                    toast.classList.add('opacity-0', 'translate-x-10');
+                    setTimeout(() => toast.remove(), 300);
+                }, 3000);
+            }
+        };
+
+        
+        // --- Logger System ---
+        const logger = {
+            container: null,
+            init() {
+                this.container = document.getElementById('log-content');
+                this.refresh();
+            },
+            levelMeta(text) {
+                const marker = String(text).match(/^(E|W|I|D|V)\s*\(/)?.[1] || 'I';
+                return {
+                    E: ['ERR', 'text-red-400'],
+                    W: ['WARN', 'text-yellow-400'],
+                    I: ['INFO', 'text-blue-400'],
+                    D: ['DBG', 'text-purple-400'],
+                    V: ['VRB', 'text-gray-400']
+                }[marker];
+            },
+            formatUptime(milliseconds) {
+                const totalSeconds = Math.max(0, Math.floor(Number(milliseconds || 0) / 1000));
+                const hours = Math.floor(totalSeconds / 3600);
+                const minutes = Math.floor((totalSeconds % 3600) / 60);
+                const seconds = totalSeconds % 60;
+                return `${String(hours).padStart(2, '0')}:${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`;
+            },
+            appendEntry(container, entry, forcedLevel = null) {
+                if (!container) return;
+                const [level, colorClass] = forcedLevel || this.levelMeta(entry.text);
+                const div = document.createElement('div');
+                div.className = 'flex font-mono text-[13px] hover:bg-gray-800/50 py-0.5 px-1 rounded transition-colors';
+                const time = document.createElement('span');
+                time.className = 'text-gray-500 mr-3 shrink-0';
+                time.textContent = `[${this.formatUptime(entry.timestamp_ms)}]`;
+                const badge = document.createElement('span');
+                badge.className = `font-bold ${colorClass} mr-2 shrink-0 w-12`;
+                badge.textContent = `[${level}]`;
+                const message = document.createElement('span');
+                message.className = 'text-gray-300 break-all';
+                message.textContent = entry.text;
+                div.append(time, badge, message);
+                container.appendChild(div);
+            },
+            renderSystemLogs() {
+                if (!this.container) return;
+                const stick = this.container.scrollTop + this.container.clientHeight >= this.container.scrollHeight - 12;
+                this.container.replaceChildren();
+                state.systemLogs
+                    .filter(entry => entry.timestamp_ms > state.logCutoff)
+                    .forEach(entry => this.appendEntry(this.container, entry));
+                if (stick) this.container.scrollTop = this.container.scrollHeight;
+            },
+            async refresh() {
+                try {
+                    state.systemLogs = await api.getLogs();
+                    this.renderSystemLogs();
+                    if (state.activeTab === 'device-detail' && state.selectedDeviceDetail) {
+                        this.renderDeviceLogs(state.selectedDeviceDetail.id);
+                    }
+                } catch (error) {
+                    this._log('ERR', `Log refresh failed: ${error.message}`, 'text-red-400');
+                }
+            },
+            _log(level, msg, colorClass) {
+                this.appendEntry(this.container, {timestamp_ms: 0, text: `[UI] ${msg}`}, [level, colorClass]);
+                if (this.container) this.container.scrollTop = this.container.scrollHeight;
+            },
+            info(msg) { this._log('INFO', msg, 'text-blue-400'); },
+            success(msg) { this._log('OK', msg, 'text-green-400'); },
+            error(msg) { this._log('ERR', msg, 'text-red-400'); },
+            debug(msg) { this._log('DBG', msg, 'text-purple-400'); },
+            clear() {
+                state.logCutoff = state.systemLogs.at(-1)?.timestamp_ms ?? -1;
+                this.renderSystemLogs();
+            },
+            download() {
+                const text = state.systemLogs
+                    .filter(entry => entry.timestamp_ms > state.logCutoff)
+                    .map(entry => `[${this.formatUptime(entry.timestamp_ms)}] ${entry.text}`)
+                    .join('\n');
+                const blob = new Blob([text], { type: 'text/plain' });
+                const url = URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = `esp32_gateway_${new Date().toISOString().slice(0,10)}.log`;
+                a.click();
+                URL.revokeObjectURL(url);
+                ui.showToast('Log file downloaded', 'success');
+            },
+            renderDeviceLogs(deviceId) {
+                const container = document.getElementById('device-log-content');
+                if(!container) return;
+                container.replaceChildren();
+                const cutoff = state.deviceLogCutoffs[deviceId] ?? -1;
+                const logs = state.systemLogs.filter(entry =>
+                    entry.timestamp_ms > cutoff && entry.text.includes(`device=${deviceId}`));
+                if(logs.length === 0) {
+                    const empty = document.createElement('div');
+                    empty.className = 'text-gray-500 italic text-center py-4';
+                    empty.textContent = 'No recent logs for this device.';
+                    container.appendChild(empty);
+                    return;
+                }
+                logs.forEach(entry => this.appendEntry(container, entry));
+                container.scrollTop = container.scrollHeight;
+            },
+            clearDeviceLogs() {
+                if (!state.selectedDeviceDetail) return;
+                const deviceId = state.selectedDeviceDetail.id;
+                state.deviceLogCutoffs[deviceId] = state.systemLogs.at(-1)?.timestamp_ms ?? -1;
+                this.renderDeviceLogs(deviceId);
+                ui.showToast('Device log view cleared', 'info');
+            }
+        };
+
+        
+        // --- Scanner Logic ---
+        const scanner = {
+            scanInterval: null,
+            scanTimeout: null,
+            
+            async toggleScan() {
+                if (state.isScanning) {
+                    this.stopScan();
+                } else {
+                    this.startScan();
+                }
+            },
+            
+            async startScan() {
+                state.isScanning = true;
+                state.scannedDevices = []; // clear old results
+                this.updateUI();
+                
+                try {
+                    await api.startScan();
+                    
+                    // Show initial loading state if list is empty
+                    document.getElementById('scan-initial').classList.add('hidden');
+                    const resultsContainer = document.getElementById('scan-items');
+                    resultsContainer.replaceChildren();
+                    
+                    document.getElementById('scan-loading').classList.remove('hidden');
+
+                    let scanCount = 0;
+                    this.scanInterval = setInterval(async () => {
+                        try {
+                            const result = await api.getScanResults();
+                            scanCount++;
+                            if(result.devices.length > 0) {
+                                document.getElementById('scan-loading').classList.add('hidden');
+                                this.mergeResults(result.devices);
+                            } else if (scanCount > 3 && state.scannedDevices.length === 0) {
+                                document.getElementById('scan-loading').classList.add('hidden');
+                                resultsContainer.innerHTML = `
+                                    <div class="absolute inset-0 flex flex-col items-center justify-center text-gray-500 p-8 text-center bg-gray-50/50">
+                                        <i class="ph ph-mask-sad text-4xl mb-3 opacity-50"></i>
+                                        <p class="text-sm">No BLE devices found nearby.</p>
+                                        <p class="text-xs mt-1">Make sure devices are powered on and in pairing mode.</p>
+                                    </div>
+                                `;
+                            }
+                            if (!result.scanning) this.stopScan(true);
+                        } catch (error) {
+                            logger.error(`Scan refresh failed: ${error.message}`);
+                            this.stopScan(true);
+                        }
+                    }, 1000);
+                    
+                    // Firmware normally stops after six seconds; this is a UI fallback.
+                    this.scanTimeout = setTimeout(() => {
+                        if(state.isScanning) {
+                            this.stopScan();
+                        }
+                    }, 8000);
+
+                } catch(e) {
+                    logger.error("Failed to start scan: " + e.message);
+                    ui.showToast(`Failed to start scanner: ${e.message}`, "error");
+                    this.stopScan(true);
+                }
+            },
+            
+            async stopScan(skipApiCall = false) {
+                state.isScanning = false;
+                if(this.scanInterval) {
+                    clearInterval(this.scanInterval);
+                    this.scanInterval = null;
+                }
+                if(this.scanTimeout) {
+                    clearTimeout(this.scanTimeout);
+                    this.scanTimeout = null;
+                }
+                this.updateUI();
+                document.getElementById('scan-loading').classList.add('hidden');
+                
+                if(!skipApiCall) {
+                    try {
+                        await api.stopScan();
+                    } catch (error) {
+                        logger.error(`Failed to stop scan: ${error.message}`);
+                    }
+                }
+            },
+
+            mergeResults(newDevices) {
+                const container = document.getElementById('scan-items');
+                
+                // Remove empty state message if present
+                if(container.querySelector('.ph-mask-sad')) {
+                    container.innerHTML = '';
+                }
+
+                newDevices.forEach(device => {
+                    if (state.connectedDevices.some(saved => saved.mac === device.mac)) return;
+                    const existingIndex = state.scannedDevices.findIndex(d => d.mac === device.mac);
+                    if (existingIndex > -1) {
+                        // Update RSSI
+                        state.scannedDevices[existingIndex].rssi = device.rssi;
+                        const el = document.getElementById(`scanned-${device.mac.replace(/:/g, '')}`);
+                        if(el) {
+                            const rssiEl = el.querySelector('.rssi-val');
+                            if(rssiEl) rssiEl.innerText = `${device.rssi} dBm`;
+                        }
+                    } else {
+                        // Add new
+                        state.scannedDevices.push(device);
+                        logger.debug(`Found new device: ${device.mac} [${device.rssi}dBm]`);
+                        this.renderDeviceItem(device, container);
+                    }
+                });
+            },
+
+            renderDeviceItem(device, container) {
+                const id = `scanned-${device.mac.replace(/:/g, '')}`;
+                const div = document.createElement('div');
+                div.id = id;
+                div.className = "p-4 flex items-center justify-between hover:bg-brand-50/50 transition-colors cursor-pointer group border-b border-gray-100 last:border-0";
+                
+                // Calculate signal strength bars based on RSSI
+                const signalQuality = device.rssi > -60 ? 3 : (device.rssi > -80 ? 2 : 1);
+                const signalIcon = signalQuality === 3 ? 'ph-wifi-high text-green-500' : (signalQuality === 2 ? 'ph-wifi-medium text-yellow-500' : 'ph-wifi-low text-red-400');
+
+                // Determine icon based on name heuristics
+                let devIcon = 'ph-bluetooth';
+                if(device.name.toLowerCase().includes('sensor') || device.name.toLowerCase().includes('th_')) devIcon = 'ph-thermometer';
+                if(device.name.toLowerCase().includes('bulb') || device.name.toLowerCase().includes('light')) devIcon = 'ph-lightbulb';
+
+                const safeName = escapeHtml(device.name);
+                const safeMac = escapeHtml(device.mac);
+                div.innerHTML = `
+                    <div class="flex items-center">
+                        <div class="w-10 h-10 bg-gray-100 text-gray-600 rounded-full flex items-center justify-center mr-4 group-hover:bg-brand-100 group-hover:text-brand-600 transition-colors">
+                            <i class="ph ${devIcon} text-xl"></i>
+                        </div>
+                        <div>
+                            <h4 class="font-medium text-gray-900 leading-tight">${safeName}</h4>
+                            <div class="flex items-center mt-1 space-x-3 text-xs text-gray-500">
+                                <span class="font-mono bg-gray-100 px-1.5 py-0.5 rounded text-[10px]">${safeMac}</span>
+                                <span class="flex items-center" title="Signal Strength">
+                                    <i class="ph ${signalIcon} mr-1"></i>
+                                    <span class="rssi-val">${device.rssi} dBm</span>
+                                </span>
+                            </div>
+                        </div>
+                    </div>
+                    <button class="opacity-0 group-hover:opacity-100 transition-opacity px-4 py-1.5 bg-white border border-gray-200 text-brand-600 rounded shadow-sm hover:bg-brand-50 hover:border-brand-200 text-sm font-medium flex items-center">
+                        Select <i class="ph ph-arrow-right ml-1"></i>
+                    </button>
+                `;
+                
+                div.onclick = () => ui.openModal(device);
+                container.appendChild(div);
+            },
+
+            updateUI() {
+                const btnText = document.getElementById('btn-scan-text');
+                const btnIcon = document.querySelector('#btn-toggle-scan i');
+                const btn = document.getElementById('btn-toggle-scan');
+                const statusText = document.getElementById('scan-status-text');
+                const radarRing = document.getElementById('scan-radar-ring');
+                const radarFill = document.getElementById('scan-radar');
+
+                if (state.isScanning) {
+                    btnText.innerText = "Stop Scan";
+                    btnIcon.className = "ph ph-stop-circle mr-2 text-lg text-red-100";
+                    btn.className = "w-full sm:w-auto px-6 py-2.5 bg-red-500 text-white rounded-lg hover:bg-red-600 transition-colors shadow-sm font-medium flex items-center justify-center";
+                    statusText.innerText = "Scanning nearby...";
+                    radarRing.classList.remove('hidden');
+                    radarFill.classList.remove('hidden');
+                    radarRing.classList.add('animate-radar');
+                } else {
+                    btnText.innerText = "Start Scan";
+                    btnIcon.className = "ph ph-play-circle mr-2 text-lg";
+                    btn.className = "w-full sm:w-auto px-6 py-2.5 bg-brand-600 text-white rounded-lg hover:bg-brand-700 transition-colors shadow-sm font-medium flex items-center justify-center";
+                    statusText.innerText = "Ready to scan";
+                    radarRing.classList.add('hidden');
+                    radarFill.classList.add('hidden');
+                    radarRing.classList.remove('animate-radar');
+                }
+            }
+        };
+
+        
+        // --- Connected Devices Logic ---
+        const devices = {
+            async load() {
+                try {
+                    state.connectedDevices = await api.getDevices();
+                    this.renderGrid();
+                } catch(e) {
+                    logger.error("Failed to load devices: " + e.message);
+                }
+            },
+
+            renderGrid() {
+                const grid = document.getElementById('devices-grid');
+                const emptyState = document.getElementById('devices-empty');
+                
+                grid.innerHTML = '';
+                
+                if (state.connectedDevices.length === 0) {
+                    grid.classList.add('hidden');
+                    emptyState.classList.remove('hidden');
+                    emptyState.classList.add('flex');
+                    return;
+                }
+                
+                emptyState.classList.add('hidden');
+                emptyState.classList.remove('flex');
+                grid.classList.remove('hidden');
+
+                state.connectedDevices.forEach(dev => {
+                    const card = document.createElement('div');
+                    card.className = "bg-white rounded-xl border border-gray-200 p-5 shadow-sm hover:shadow-md transition-all relative overflow-hidden group cursor-pointer hover:border-brand-300";
+                    card.onclick = () => this.openDetailView(dev);
+                    
+                    // Status indicator color
+                    const statusColor = dev.status === 'online' ? 'bg-green-500' : 'bg-gray-400';
+                    const typeIconMap = {
+                        'sensor': 'ph-thermometer text-orange-500 bg-orange-50',
+                        'actuator': 'ph-plugs-connected text-blue-500 bg-blue-50',
+                        'beacon': 'ph-broadcast text-purple-500 bg-purple-50',
+                        'other': 'ph-bluetooth text-gray-500 bg-gray-100'
+                    };
+                    const iconClass = typeIconMap[dev.type] || typeIconMap['other'];
+                    const safeName = escapeHtml(dev.customName);
+                    const safeMac = escapeHtml(dev.mac);
+
+                    card.innerHTML = `
+                        <!-- Colored top accent -->
+                        <div class="absolute top-0 left-0 w-full h-1 ${dev.status === 'online' ? 'bg-green-400' : 'bg-gray-200'}"></div>
+                        
+                        <div class="flex justify-between items-start mb-4">
+                            <div class="flex items-center">
+                                <div class="w-10 h-10 rounded-lg flex items-center justify-center mr-3 ${iconClass.split(' ').slice(1).join(' ')}">
+                                    <i class="ph ${iconClass.split(' ')[0]} text-2xl"></i>
+                                </div>
+                                <div>
+                                    <h3 class="font-bold text-gray-900 truncate pr-2 max-w-[150px]" title="${safeName}">${safeName}</h3>
+                                    <p class="text-xs text-gray-500 font-mono">${safeMac}</p>
+                                </div>
+                            </div>
+                            
+                            <div class="text-gray-300 group-hover:text-brand-500 transition-colors">
+                                <i class="ph ph-caret-right text-xl"></i>
+                            </div>
+                        </div>
+                        
+                        <div class="mt-4 pt-4 border-t border-gray-100">
+                            <div class="flex justify-between items-center text-sm">
+                                <span class="flex items-center text-gray-600">
+                                    <span class="w-2 h-2 rounded-full ${statusColor} mr-2"></span>
+                                    ${dev.status === 'online' ? 'Connected' : 'Offline'}
+                                </span>
+                                <span class="text-xs text-gray-400 capitalize">${escapeHtml(dev.type)}</span>
+                            </div>
+                        </div>
+                    `;
+                    grid.appendChild(card);
+                });
+            },
+
+            openDetailView(dev) {
+                state.selectedDeviceDetail = dev;
+                
+                // Update UI elements
+                document.getElementById('detail-name').innerText = dev.customName;
+                document.getElementById('detail-mac').innerText = dev.mac;
+                document.getElementById('detail-type').innerText = dev.type;
+                document.getElementById('detail-device-id').innerText = dev.id;
+                document.getElementById('detail-ble-address').innerText = dev.mac;
+                
+                // Status
+                const statusEl = document.getElementById('detail-status');
+                if(dev.status === 'online') {
+                    statusEl.innerHTML = `<span class="w-2.5 h-2.5 rounded-full bg-green-500 mr-2 animate-pulse"></span> <span class="text-green-600">Online</span>`;
+                } else {
+                    statusEl.innerHTML = `<span class="w-2.5 h-2.5 rounded-full bg-gray-400 mr-2"></span> <span class="text-gray-500">Offline</span>`;
+                }
+
+                // Icon
+                const typeIconMap = {
+                    'sensor': 'ph-thermometer text-orange-500 bg-orange-50',
+                    'actuator': 'ph-plugs-connected text-blue-500 bg-blue-50',
+                    'beacon': 'ph-broadcast text-purple-500 bg-purple-50',
+                    'other': 'ph-bluetooth text-gray-500 bg-gray-100'
+                };
+                const iconClass = typeIconMap[dev.type] || typeIconMap['other'];
+                const iconContainer = document.getElementById('detail-icon');
+                iconContainer.className = `w-12 h-12 rounded-lg flex items-center justify-center mr-4 text-2xl ${iconClass.split(' ').slice(1).join(' ')}`;
+                iconContainer.innerHTML = `<i class="ph ${iconClass.split(' ')[0]}"></i>`;
+
+                // Load Logs
+                logger.renderDeviceLogs(dev.id);
+
+                // Switch view
+                nav.switchTab('device-detail');
+            },
+
+            async saveEdit() {
+                if(!state.selectedDeviceDetail) return;
+                
+                const newName = document.getElementById('input-edit-name').value.trim();
+                const newType = document.getElementById('input-edit-type').value;
+                
+                if(!newName) {
+                    ui.showToast("Name cannot be empty", "error");
+                    return;
+                }
+
+                try {
+                    await api.updateDevice(state.selectedDeviceDetail.id, { customName: newName, type: newType });
+                    
+                    // Update local state
+                    const devIndex = state.connectedDevices.findIndex(d => d.id === state.selectedDeviceDetail.id);
+                    if(devIndex > -1) {
+                        state.connectedDevices[devIndex].customName = newName;
+                        state.connectedDevices[devIndex].type = newType;
+                        
+                        // Update current detail view
+                        this.openDetailView(state.connectedDevices[devIndex]);
+                        
+                        ui.showToast("Device updated", "success");
+                        ui.closeEditModal();
+                    }
+                } catch(e) {
+                    ui.showToast("Failed to update device", "error");
+                }
+            },
+
+            confirmDeleteDetail() {
+                if(!state.selectedDeviceDetail) return;
+                this.remove(state.selectedDeviceDetail.id, true);
+            },
+
+            async sendToggle() {
+                if (!state.selectedDeviceDetail) return;
+                await this.sendCommand('toggle');
+            },
+
+            async sendCustomCommand() {
+                const command = document.getElementById('input-device-command').value.trim();
+                if (!command) {
+                    ui.showToast('Command cannot be empty', 'error');
+                    return;
+                }
+                await this.sendCommand(command);
+            },
+
+            async sendCommand(command) {
+                const device = state.selectedDeviceDetail;
+                if (!device) return;
+                try {
+                    const result = await api.sendCommand(device.id, command);
+                    ui.showToast(result.message || `Command ${command} completed`, 'success');
+                    await logger.refresh();
+                } catch (error) {
+                    ui.showToast(error.message, 'error');
+                    await logger.refresh();
+                }
+            },
+
+            async addDeviceFromModal() {
+                if (!state.selectedDeviceForAdd) return;
+
+                const nameInput = document.getElementById('input-custom-name').value.trim();
+                const typeInput = document.getElementById('input-device-type').value;
+                const btn = document.getElementById('btn-confirm-add');
+                
+                if(!nameInput) {
+                    ui.showToast("Please enter a custom name.", "error");
+                    document.getElementById('input-custom-name').focus();
+                    return;
+                }
+
+                // UI Loading state
+                const originalHtml = btn.innerHTML;
+                btn.innerHTML = `<i class="ph ph-spinner animate-spin mr-1.5 text-lg"></i> Provisioning...`;
+                btn.disabled = true;
+                btn.classList.add('opacity-80', 'cursor-not-allowed');
+
+                const newDevice = {
+                    id: state.selectedDeviceForAdd.mac,
+                    mac: state.selectedDeviceForAdd.mac,
+                    addrType: state.selectedDeviceForAdd.addrType,
+                    customName: nameInput,
+                    type: typeInput,
+                    rssi: state.selectedDeviceForAdd.rssi,
+                    status: 'offline'
+                };
+
+                try {
+                    logger.info(`Attempting to bind device ${newDevice.mac} as '${newDevice.customName}'...`);
+                    
+                    // Call backend API
+                    await api.addDevice(newDevice);
+                    
+                    // Remove from scanned list
+                    state.scannedDevices = state.scannedDevices.filter(d => d.mac !== newDevice.mac);
+                    
+                    logger.success(`Successfully bonded to ${newDevice.mac}. Added to gateway.`);
+                    ui.showToast(`Added ${newDevice.customName} successfully`, "success");
+                    
+                    ui.closeModal();
+                    
+                    // If still scanning, visually remove from list
+                    if(state.isScanning || state.scannedDevices.length > 0) {
+                        const el = document.getElementById(`scanned-${newDevice.mac.replace(/:/g, '')}`);
+                        if(el) {
+                            el.classList.add('scale-95', 'opacity-0');
+                            setTimeout(() => el.remove(), 200);
+                        }
+                    }
+                    
+                    await this.load();
+
+                } catch(e) {
+                    logger.error(`Provisioning failed for ${newDevice.mac}: ${e.message}`);
+                    ui.showToast("Failed to add device. See logs.", "error");
+                } finally {
+                    // Reset button state
+                    btn.innerHTML = originalHtml;
+                    btn.disabled = false;
+                    btn.classList.remove('opacity-80', 'cursor-not-allowed');
+                }
+            },
+
+            async remove(deviceId, fromDetailView = false) {
+                if(!confirm("Are you sure you want to remove this device from the gateway?")) return;
+                
+                try {
+                    logger.info(`Removing device ${deviceId}...`);
+                    await api.removeDevice(deviceId);
+                    state.connectedDevices = state.connectedDevices.filter(d => d.id !== deviceId);
+                    delete state.deviceLogCutoffs[deviceId];
+
+                    logger.success(`Device ${deviceId} removed successfully.`);
+                    ui.showToast("Device removed", "info");
+                    
+                    if(fromDetailView) {
+                        nav.switchTab('devices');
+                    } else {
+                        this.renderGrid();
+                    }
+                    
+                } catch(e) {
+                    logger.error(`Failed to remove device: ${e.message}`);
+                    ui.showToast("Failed to remove device", "error");
+                }
+            }
+        };
+
+        // --- Settings Logic ---
+        const settings = {
+            formatUptime(milliseconds) {
+                const seconds = Math.floor(milliseconds / 1000);
+                const days = Math.floor(seconds / 86400);
+                const hours = Math.floor((seconds % 86400) / 3600);
+                const minutes = Math.floor((seconds % 3600) / 60);
+                return `${days ? `${days}d ` : ''}${hours}h ${minutes}m`;
+            },
+            async load() {
+                try {
+                    const status = await api.getStatus();
+                    document.getElementById('set-fw-version').innerText =
+                        `${status.firmware_version} · IDF ${status.idf_version}`;
+                    document.getElementById('set-uptime').innerText = this.formatUptime(status.uptime_ms);
+                    document.getElementById('set-heap').innerText = `${(status.free_heap / 1024).toFixed(1)} KB`;
+                    document.getElementById('set-ssid').innerText = status.wifi_ssid || 'Disconnected';
+                    document.getElementById('set-ip').innerText = status.ip;
+                    document.getElementById('set-mac').innerText = status.wifi_mac;
+                    document.getElementById('set-wifi-rssi').innerText =
+                        Number.isFinite(status.wifi_rssi) ? `${status.wifi_rssi} dBm` : 'N/A';
+                    document.getElementById('sidebar-ip').innerText = status.ip;
+                    document.getElementById('sidebar-status-text').innerText = 'Gateway Online';
+                    document.getElementById('sidebar-status-dot').className =
+                        'w-2 h-2 rounded-full bg-green-500 mr-2 animate-pulse';
+                } catch(e) {
+                    document.getElementById('sidebar-status-text').innerText = 'Gateway Offline';
+                    document.getElementById('sidebar-status-dot').className =
+                        'w-2 h-2 rounded-full bg-red-500 mr-2';
+                    logger.error(`Failed to load settings data: ${e.message}`);
+                    ui.showToast('Could not load system info', 'error');
+                }
+            },
+
+            async restartGateway() {
+                if(!confirm("Are you sure you want to restart the ESP32 Gateway?")) return;
+                
+                try {
+                    logger.info("Restart command sent to gateway.");
+                    await api.restart();
+                    this.triggerRestartUI();
+                } catch(e) {
+                    ui.showToast("Failed to send restart command", "error");
+                }
+            },
+
+            triggerRestartUI() {
+                const overlay = document.getElementById('overlay-restarting');
+                overlay.classList.remove('hidden');
+                overlay.classList.add('flex');
+                
+                // Trigger reflow
+                void overlay.offsetWidth;
+                overlay.classList.remove('opacity-0');
+
+                let count = 15;
+                const counterEl = document.getElementById('restart-countdown');
+                
+                const interval = setInterval(() => {
+                    count--;
+                    counterEl.innerText = `Reconnecting in ${count}s...`;
+                    if (count <= 0) {
+                        clearInterval(interval);
+                        counterEl.innerText = "Reloading page...";
+                        window.location.reload();
+                    }
+                }, 1000);
+            }
+        };
+
+        // --- Initialization ---
+        window.addEventListener('DOMContentLoaded', async () => {
+            logger.init();
+            await Promise.all([devices.load(), settings.load()]);
+            setInterval(() => devices.load(), 5000);
+            setInterval(() => logger.refresh(), 2000);
+            setInterval(() => settings.load(), 10000);
+        });
+
+    </script>
+</body>
+</html>

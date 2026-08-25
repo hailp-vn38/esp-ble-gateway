@@ -224,7 +224,16 @@ def test_switch_to_sta_after_wifi_config():
     resp = requests.post(f"http://192.168.4.1/api/wifi",
                          json={"ssid": "TestNetwork", "password": "testpass"})
     assert resp.json()["success"] == True
-    time.sleep(5)  # Cho gateway chuyen mode va ket noi
+    deadline = time.time() + 25
+    while time.time() < deadline:
+        job = requests.get("http://192.168.4.1/api/wifi").json()
+        if job["state"] == "succeeded":
+            break
+        assert job["state"] != "failed", job["message"]
+        time.sleep(0.5)
+    else:
+        pytest.fail("Wi-Fi configuration timed out")
+    time.sleep(5)  # Cho gateway restart va chuyen mode
     # Kiem tra gateway co IP moi
     resp = requests.get(f"http://{GATEWAY_IP}/api/status")
     assert resp.json()["wifi_connected"] == True

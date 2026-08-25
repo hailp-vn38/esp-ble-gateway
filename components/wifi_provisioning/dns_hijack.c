@@ -38,18 +38,68 @@ static int question_end_offset(const uint8_t *query, int query_len)
     return offset + 4 <= query_len ? offset + 4 : -1;
 }
 
+static uint8_t ascii_lower(uint8_t character)
+{
+    return character >= 'A' && character <= 'Z' ? character + ('a' - 'A')
+                                                 : character;
+}
+
+static bool question_name_equals(const uint8_t *query, int query_len,
+                                 const char *expected_name)
+{
+    int offset = DNS_HEADER_LEN;
+    const char *expected = expected_name;
+    while (offset < query_len) {
+        uint8_t label_length = query[offset++];
+        if (label_length == 0) return *expected == '\0';
+        if ((label_length & 0xc0) != 0 || label_length > 63 ||
+            offset + label_length > query_len) {
+            return false;
+        }
+        for (uint8_t i = 0; i < label_length; i++) {
+            if (expected[i] == '\0' || expected[i] == '.' ||
+                ascii_lower(query[offset + i]) !=
+                    ascii_lower((uint8_t)expected[i])) {
+                return false;
+            }
+        }
+        expected += label_length;
+        if (*expected == '.') {
+            expected++;
+        } else if (*expected != '\0') {
+            return false;
+        }
+        offset += label_length;
+    }
+    return false;
+}
+
+static bool is_adguard_injection_domain(const uint8_t *query, int query_len)
+{
+    return question_name_equals(query, query_len, "local.adguard.org") ||
+           question_name_equals(query, query_len, "local.adguard.com");
+}
+
 static int build_dns_response(uint8_t packet[DNS_MAX_PACKET_LEN], int query_len)
 {
     int question_end = question_end_offset(packet, query_len);
-    if (question_end < 0 || question_end + DNS_ANSWER_LEN > DNS_MAX_PACKET_LEN) return -1;
+    if (question_end < 0) return -1;
 
     packet[2] = 0x81; /* response, recursion desired */
     packet[3] = 0x80; /* recursion available, no error */
     packet[4] = 0;
     packet[5] = 1;    /* one question */
     packet[6] = 0;
-    packet[7] = 1;    /* one answer */
+    packet[7] = 0;
     packet[8] = packet[9] = packet[10] = packet[11] = 0;
+
+    if (is_adguard_injection_domain(packet, query_len)) {
+        packet[3] = 0x83; /* recursion available, NXDOMAIN */
+        ESP_LOGI(TAG, "Rejected AdGuard local content-script DNS query");
+        return question_end;
+    }
+    if (question_end + DNS_ANSWER_LEN > DNS_MAX_PACKET_LEN) return -1;
+    packet[7] = 1; /* one answer */
 
     int offset = question_end;
     packet[offset++] = 0xc0;

@@ -302,6 +302,12 @@ int wifi_prov_scan(wifi_prov_ap_record_t *records, size_t max_records,
     wifi_scan_config_t scan_config = {
         .show_hidden = false,
         .scan_type = WIFI_SCAN_TYPE_ACTIVE,
+        .scan_time.active = {
+            .min = 20,
+            .max = 60,
+        },
+        .home_chan_dwell_time = 30,
+        .coex_background_scan = true,
     };
     esp_err_t error = esp_wifi_scan_start(&scan_config, true);
     if (error != ESP_OK) {

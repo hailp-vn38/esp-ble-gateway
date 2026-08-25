@@ -1,0 +1,615 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>ESP32 BLE Gateway Setup</title>
+    <style>
+        :root {
+            --primary: #0ea5e9;
+            --primary-dark: #0284c7;
+            --bg-color: #f8fafc;
+            --card-bg: #ffffff;
+            --text-main: #1e293b;
+            --text-muted: #64748b;
+            --border: #e2e8f0;
+            --error: #ef4444;
+            --success: #22c55e;
+        }
+
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+        }
+
+        body {
+            background-color: var(--bg-color);
+            color: var(--text-main);
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            min-height: 100vh;
+            padding: 20px;
+        }
+
+        .container {
+            background: var(--card-bg);
+            width: 100%;
+            max-width: 400px;
+            border-radius: 16px;
+            box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.1), 0 8px 10px -6px rgba(0, 0, 0, 0.1);
+            overflow: hidden;
+        }
+
+        .header {
+            background: var(--primary);
+            color: white;
+            padding: 24px 20px;
+            text-align: center;
+        }
+
+        .header h1 {
+            font-size: 1.5rem;
+            font-weight: 600;
+            margin-bottom: 4px;
+        }
+        
+        .header p {
+            font-size: 0.875rem;
+            opacity: 0.9;
+        }
+
+        .content {
+            padding: 24px 20px;
+        }
+
+        .form-group {
+            margin-bottom: 16px;
+        }
+
+        .form-group label {
+            display: block;
+            font-size: 0.875rem;
+            font-weight: 500;
+            margin-bottom: 8px;
+            color: var(--text-main);
+        }
+
+        .input-field {
+            width: 100%;
+            padding: 12px 16px;
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            font-size: 1rem;
+            transition: border-color 0.2s;
+            outline: none;
+        }
+
+        .input-field:focus {
+            border-color: var(--primary);
+            box-shadow: 0 0 0 3px rgba(14, 165, 233, 0.2);
+        }
+
+        .btn {
+            width: 100%;
+            padding: 14px;
+            border: none;
+            border-radius: 8px;
+            font-size: 1rem;
+            font-weight: 600;
+            cursor: pointer;
+            transition: background-color 0.2s, transform 0.1s;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            gap: 8px;
+        }
+        
+        .btn:active {
+            transform: scale(0.98);
+        }
+
+        .btn-primary {
+            background-color: var(--primary);
+            color: white;
+        }
+
+        .btn-primary:hover {
+            background-color: var(--primary-dark);
+        }
+
+        .btn-outline {
+            background-color: transparent;
+            color: var(--primary);
+            border: 1px solid var(--primary);
+            margin-bottom: 20px;
+        }
+
+        .btn-outline:hover {
+            background-color: rgba(14, 165, 233, 0.05);
+        }
+
+        .wifi-list-container {
+            max-height: 200px;
+            overflow-y: auto;
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            margin-bottom: 20px;
+            display: none;
+        }
+        
+        .wifi-list-container.active {
+            display: block;
+        }
+
+        .wifi-item {
+            padding: 12px 16px;
+            border-bottom: 1px solid var(--border);
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            cursor: pointer;
+            transition: background-color 0.2s;
+        }
+
+        .wifi-item:last-child {
+            border-bottom: none;
+        }
+
+        .wifi-item:hover {
+            background-color: #f1f5f9;
+        }
+
+        .wifi-info {
+            display: flex;
+            flex-direction: column;
+        }
+
+        .wifi-ssid {
+            font-weight: 500;
+            font-size: 0.95rem;
+        }
+
+        .wifi-security {
+            font-size: 0.75rem;
+            color: var(--text-muted);
+            margin-top: 2px;
+        }
+
+        .wifi-signal {
+            display: flex;
+            gap: 2px;
+            align-items: flex-end;
+            height: 16px;
+        }
+
+        .bar {
+            width: 3px;
+            background-color: #cbd5e1;
+            border-radius: 1px;
+        }
+        
+        .bar.active { background-color: var(--primary); }
+        .bar:nth-child(1) { height: 4px; }
+        .bar:nth-child(2) { height: 8px; }
+        .bar:nth-child(3) { height: 12px; }
+        .bar:nth-child(4) { height: 16px; }
+
+        .alert {
+            padding: 12px 16px;
+            border-radius: 8px;
+            margin-bottom: 16px;
+            font-size: 0.875rem;
+            display: none;
+        }
+
+        .alert-error {
+            background-color: #fef2f2;
+            color: #b91c1c;
+            border: 1px solid #fecaca;
+        }
+        
+        .alert-success {
+            background-color: #f0fdf4;
+            color: #15803d;
+            border: 1px solid #bbf7d0;
+        }
+
+        .spinner {
+            border: 3px solid rgba(255,255,255,0.3);
+            border-radius: 50%;
+            border-top: 3px solid white;
+            width: 20px;
+            height: 20px;
+            animation: spin 1s linear infinite;
+            display: none;
+        }
+        
+        .spinner.dark {
+            border: 3px solid rgba(14, 165, 233, 0.2);
+            border-top: 3px solid var(--primary);
+        }
+
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+
+        .toggle-password {
+            position: absolute;
+            right: 12px;
+            top: 50%;
+            transform: translateY(-50%);
+            background: none;
+            border: none;
+            color: var(--text-muted);
+            cursor: pointer;
+            padding: 4px;
+        }
+
+        .input-group {
+            position: relative;
+        }
+
+        /* Overlay for connecting state */
+        .overlay {
+            position: fixed;
+            top: 0; left: 0; right: 0; bottom: 0;
+            background: rgba(255, 255, 255, 0.9);
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            z-index: 100;
+            display: none;
+            text-align: center;
+            padding: 20px;
+        }
+        
+        .overlay h2 { margin-top: 16px; color: var(--text-main); }
+        .overlay p { margin-top: 8px; color: var(--text-muted); font-size: 0.9rem; }
+        
+        .overlay .spinner-large {
+            width: 48px;
+            height: 48px;
+            border-width: 4px;
+        }
+
+    </style>
+</head>
+<body>
+
+    <div class="container" id="main-card">
+        <div class="header">
+            <h1>Gateway Setup</h1>
+            <p>Connect ESP32 to your local network</p>
+        </div>
+
+        <div class="content">
+            <div id="alert-box" class="alert alert-error"></div>
+
+            <button type="button" class="btn btn-outline" id="btn-scan" onclick="app.scanWifi()">
+                <div id="scan-spinner" class="spinner dark"></div>
+                <span id="scan-text">Scan for WiFi Networks</span>
+            </button>
+
+            <div class="wifi-list-container" id="wifi-list">
+                <!-- WiFi items will be injected here -->
+            </div>
+
+            <form id="wifi-form" onsubmit="app.saveConfig(event)">
+                <div class="form-group">
+                    <label for="ssid">Network Name (SSID)</label>
+                    <input type="text" id="ssid" class="input-field" placeholder="Enter WiFi Name" required autocomplete="off">
+                </div>
+
+                <div class="form-group">
+                    <label for="password">Password</label>
+                    <div class="input-group">
+                        <input type="password" id="password" class="input-field" placeholder="Enter WiFi Password" autocomplete="off">
+                        <button type="button" class="toggle-password" onclick="app.togglePassword()">
+                            <svg id="eye-icon" xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path><circle cx="12" cy="12" r="3"></circle></svg>
+                        </button>
+                    </div>
+                </div>
+
+                <button type="submit" class="btn btn-primary" id="btn-save">
+                    <div id="save-spinner" class="spinner"></div>
+                    <span id="save-text">Connect & Restart</span>
+                </button>
+            </form>
+        </div>
+    </div>
+
+    <!-- Loading Overlay -->
+    <div class="overlay" id="loading-overlay">
+        <div class="spinner spinner-large dark" style="display: block;"></div>
+        <h2 id="overlay-title">Applying Settings...</h2>
+        <p id="overlay-message">The Gateway is testing the WiFi connection.</p>
+    </div>
+
+    <script>
+        const app = {
+            scanInProgress: false,
+
+            endpoints: {
+                status: '/api/status',
+                scan: '/api/wifi/scan',
+                config: '/api/wifi'
+            },
+            
+            elements: {
+                scanBtn: document.getElementById('btn-scan'),
+                scanText: document.getElementById('scan-text'),
+                scanSpinner: document.getElementById('scan-spinner'),
+                wifiList: document.getElementById('wifi-list'),
+                ssidInput: document.getElementById('ssid'),
+                passInput: document.getElementById('password'),
+                saveBtn: document.getElementById('btn-save'),
+                saveText: document.getElementById('save-text'),
+                saveSpinner: document.getElementById('save-spinner'),
+                alertBox: document.getElementById('alert-box'),
+                overlay: document.getElementById('loading-overlay'),
+                overlayTitle: document.getElementById('overlay-title'),
+                overlayMessage: document.getElementById('overlay-message')
+            },
+
+            delay(milliseconds) {
+                return new Promise(resolve => setTimeout(resolve, milliseconds));
+            },
+
+            async request(path, options = {}, timeoutMs = 8000) {
+                const controller = new AbortController();
+                const timeout = setTimeout(() => controller.abort(), timeoutMs);
+                try {
+                    const response = await fetch(path, {...options, signal: controller.signal});
+                    let data;
+                    try {
+                        data = await response.json();
+                    } catch (_) {
+                        throw new Error(`Invalid response from ${path}`);
+                    }
+                    if (!response.ok || data.success === false) {
+                        throw new Error(data.message || `HTTP ${response.status}`);
+                    }
+                    return data;
+                } catch (error) {
+                    if (error.name === 'AbortError') {
+                        throw new Error('Gateway response timed out');
+                    }
+                    throw error;
+                } finally {
+                    clearTimeout(timeout);
+                }
+            },
+
+            async init() {
+                try {
+                    const [status, job, scan] = await Promise.all([
+                        this.request(this.endpoints.status),
+                        this.request(this.endpoints.config),
+                        this.request(this.endpoints.scan)
+                    ]);
+                    if (!status.provisioning) {
+                        this.showError('Gateway is already configured. Reconnect using its LAN IP.');
+                        return;
+                    }
+                    if (job.state === 'connecting' || job.state === 'succeeded') {
+                        this.showConnectionOverlay(job);
+                        if (job.state === 'connecting') await this.monitorWifiJob();
+                        return;
+                    }
+                    if (scan.networks && scan.networks.length > 0) {
+                        this.renderWifiList(scan.networks);
+                    }
+                    if (scan.error) {
+                        this.showError(scan.error);
+                    } else if (scan.scanning) {
+                        // Resume monitoring a scan started by another page without starting a new one.
+                        void this.scanWifi({startScan: false, initialResult: scan});
+                    }
+                } catch (error) {
+                    this.elements.overlay.style.display = 'none';
+                    this.showError(error.message);
+                }
+            },
+
+            showError(msg) {
+                this.elements.alertBox.className = 'alert alert-error';
+                this.elements.alertBox.innerText = msg;
+                this.elements.alertBox.style.display = 'block';
+            },
+
+            hideAlert() {
+                this.elements.alertBox.style.display = 'none';
+            },
+
+            showConnectionOverlay(job = {}) {
+                const succeeded = job.state === 'succeeded';
+                this.elements.overlayTitle.innerText = succeeded
+                    ? 'WiFi Connected'
+                    : 'Testing Connection...';
+                this.elements.overlayMessage.innerText = job.message || (succeeded
+                    ? 'Settings saved. The Gateway is restarting.'
+                    : 'This can take up to 20 seconds. You may safely reload this page.');
+                this.elements.overlay.style.display = 'flex';
+            },
+
+            restoreControls() {
+                this.elements.scanBtn.disabled = false;
+                this.elements.saveBtn.disabled = false;
+                this.elements.saveText.innerText = 'Connect & Restart';
+                this.elements.saveSpinner.style.display = 'none';
+            },
+
+            togglePassword() {
+                const passInput = this.elements.passInput;
+                const eyeIcon = document.getElementById('eye-icon');
+                
+                if (passInput.type === 'password') {
+                    passInput.type = 'text';
+                    eyeIcon.innerHTML = `<path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24"></path><line x1="1" y1="1" x2="23" y2="23"></line>`;
+                } else {
+                    passInput.type = 'password';
+                    eyeIcon.innerHTML = `<path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path><circle cx="12" cy="12" r="3"></circle>`;
+                }
+            },
+
+            async scanWifi({startScan = true, initialResult = null} = {}) {
+                if (this.scanInProgress) return;
+                this.scanInProgress = true;
+                this.hideAlert();
+                
+                // Update UI to scanning state
+                this.elements.scanBtn.disabled = true;
+                this.elements.saveBtn.disabled = true;
+                this.elements.scanText.innerText = 'Scanning...';
+                this.elements.scanSpinner.style.display = 'block';
+
+                try {
+                    if (startScan) {
+                        await this.request(this.endpoints.scan, {method: 'POST'});
+                    }
+                    let result = initialResult;
+                    for (let attempt = 0; attempt < 40; attempt++) {
+                        if (!result) result = await this.request(this.endpoints.scan);
+                        if (result.error) throw new Error(result.error);
+                        if (!result.scanning) {
+                            this.renderWifiList(result.networks);
+                            return;
+                        }
+                        await this.delay(350);
+                        result = null;
+                    }
+                    throw new Error('WiFi scan timed out');
+                } catch (error) {
+                    this.showError(error.message);
+                } finally {
+                    // Reset UI
+                    this.scanInProgress = false;
+                    this.elements.scanBtn.disabled = false;
+                    this.elements.saveBtn.disabled = false;
+                    this.elements.scanText.innerText = 'Scan for WiFi Networks';
+                    this.elements.scanSpinner.style.display = 'none';
+                }
+            },
+
+            renderWifiList(networks) {
+                this.elements.wifiList.innerHTML = '';
+                this.elements.wifiList.classList.remove('active');
+                if (!networks || networks.length === 0) {
+                    this.showError('No WiFi networks found nearby.');
+                    return;
+                }
+
+                // Sort by signal strength (RSSI) descending
+                networks.sort((a, b) => b.rssi - a.rssi);
+
+                networks.forEach(net => {
+                    // Calculate signal bars (0 to 4) based on RSSI
+                    let bars = 0;
+                    if (net.rssi > -60) bars = 4;
+                    else if (net.rssi > -70) bars = 3;
+                    else if (net.rssi > -80) bars = 2;
+                    else bars = 1;
+
+                    const item = document.createElement('div');
+                    item.className = 'wifi-item';
+                    item.addEventListener('click', () => this.selectWifi(net.ssid));
+
+                    const info = document.createElement('div');
+                    info.className = 'wifi-info';
+                    const ssid = document.createElement('span');
+                    ssid.className = 'wifi-ssid';
+                    ssid.textContent = net.ssid;
+                    const security = document.createElement('span');
+                    security.className = 'wifi-security';
+                    security.textContent = net.secure ? 'Secured' : 'Open';
+                    info.append(ssid, security);
+
+                    const signal = document.createElement('div');
+                    signal.className = 'wifi-signal';
+                    for (let i = 1; i <= 4; i++) {
+                        const bar = document.createElement('div');
+                        bar.className = `bar ${i <= bars ? 'active' : ''}`;
+                        signal.appendChild(bar);
+                    }
+                    item.append(info, signal);
+                    this.elements.wifiList.appendChild(item);
+                });
+
+                this.elements.wifiList.classList.add('active');
+            },
+
+            selectWifi(ssid) {
+                this.elements.ssidInput.value = ssid;
+                this.elements.passInput.value = '';
+                this.elements.passInput.focus();
+                
+                // Highlight selected item (optional visual feedback)
+                const items = this.elements.wifiList.querySelectorAll('.wifi-item');
+                items.forEach(item => {
+                    if(item.querySelector('.wifi-ssid').innerText === ssid) {
+                        item.style.backgroundColor = '#e0f2fe';
+                    } else {
+                        item.style.backgroundColor = '';
+                    }
+                });
+            },
+
+            async saveConfig(e) {
+                e.preventDefault();
+                this.hideAlert();
+                
+                const ssid = this.elements.ssidInput.value.trim();
+                const password = this.elements.passInput.value;
+
+                if (!ssid) {
+                    this.showError('SSID is required.');
+                    return;
+                }
+
+                // Update Button UI
+                this.elements.saveBtn.disabled = true;
+                this.elements.scanBtn.disabled = true;
+                this.elements.saveText.innerText = 'Connecting...';
+                this.elements.saveSpinner.style.display = 'block';
+
+                try {
+                    const job = await this.request(this.endpoints.config, {
+                        method: 'POST',
+                        headers: {'Content-Type': 'application/json'},
+                        body: JSON.stringify({ssid, password})
+                    });
+                    this.showConnectionOverlay(job);
+                    await this.monitorWifiJob();
+                } catch (error) {
+                    this.elements.overlay.style.display = 'none';
+                    this.showError(error.message);
+                    this.restoreControls();
+                }
+            },
+
+            async monitorWifiJob() {
+                for (let attempt = 0; attempt < 80; attempt++) {
+                    const job = await this.request(this.endpoints.config);
+                    this.showConnectionOverlay(job);
+                    if (job.state === 'succeeded') return;
+                    if (job.state === 'failed') {
+                        throw new Error(job.message || 'WiFi connection failed');
+                    }
+                    if (job.state !== 'connecting') {
+                        throw new Error('WiFi configuration stopped unexpectedly');
+                    }
+                    await this.delay(500);
+                }
+                throw new Error('WiFi connection timed out');
+            }
+        };
+
+        window.addEventListener('DOMContentLoaded', () => app.init());
+    </script>
+</body>
+</html>

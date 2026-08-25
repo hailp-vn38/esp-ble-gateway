@@ -1,0 +1,132 @@
+@font-face {
+  font-family: "Phosphor";
+  src: url("/assets/Phosphor.woff2") format("woff2");
+  font-weight: normal;
+  font-style: normal;
+  font-display: block;
+}
+
+.ph {
+  /* use !important to prevent issues with browser extensions that change fonts */
+  font-family: "Phosphor" !important;
+  speak: never;
+  font-style: normal;
+  font-weight: normal;
+  font-variant: normal;
+  text-transform: none;
+  line-height: 1;
+
+  /* Enable Ligatures ================ */
+  letter-spacing: 0;
+  -webkit-font-feature-settings: "liga";
+  -moz-font-feature-settings: "liga=1";
+  -moz-font-feature-settings: "liga";
+  -ms-font-feature-settings: "liga" 1;
+  font-feature-settings: "liga";
+  -webkit-font-variant-ligatures: discretionary-ligatures;
+  font-variant-ligatures: discretionary-ligatures;
+
+  /* Better Font Rendering =========== */
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+.ph.ph-arrow-left:before {
+  content: "\e058";
+}
+.ph.ph-arrow-right:before {
+  content: "\e06c";
+}
+.ph.ph-bluetooth:before {
+  content: "\e0da";
+}
+.ph.ph-broadcast:before {
+  content: "\e0f2";
+}
+.ph.ph-caret-right:before {
+  content: "\e13a";
+}
+.ph.ph-check-circle:before {
+  content: "\e184";
+}
+.ph.ph-cpu:before {
+  content: "\e610";
+}
+.ph.ph-devices:before {
+  content: "\eba4";
+}
+.ph.ph-download-simple:before {
+  content: "\e20c";
+}
+.ph.ph-floppy-disk:before {
+  content: "\e248";
+}
+.ph.ph-gear:before {
+  content: "\e270";
+}
+.ph.ph-info:before {
+  content: "\e2ce";
+}
+.ph.ph-lightbulb:before {
+  content: "\e2dc";
+}
+.ph.ph-list:before {
+  content: "\e2f0";
+}
+.ph.ph-magnifying-glass:before {
+  content: "\e30c";
+}
+.ph.ph-mask-sad:before {
+  content: "\eb9e";
+}
+.ph.ph-pencil-simple:before {
+  content: "\e3b4";
+}
+.ph.ph-play-circle:before {
+  content: "\e3d2";
+}
+.ph.ph-plugs:before {
+  content: "\eb56";
+}
+.ph.ph-plugs-connected:before {
+  content: "\eb5a";
+}
+.ph.ph-plus:before {
+  content: "\e3d4";
+}
+.ph.ph-plus-circle:before {
+  content: "\e3d6";
+}
+.ph.ph-power:before {
+  content: "\e3da";
+}
+.ph.ph-spinner:before {
+  content: "\e66a";
+}
+.ph.ph-stop-circle:before {
+  content: "\e46e";
+}
+.ph.ph-terminal-window:before {
+  content: "\eae8";
+}
+.ph.ph-thermometer:before {
+  content: "\e5c6";
+}
+.ph.ph-trash:before {
+  content: "\e4a6";
+}
+.ph.ph-warning-circle:before {
+  content: "\e4e2";
+}
+.ph.ph-wifi-high:before {
+  content: "\e4ea";
+}
+.ph.ph-wifi-low:before {
+  content: "\e4ec";
+}
+.ph.ph-wifi-medium:before {
+  content: "\e4ee";
+}
+.ph.ph-x:before {
+  content: "\e4f6";
+}

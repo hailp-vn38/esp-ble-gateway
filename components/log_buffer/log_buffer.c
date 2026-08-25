@@ -1,4 +1,8 @@
+#include <stdarg.h>
+#include <stdbool.h>
+#include <stdio.h>
 #include <string.h>
+#include "esp_log.h"
 #include "esp_timer.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/semphr.h"
@@ -8,6 +12,32 @@ static log_entry_t s_buffer[LOG_BUFFER_CAPACITY];
 static int s_head = 0;
 static int s_count = 0;
 static SemaphoreHandle_t s_mutex = NULL;
+static vprintf_like_t s_original_vprintf = &vprintf;
+static bool s_log_hook_installed = false;
+
+static int log_buffer_vprintf(const char *format, va_list args)
+{
+    va_list serial_args;
+    va_copy(serial_args, args);
+    int result = s_original_vprintf(format, serial_args);
+    va_end(serial_args);
+
+    char line[LOG_ENTRY_MAX_LEN];
+    va_list buffer_args;
+    va_copy(buffer_args, args);
+    int length = vsnprintf(line, sizeof(line), format, buffer_args);
+    va_end(buffer_args);
+
+    if (length > 0) {
+        size_t stored_length = strnlen(line, sizeof(line));
+        while (stored_length > 0 &&
+               (line[stored_length - 1] == '\n' || line[stored_length - 1] == '\r')) {
+            line[--stored_length] = '\0';
+        }
+        if (stored_length > 0) log_buffer_push(line);
+    }
+    return result;
+}
 
 void log_buffer_init(void)
 {
@@ -17,6 +47,11 @@ void log_buffer_init(void)
     s_head = 0;
     s_count = 0;
     xSemaphoreGive(s_mutex);
+
+    if (!s_log_hook_installed) {
+        s_original_vprintf = esp_log_set_vprintf(log_buffer_vprintf);
+        s_log_hook_installed = true;
+    }
 }
 
 void log_buffer_push(const char *text)

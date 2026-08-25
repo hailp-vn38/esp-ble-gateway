@@ -19,6 +19,8 @@ static void on_device_notify(const char *device_id, const gw_message_t *msg)
 
 void app_main(void)
 {
+    log_buffer_init();
+
     esp_err_t ret = nvs_flash_init();
     if (ret == ESP_ERR_NVS_NO_FREE_PAGES || ret == ESP_ERR_NVS_NEW_VERSION_FOUND) {
         ESP_ERROR_CHECK(nvs_flash_erase());
@@ -49,8 +51,6 @@ void app_main(void)
         ESP_LOGE(TAG, "Device store initialization failed");
         return;
     }
-    log_buffer_init();
-
     if (command_dispatcher_init() != 0) {
         ESP_LOGE(TAG, "Command dispatcher initialization failed");
         return;

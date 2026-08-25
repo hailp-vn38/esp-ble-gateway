@@ -1,5 +1,7 @@
 #include <stdio.h>
+#include <string.h>
 
+#include "esp_log.h"
 #include "log_buffer.h"
 #include "unity.h"
 
@@ -23,4 +25,15 @@ TEST_CASE("log buffer recent API validates its limit", "[log_buffer]")
     log_entry_t entry;
     TEST_ASSERT_EQUAL_INT(-1, log_buffer_get_recent(&entry, 0));
     TEST_ASSERT_EQUAL_INT(-1, log_buffer_get_recent(NULL, 1));
+}
+
+TEST_CASE("log buffer captures ESP-IDF logs", "[log_buffer]")
+{
+    log_buffer_init();
+    ESP_LOGI("log_buffer_test", "captured-web-log");
+
+    log_entry_t recent[4];
+    int count = log_buffer_get_recent(recent, 4);
+    TEST_ASSERT_GREATER_THAN(0, count);
+    TEST_ASSERT_NOT_NULL(strstr(recent[count - 1].text, "captured-web-log"));
 }
