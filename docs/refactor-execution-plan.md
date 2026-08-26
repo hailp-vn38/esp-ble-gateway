@@ -154,7 +154,7 @@ dashboard.
 | GĐ2 command_executor | ✅ Đã test trên board | 4/4 unit test PASS; fix bug stats decrement trong quá trình test |
 | GĐ3 Migrate REST | ✅ Đã test trên board | 400 sync / 502 async NOT_CONNECTED đúng mapping; burst 90 lệnh, heap ổn định (94868→94324→94508); status/logs responsive |
 | GĐ4 Migrate MCP + xóa mcp_async | ✅ Đã test trên board | Xóa `mcp_async.c` + Kconfig stack; `/mcp` device_command → executor completion format JSON-RPC (§67); queue-full 503 test lại qua executor thật; 119 PASS / 8 FAIL DNS pre-existing |
-| GĐ5 HTTP body correctness | ⏳ | |
+| GĐ5 HTTP body correctness | ✅ Đã test trên board | 413+close với body lớn; 408+close sau ~3.4s với slow client; keep-alive GIỮ cho body đã consume (400 rồi request kế tiếp vẫn OK trên cùng socket); limit theo endpoint đúng (600B: devices=413, command=400) |
 | GĐ6 Services + headroom | ⏳ | Route headroom đã nâng sẵn ở GĐ0 |
 | GĐ7 P2 metrics/tuning | ⏳ | |
 
