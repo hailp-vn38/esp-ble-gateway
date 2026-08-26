@@ -255,11 +255,67 @@ Bước 3 và 4 có thể song song sau Bước 2. Bước 5 cần Bước 2 (he
 ## Xác minh end-to-end
 
 ```bash
-cd test && idf.py build flash monitor   # chạy tất cả Unity tests
-idf.py build                            # verify main firmware compiles
+cd test && idf.py set-target esp32s3 && idf.py build && idf.py -p <PORT> flash monitor
+idf.py set-target esp32s3 && idf.py build   # verify main firmware compiles
 # Test thủ công với curl:
 curl -X POST http://<IP>/mcp \
   -H "Content-Type: application/json" \
   -H "Authorization: Bearer <token>" \
   -d '{"jsonrpc":"2.0","id":1,"method":"tools/list"}'
 ```
+
+Lưu ý: không có target `idf.py test` — Unity tests tự chạy lúc boot rồi rơi vào
+menu tương tác (theo AGENTS.md).
+
+---
+
+## Quyết định thiết kế đã khóa (bản hoàn thiện)
+
+Các điều chỉnh so với bản gốc sau khi review code thực tế:
+
+1. **Bước 1 — transport hooks thay vì weak-symbol mock.** Weak-symbol
+   `httpd_req_recv`/`httpd_resp_send` gây xung đột symbol khi `esp_http_server`
+   bị link vào test app. Thay bằng struct hook bất biến kiểu
+   `mcp_transport_t` (recv/send/send_err/set_type/set_status/set_hdr/get_header/
+   async_begin/async_complete), mặc định trỏ vào hàm httpd thật, test inject
+   qua `mcp_transport_set()` — cùng pattern với `device_command_set_hooks()`.
+
+2. **Bước 2 — early-reject phải đóng connection.** Mọi path từ chối mà không
+   đọc body (oversize, auth fail, host fail, rate limit, sai Content-Type) đặt
+   header `Connection: close`, nếu không keep-alive sẽ parse rác từ body còn
+   tồn đọng. `dispatch_result_t` không heap-alloc mỗi call nữa: một buffer
+   static duy nhất + mutex (đồng thời là lock serialization dispatcher giữa
+   httpd task và async worker).
+
+3. **Bước 3 — semantics lỗi HTTP rõ ràng.** Token sai/thiếu → `401` +
+   `-32021` (+ `WWW-Authenticate: Bearer`); Host/Origin không khớp → `403` +
+   `-32021`; rate limit vượt → `429` + `-32021`; Content-Type sai → `415`.
+   Rate limit chạy trước auth để chặn brute-force token.
+
+4. **Bước 4 — allowlist denial là tool error, không phải protocol error.**
+   Unknown tool → `-32602`. Command ngoài allowlist → result với
+   `isError: true` (legacy: `success: false`). Fallback
+   `unknown + device_id → device_command` bị xóa hoàn toàn kể cả legacy mode
+   (breaking change có chủ ý, ghi trong README).
+
+5. **Bước 5 — validate đồng bộ trước enqueue.** Job chỉ mang `gw_message_t`
+   (256B) + id copy + meta; worker chỉ dispatch + format + send + complete.
+   `httpd_req_async_handler_begin()` fail hoặc queue đầy → 503 ngay trên path
+   đã biết. Notification device_command cũng đi qua worker nhưng worker bỏ qua
+   send response. Stack high-water được log sau mỗi job.
+
+6. **Bước 6 — wire contract 2026-07-28.** `tools/call` trả CallToolResult:
+   `{resultType:"complete", content:[{type:"text",text}], isError,
+   structuredContent?, _meta}`; `tools/list` thêm `ttlMs`/`cacheScope`;
+   method mới `server/discover`; `_meta["io.modelcontextprotocol/
+   protocolVersion"]="2026-07-28"` trên mọi result. Header version khác giá
+   trị hỗ trợ → `-32022` kể cả khi legacy mode bật.
+
+7. **Bước 7 — NVS override đọc mỗi request** (namespace `mcp`, key `legacy`,
+   u8) để OTA-flip có hiệu lực không cần reboot; đọc thất bại → fallback
+   Kconfig.
+
+8. **Bước 8 — giới hạn thực tế của Unity on-target.** Concurrency nhiều client
+   thật cần hardware ngoài; unit test phủ: ma trận error code, wire format
+   matrix, timeout-no-infinite-loop, heap-stability loop (leak < 2KB), queue
+   full → 503 với mock ACK. Đo concurrency thật bằng curl song song thủ công.

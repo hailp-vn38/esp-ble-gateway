@@ -10,3 +10,13 @@ CONFIG_ESPTOOLPY_FLASHSIZE_16MB=y
 # Unity tests place dispatch_result_t (~4.1 KB) and other fixtures on the
 # main task stack; the 3584-byte default overflows.
 CONFIG_ESP_MAIN_TASK_STACK_SIZE=12288
+
+# ==== MCP endpoint under test ====
+# Dev mode (empty token); allowlist matches the mock Host header; "toggle"
+# is allowlisted so the device_command path can be exercised end-to-end.
+CONFIG_MCP_AUTH_TOKEN=""
+CONFIG_MCP_HOST_ALLOWLIST="gateway.local"
+CONFIG_MCP_DEVICE_COMMAND_ALLOWLIST="toggle,set_power"
+CONFIG_MCP_LEGACY_MODE=y
+CONFIG_MCP_ASYNC_STACK=8192
+

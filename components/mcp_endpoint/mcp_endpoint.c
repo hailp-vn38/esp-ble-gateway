@@ -12,44 +12,276 @@
 
 static const char *TAG = "mcp_endpoint";
 
-static char *receive_body(httpd_req_t *request)
+// Default transport hooks -> real esp_http_server implementation.
+static int default_recv(httpd_req_t *req, char *buf, int buf_len)
 {
-    if (request->content_len <= 0 || request->content_len > MCP_MAX_REQUEST_LEN) {
+    return httpd_req_recv(req, buf, buf_len);
+}
+
+static esp_err_t default_send(httpd_req_t *req, const char *buf, size_t len)
+{
+    return httpd_resp_send(req, buf, len);
+}
+
+static esp_err_t default_send_err(httpd_req_t *req, int status,
+                                  const char *message)
+{
+    return httpd_resp_send_err(req, (httpd_err_code_t)status, message);
+}
+
+static esp_err_t default_set_type(httpd_req_t *req, const char *type)
+{
+    return httpd_resp_set_type(req, type);
+}
+
+static esp_err_t default_set_status(httpd_req_t *req, const char *status)
+{
+    return httpd_resp_set_status(req, status);
+}
+
+static esp_err_t default_set_hdr(httpd_req_t *req, const char *field,
+                                 const char *value)
+{
+    return httpd_resp_set_hdr(req, field, value);
+}
+
+static char *default_get_header(httpd_req_t *req, const char *name)
+{
+    size_t len = 0;
+    if (httpd_req_get_hdr_value_len(req, name) == 0) return NULL;
+    len = httpd_req_get_hdr_value_len(req, name) + 1;
+    char *value = malloc(len);
+    if (value == NULL) return NULL;
+    if (httpd_req_get_hdr_value_str(req, name, value, len) != ESP_OK) {
+        free(value);
         return NULL;
     }
+    return value;
+}
+
+static esp_err_t default_async_begin(httpd_req_t *req, httpd_req_t **out)
+{
+    return httpd_req_async_handler_begin(req, out);
+}
+
+static esp_err_t default_async_complete(httpd_req_t *req)
+{
+    return httpd_req_async_handler_complete(req);
+}
+
+static const mcp_transport_t s_default_transport = {
+    .recv = default_recv,
+    .send = default_send,
+    .send_err = default_send_err,
+    .set_type = default_set_type,
+    .set_status = default_set_status,
+    .set_hdr = default_set_hdr,
+    .get_header = default_get_header,
+    .async_begin = default_async_begin,
+    .async_complete = default_async_complete,
+};
+
+static mcp_transport_t s_transport;
+
+void mcp_transport_set(const mcp_transport_t *hooks)
+{
+    s_transport = (hooks != NULL) ? *hooks : s_default_transport;
+}
+
+const mcp_transport_t *mcp_transport_get(void)
+{
+    return &s_transport;
+}
+
+typedef enum {
+    MCP_RECV_OK,
+    MCP_RECV_ERR_SIZE,
+    MCP_RECV_ERR_MEM,
+    MCP_RECV_ERR_READ,
+    MCP_RECV_ERR_TIMEOUT,
+} mcp_recv_status_t;
+
+static mcp_recv_status_t receive_body(httpd_req_t *request, char **out_body)
+{
+    *out_body = NULL;
+    if (request->content_len <= 0 || request->content_len > MCP_MAX_REQUEST_LEN) {
+        return MCP_RECV_ERR_SIZE;
+    }
     char *body = malloc((size_t)request->content_len + 1);
-    if (body == NULL) return NULL;
+    if (body == NULL) return MCP_RECV_ERR_MEM;
 
     size_t received = 0;
+    int timeout_retries = 0;
     while (received < (size_t)request->content_len) {
-        int chunk = httpd_req_recv(request, body + received,
-                                   request->content_len - (int)received);
-        if (chunk == HTTPD_SOCK_ERR_TIMEOUT) continue;
+        int chunk = s_transport.recv(request, body + received,
+                                     request->content_len - (int)received);
+        if (chunk == HTTPD_SOCK_ERR_TIMEOUT) {
+            if (++timeout_retries > MCP_MAX_RECV_RETRIES) {
+                free(body);
+                return MCP_RECV_ERR_TIMEOUT;
+            }
+            continue;
+        }
         if (chunk <= 0) {
             free(body);
-            return NULL;
+            return MCP_RECV_ERR_READ;
         }
         received += (size_t)chunk;
     }
     body[received] = '\0';
-    return body;
+    *out_body = body;
+    return MCP_RECV_OK;
 }
 
-static esp_err_t mcp_post_handler(httpd_req_t *request)
+static esp_err_t send_gate_error(httpd_req_t *request, mcp_gate_status_t gate)
 {
-    if (request->content_len <= 0 || request->content_len > MCP_MAX_REQUEST_LEN) {
-        return mcp_rpc_send_error(request, -32600, "Invalid Request", NULL);
+    // The request body was never read: keep-alive would desync on the next
+    // pipelined request, so every gate rejection closes the connection.
+    const char *status = "400 Bad Request";
+    switch (gate) {
+    case MCP_GATE_RATE_LIMITED:
+        status = "429 Too Many Requests";
+        break;
+    case MCP_GATE_UNAUTHORIZED:
+        status = "401 Unauthorized";
+        break;
+    case MCP_GATE_FORBIDDEN_HOST:
+        status = "403 Forbidden";
+        break;
+    case MCP_GATE_BAD_CONTENT_TYPE:
+        status = "415 Unsupported Media Type";
+        break;
+    case MCP_GATE_OK:
+        return ESP_OK;
     }
-    char *body = receive_body(request);
-    if (body == NULL) {
-        return mcp_rpc_send_error(request, -32700, "Parse error", NULL);
+
+    int code = (gate == MCP_GATE_BAD_CONTENT_TYPE) ? -32600 : MCP_ERR_AUTH;
+    if (gate == MCP_GATE_UNAUTHORIZED) {
+        s_transport.set_hdr(request, "WWW-Authenticate", "Bearer");
+    }
+    return mcp_rpc_send_error_ex(request, code, status, NULL, NULL, status,
+                                 true);
+}
+
+static esp_err_t handle_tools_call(httpd_req_t *request, cJSON *root,
+                                   const cJSON *id, bool notification,
+                                   const mcp_request_meta_t *meta)
+{
+    const cJSON *params = cJSON_GetObjectItemCaseSensitive(root, "params");
+    gw_message_t message;
+    memset(&message, 0, sizeof(message));
+    bool is_device_command = false;
+    char denial[96];
+    mcp_rpc_error_t rpc_error = {0};
+
+    mcp_resolve_status_t resolve =
+        mcp_tools_resolve(params, &message, &is_device_command, denial,
+                          sizeof(denial), &rpc_error);
+    if (resolve == MCP_RESOLVE_INVALID) {
+        return mcp_rpc_send_error_ex(request, rpc_error.code, rpc_error.message,
+                                     id, meta, NULL, false);
+    }
+
+    if (is_device_command && resolve != MCP_RESOLVE_ALLOWLIST_DENIED) {
+        cJSON *id_copy = id != NULL ? cJSON_Duplicate(id, true) : NULL;
+        if (id != NULL && id_copy == NULL) {
+            return mcp_rpc_send_error_ex(request, -32603, "Internal error", id,
+                                         meta, NULL, false);
+        }
+        if (s_transport.async_begin(request, &request) == ESP_OK) {
+            esp_err_t submitted =
+                mcp_async_submit(request, id_copy, &message, meta, notification);
+            if (submitted == ESP_OK) {
+                return ESP_OK;
+            }
+            s_transport.async_complete(request);
+            if (submitted == ESP_ERR_NO_MEM) {
+                // Queue full / worker gone: answer 503 and release the socket.
+                cJSON_Delete(id_copy);
+                return mcp_rpc_send_error_ex(
+                    request, -32000, "Busy: command queue full", id, meta,
+                    "503 Service Unavailable", false);
+            }
+            // Worker unavailable entirely: degrade to synchronous execution
+            // rather than lying with a 503.
+            cJSON_Delete(id_copy);
+        } else {
+            cJSON_Delete(id_copy);
+            // Async handoff unavailable: fall through to synchronous execution.
+        }
+    }
+
+    if (resolve == MCP_RESOLVE_ALLOWLIST_DENIED) {
+        if (notification) {
+            return mcp_rpc_send_no_content(request);
+        }
+        mcp_rpc_error_t tool_err = {0};
+        cJSON *result = mcp_tools_tool_error(denial, meta, &tool_err);
+        if (result == NULL) {
+            return mcp_rpc_send_error_ex(request, tool_err.code,
+                                         tool_err.message, id, meta, NULL,
+                                         false);
+        }
+        return mcp_rpc_send_result_ex(request, result, id, meta);
+    }
+
+    cJSON *result = mcp_tools_execute(&message, meta, &rpc_error);
+    if (result == NULL) {
+        return mcp_rpc_send_error_ex(request, rpc_error.code, rpc_error.message,
+                                     id, meta, NULL, false);
+    }
+    if (notification) {
+        cJSON_Delete(result);
+        return mcp_rpc_send_no_content(request);
+    }
+    return mcp_rpc_send_result_ex(request, result, id, meta);
+}
+
+esp_err_t mcp_handle_request(httpd_req_t *request)
+{
+    mcp_gate_status_t gate = mcp_auth_gate(request);
+    if (gate != MCP_GATE_OK) {
+        return send_gate_error(request, gate);
+    }
+
+    mcp_request_meta_t meta;
+    memset(&meta, 0, sizeof(meta));
+    int version_check = mcp_codec_parse_meta(request, &meta);
+    if (version_check != 0) {
+        return mcp_rpc_send_error_ex(
+            request, MCP_ERR_VERSION, "Unsupported MCP-Protocol-Version", NULL,
+            NULL, "400 Bad Request", true);
+    }
+
+    char *body = NULL;
+    mcp_recv_status_t recv_status = receive_body(request, &body);
+    if (recv_status != MCP_RECV_OK) {
+        const char *message = "Parse error";
+        int code = -32700;
+        const char *http_status = NULL;
+        if (recv_status == MCP_RECV_ERR_SIZE) {
+            message = "Invalid Request: body exceeds limit";
+            code = -32600;
+            http_status = "413 Content Too Large";
+        } else if (recv_status == MCP_RECV_ERR_MEM) {
+            message = "Internal error";
+            code = -32603;
+        }
+        // Size rejections skip reading the body; close to keep the socket sane.
+        bool close_conn = (recv_status == MCP_RECV_ERR_SIZE);
+        return mcp_rpc_send_error_ex(request, code, message, NULL, NULL,
+                                     http_status, close_conn);
     }
 
     cJSON *root = cJSON_Parse(body);
     free(body);
-    if (!cJSON_IsObject(root)) {
-        cJSON_Delete(root);
+    if (root == NULL) {
         return mcp_rpc_send_error(request, -32700, "Parse error", NULL);
+    }
+    if (!cJSON_IsObject(root)) {
+        // Valid JSON but wrong shape is an Invalid Request, not a parse error.
+        cJSON_Delete(root);
+        return mcp_rpc_send_error(request, -32600, "Invalid Request", NULL);
     }
 
     const cJSON *id = cJSON_GetObjectItemCaseSensitive(root, "id");
@@ -60,60 +292,66 @@ static esp_err_t mcp_post_handler(httpd_req_t *request)
     if (!cJSON_IsString(version) || version->valuestring == NULL ||
         strcmp(version->valuestring, "2.0") != 0 || !cJSON_IsString(method) ||
         method->valuestring == NULL || method->valuestring[0] == '\0' || !valid_id) {
-        esp_err_t result = mcp_rpc_send_error(
-            request, -32600, "Invalid Request", id);
+        esp_err_t result = mcp_rpc_send_error_ex(request, -32600,
+                                                 "Invalid Request", id, &meta,
+                                                 NULL, false);
         cJSON_Delete(root);
         return result;
     }
 
     bool notification = id == NULL;
-    cJSON *rpc_result = NULL;
-    mcp_rpc_error_t rpc_error = {0};
+    esp_err_t outcome;
     if (strcmp(method->valuestring, "list_tools") == 0 ||
         strcmp(method->valuestring, "tools/list") == 0) {
-        rpc_result = mcp_tools_list();
+        cJSON *rpc_result = mcp_tools_list(&meta);
         if (rpc_result == NULL) {
-            rpc_error = (mcp_rpc_error_t){-32603, "Internal error"};
+            outcome = mcp_rpc_send_error(request, -32603, "Internal error", id);
+        } else if (notification) {
+            cJSON_Delete(rpc_result);
+            outcome = mcp_rpc_send_no_content(request);
+        } else {
+            outcome = mcp_rpc_send_result_ex(request, rpc_result, id, &meta);
         }
     } else if (strcmp(method->valuestring, "call_tool") == 0 ||
                strcmp(method->valuestring, "tools/call") == 0) {
-        const cJSON *params = cJSON_GetObjectItemCaseSensitive(root, "params");
-        rpc_result = mcp_tools_call(params, &rpc_error);
+        outcome = handle_tools_call(request, root, id, notification, &meta);
+    } else if (strcmp(method->valuestring, "server/discover") == 0) {
+        cJSON *rpc_result = mcp_codec_build_discovery();
+        if (rpc_result == NULL) {
+            outcome = mcp_rpc_send_error(request, -32603, "Internal error", id);
+        } else if (notification) {
+            cJSON_Delete(rpc_result);
+            outcome = mcp_rpc_send_no_content(request);
+        } else {
+            outcome = mcp_rpc_send_result_ex(request, rpc_result, id, &meta);
+        }
     } else {
-        rpc_error = (mcp_rpc_error_t){-32601, "Method not found"};
+        outcome = mcp_rpc_send_error(request, -32601, "Method not found", id);
     }
 
-    if (notification) {
-        cJSON_Delete(rpc_result);
-        cJSON_Delete(root);
-        httpd_resp_set_status(request, "204 No Content");
-        return httpd_resp_send(request, NULL, 0);
-    }
-
-    esp_err_t result;
-    if (rpc_error.code != 0) {
-        cJSON_Delete(rpc_result);
-        result = mcp_rpc_send_error(
-            request, rpc_error.code, rpc_error.message, id);
-    } else {
-        result = mcp_rpc_send_result(request, rpc_result, id);
-    }
     cJSON_Delete(root);
-    return result;
+    return outcome;
 }
 
 int mcp_endpoint_register(httpd_handle_t server)
 {
     if (server == NULL) return -1;
+    mcp_transport_set(NULL);
+
+    if (mcp_async_init() != 0) {
+        ESP_LOGE(TAG, "MCP async worker failed to start");
+        return -1;
+    }
     const httpd_uri_t route = {
         .uri = "/mcp",
         .method = HTTP_POST,
-        .handler = mcp_post_handler,
+        .handler = mcp_handle_request,
         .user_ctx = NULL,
     };
     esp_err_t error = httpd_register_uri_handler(server, &route);
     if (error != ESP_OK) {
         ESP_LOGE(TAG, "Could not register POST /mcp: %s", esp_err_to_name(error));
+        mcp_async_deinit();
         return -1;
     }
     ESP_LOGI(TAG, "MCP JSON-RPC endpoint registered at POST /mcp");

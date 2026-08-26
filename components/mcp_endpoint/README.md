@@ -5,24 +5,31 @@
 `mcp_endpoint` cung cấp một endpoint HTTP để AI Agent hoặc ứng dụng trong mạng
 LAN gọi các command của ESP32 BLE Gateway bằng JSON-RPC 2.0.
 
-Endpoint hiện tại là một **MCP subset tối giản**, tập trung vào hai thao tác:
+Endpoint hỗ trợ hai chế độ wire format:
 
-- lấy danh sách tool từ Command Dispatcher;
-- gọi một tool và trả kết quả dưới dạng JSON-RPC.
+- **Legacy** (mặc định): JSON-RPC 2.0 thuần, response dạng `{success,message,data}`;
+- **MCP `2026-07-28`**: client gửi header `MCP-Protocol-Version: 2026-07-28`,
+  response chuyển sang CallToolResult (`resultType`, `content`, `isError`,
+  `_meta`) kèm cache hints cho `tools/list` và method `server/discover`.
 
-Component không triển khai đầy đủ MCP protocol. Hiện chưa có session,
-`initialize`, resources, prompts, streaming/SSE hoặc authentication.
+Component KHÔNG triển khai đầy đủ MCP protocol: không có session,
+`initialize`, resources, prompts hay streaming/SSE.
 
 ```text
 AI Agent / Client
         │
         │ POST /mcp (JSON-RPC 2.0)
         ▼
-  mcp_endpoint.c
+  mcp_endpoint.c ──► mcp_auth.c      (token / Host / Origin / rate limit)
+        │        ──► mcp_codec.c     (header 2026-07-28, legacy NVS flag)
         │
         ├── mcp_tools.c ──► command_dispatcher ──► Gateway/BLE device
+        │         ▲
+        │         └── mcp_registry.c (tool table + schema + annotations)
         │
-        └── mcp_rpc.c   ──► JSON-RPC result/error response
+        ├── mcp_async.c   (device_command chạy trên worker riêng)
+        │
+        └── mcp_rpc.c     (JSON-RPC result/error, legacy + 2026 envelope)
 ```
 
 ## 2. Cấu trúc component
@@ -30,337 +37,192 @@ AI Agent / Client
 ```text
 components/mcp_endpoint/
 ├── include/
-│   └── mcp_endpoint.h
+│   └── mcp_endpoint.h          Public API
+├── Kconfig.projbuild           Token, allowlist, legacy mode, rate limit
 ├── CMakeLists.txt
-├── mcp_endpoint.c
-├── mcp_endpoint_internal.h
-├── mcp_rpc.c
-├── mcp_tools.c
+├── mcp_endpoint.c              Route, receive body, JSON-RPC dispatch
+├── mcp_endpoint_internal.h     Kiểu + API private giữa các source file
+├── mcp_auth.c                  Bearer token (constant-time), Host/Origin,
+│                               Content-Type, rate limit (token bucket 10 rps)
+├── mcp_codec.c                 Header MCP-Protocol-Version, NVS legacy flag,
+│                               server/discover payload
+├── mcp_registry.c              Bảng tool duy nhất: schema từng tool +
+│                               annotations (readOnlyHint, destructiveHint…)
+├── mcp_tools.c                 Chuẩn hóa arguments → gw_message_t, allowlist
+│                               device_command, format kết quả theo wire mode
+├── mcp_async.c                 Worker task (1 worker / queue 2) cho
+│                               device_command — không block HTTPD task 2s
+├── mcp_rpc.c                   Envelope JSON-RPC legacy + 2026 (_meta)
+├── test/                       Unity tests (characterization, conformance,
+│                               stress) qua transport-hook mock
 └── README.md
 ```
-
-| File | Chức năng |
-| --- | --- |
-| `mcp_endpoint.c` | Đăng ký route, nhận HTTP body, kiểm tra JSON-RPC và điều phối method |
-| `mcp_rpc.c` | Dựng và gửi JSON-RPC result/error response |
-| `mcp_tools.c` | Liệt kê tool, chuẩn hóa arguments thành `gw_message_t` và gọi dispatcher |
-| `mcp_endpoint_internal.h` | Kiểu dữ liệu và API private giữa các source file |
-| `include/mcp_endpoint.h` | Public API của component |
-| `CMakeLists.txt` | Khai báo source và dependency cho ESP-IDF |
 
 Chỉ `include/mcp_endpoint.h` là public interface. Không nên gọi trực tiếp các
 hàm khai báo trong `mcp_endpoint_internal.h` từ component khác.
 
 ## 3. Dependency
 
-Component phụ thuộc vào:
-
 - `esp_http_server`: đăng ký và xử lý `POST /mcp`;
 - `espressif__cjson`: parse và tạo JSON;
 - `cbor_codec`: chuyển arguments JSON sang `gw_message_t`;
-- `command_dispatcher`: lấy danh sách command và thực thi command.
-
-Các dependency được khai báo trong `CMakeLists.txt`:
-
-```cmake
-idf_component_register(
-    SRCS "mcp_endpoint.c"
-         "mcp_rpc.c"
-         "mcp_tools.c"
-    INCLUDE_DIRS "include"
-    REQUIRES esp_http_server cbor_codec command_dispatcher espressif__cjson
-)
-```
+- `command_dispatcher`: thực thi command;
+- `nvs_flash`: override runtime cho token và legacy mode;
+- `esp_timer`, `freertos`: rate limit và async worker.
 
 ## 4. Public API
 
-Include public header:
-
 ```c
 #include "mcp_endpoint.h"
-```
 
-Component cung cấp một hàm:
-
-```c
 int mcp_endpoint_register(httpd_handle_t server);
 ```
 
-Hàm đăng ký route `POST /mcp` vào một HTTP server đã được khởi động:
-
-- trả `0` khi đăng ký thành công;
-- trả `-1` nếu handle bằng `NULL` hoặc không đăng ký được route.
-
-Ví dụ tích hợp:
-
-```c
-httpd_handle_t server = web_server_start();
-if (server != NULL && mcp_endpoint_register(server) != 0) {
-    ESP_LOGE(TAG, "MCP endpoint registration failed");
-}
-```
-
-`command_dispatcher_init()` cần hoàn tất trước khi client gọi endpoint để
-registry đã chứa các gateway command mặc định.
+Hàm khởi tạo async worker, đăng ký route `POST /mcp`; trả `0` thành công,
+`-1` thất bại (worker/route). Gọi sau khi `command_dispatcher_init()` +
+`freeze_registry()`.
 
 ## 5. HTTP contract
 
 ```text
 Method       POST
 Path         /mcp
-Content-Type application/json
-Body limit   4096 bytes
+Content-Type application/json (bắt buộc, sai → 415)
+Body limit   4096 bytes (vượt → 413 + Connection: close)
+Rate limit   10 req/s burst 10 (vượt → 429)
+Auth         Authorization: Bearer <token> (sai/thiếu → 401)
+Host         phải nằm trong allowlist (sai → 403, chống DNS rebinding)
 ```
 
-Request phải là một JSON object có dạng:
+Mọi path từ chối trước khi đọc body đều kèm `Connection: close`.
 
-```json
-{
-  "jsonrpc": "2.0",
-  "method": "tools/list",
-  "params": {},
-  "id": 1
-}
-```
-
-Quy tắc chính:
-
-- `jsonrpc` bắt buộc và phải bằng `"2.0"`;
-- `method` bắt buộc, phải là chuỗi không rỗng;
-- `id` có thể là string, number hoặc `null`;
-- nếu không có `id`, request được xử lý như notification và server trả
-  `204 No Content`;
-- response JSON thông thường có `Content-Type: application/json`.
+Quy tắc JSON-RPC giữ nguyên như trước: `jsonrpc:"2.0"`, `method` bắt buộc,
+`id` string/number/null; không có `id` → notification → `204 No Content`.
 
 ## 6. Các method được hỗ trợ
 
-### 6.1. Liệt kê tool
+| Method | Alias | Ghi chú |
+| --- | --- | --- |
+| `tools/list` | `list_tools` | Danh sách tool cố định trong registry |
+| `tools/call` | `call_tool` | Gọi tool đã registry |
+| `server/discover` | — | Identity + capabilities (2026 mode) |
 
-Tên method ưu tiên:
+### 6.1. Tool registry
+
+`tools/list` chỉ trả về 6 tool cố định — hết hidden command surface:
 
 ```text
-tools/list
+add_device, edit_device, delete_device, list_devices, get_status, device_command
 ```
 
-Alias tương thích cũ:
+Mỗi tool có inputSchema riêng (`required`, `maxLength`, `pattern` BLE address,
+range cho `ble_addr_type`) và annotations (`readOnlyHint`, `destructiveHint`,
+`idempotentHint`). Unknown tool → `-32602`.
 
-```text
-list_tools
-```
+Fallback cũ `unknown tool + device_id → device_command` đã bị xóa hoàn toàn,
+kể cả ở legacy mode (breaking change).
 
-Ví dụ:
+### 6.2. device_command và allowlist
+
+Tool `device_command` chỉ cho phép các command liệt kê trong
+`CONFIG_MCP_DEVICE_COMMAND_ALLOWLIST` (comma-separated; mặc định rỗng = cấm
+tất cả). Command ngoài allowlist → **tool error** (`isError:true` /
+legacy `success:false`), không phải protocol error.
+
+`device_command` được thực thi trên async worker (1 worker, queue 2):
+request nhận `503 {code:-32000}` khi queue đầy; HTTPD task không bao giờ bị
+block chờ BLE ACK nữa.
+
+### 6.3. Ví dụ
 
 ```sh
 curl -X POST http://<GATEWAY_IP>/mcp \
   -H 'Content-Type: application/json' \
+  -H "Authorization: Bearer $TOKEN" \
+  -d '{"jsonrpc":"2.0","method":"tools/call","params":{"name":"get_status"},"id":1}'
+```
+
+Legacy form với `command` trong params vẫn hoạt động ở legacy mode cho các
+command đã registry.
+
+## 7. Wire format MCP 2026-07-28
+
+Client bật bằng header:
+
+```text
+MCP-Protocol-Version: 2026-07-28
+```
+
+Khi đó:
+
+- `tools/call` trả CallToolResult:
+  `{resultType:"complete", content:[{type:"text",...}], isError,
+  structuredContent?}` (thay `{success,message,data}`);
+- `tools/list` thêm `ttlMs` / `cacheScope`;
+- mọi response có `_meta["io.modelcontextprotocol/protocolVersion"]` và
+  `_meta["io.modelcontextprotocol/server"]` (identity);
+- `server/discover` trả `{name, version, protocolVersion, capabilities}`;
+- lỗi mở rộng: `-32020` header/transport, `-32021` auth/host/rate,
+  `-32022` protocol version không hỗ trợ (kèm HTTP 400).
+
+Header version khác giá trị hỗ trợ → `-32022` bất kể legacy mode.
+Header vắng mặt: legacy mode bật → xử lý như client cũ; tắt → `-32022`.
+
+## 8. Legacy mode feature flag
+
+```text
+CONFIG_MCP_LEGACY_MODE (default y)
+```
+
+Override runtime qua NVS namespace `mcp`: key `token` (string) và key `legacy`
+(u8: 1 = on, 0 = off) — flip được sau OTA mà không cần reflash. Xóa key → quay
+về giá trị Kconfig.
+
+## 9. JSON-RPC error
+
+| Code | HTTP | Ý nghĩa |
+| ---: | --- | --- |
+| `-32700` | 200 | JSON không parse được hoặc đọc body thất bại |
+| `-32600` | 200/413/415 | Request không đúng JSON-RPC, root sai kiểu, body vượt hạn chế, Content-Type sai |
+| `-32601` | 200 | Method không hỗ trợ |
+| `-32602` | 200 | params/tool name/arguments không hợp lệ, unknown tool |
+| `-32603` | 200/500 | Lỗi nội bộ/OOM |
+| `-32000` | 503 | Queue async đầy |
+| `-32021` | 401/403/429 | Token sai, Host/Origin không hợp lệ, vượt rate limit |
+| `-32022` | 400 | Protocol version thiếu (legacy off) hoặc không hỗ trợ |
+
+Lỗi thực thi (BLE timeout, device error…) luôn nằm trong `result`
+(`isError:true` / `success:false`), không dùng JSON-RPC `error`.
+
+## 10. Build và kiểm thử
+
+```sh
+idf.py set-target esp32s3 && idf.py build       # firmware
+cd test && idf.py set-target esp32s3 && idf.py build && idf.py -p <PORT> flash monitor
+```
+
+Unity tests (77 case: characterization, auth gate, wire-mode conformance,
+heap-stability stress, queue-full async) tự chạy lúc boot. Tag:
+`[mcp_endpoint]`, `[mcp_conformance]`, `[mcp_stress]`.
+
+Kiểm tra thủ công:
+
+```sh
+curl -i -X POST http://<IP>/mcp -H 'Content-Type: application/json' \
   -d '{"jsonrpc":"2.0","method":"tools/list","id":1}'
+curl -i -X POST http://<IP>/mcp -H 'Content-Type: application/json' \
+  -H 'MCP-Protocol-Version: 2026-07-28' \
+  -d '{"jsonrpc":"2.0","method":"server/discover","id":2}'
 ```
 
-Danh sách được lấy động từ registry của `command_dispatcher`, không hardcode
-trong HTTP handler. Response có cả mô tả tool theo MCP và `tool_names` để giữ
-tương thích với client cũ:
+## 11. Giới hạn và bảo mật
 
-```json
-{
-  "jsonrpc": "2.0",
-  "id": 1,
-  "result": {
-    "tools": [
-      {
-        "name": "get_status",
-        "description": "Get gateway and BLE status",
-        "inputSchema": {
-          "type": "object",
-          "properties": {
-            "device_id": { "type": "string" },
-            "bool_value": { "type": "boolean" }
-          }
-        }
-      }
-    ],
-    "tool_names": ["get_status"]
-  }
-}
-```
-
-Ví dụ trên được rút gọn. Response thực tế chứa toàn bộ command đã đăng ký và
-các field trong input schema.
-
-### 6.2. Gọi tool
-
-Tên method ưu tiên:
-
-```text
-tools/call
-```
-
-Alias tương thích cũ:
-
-```text
-call_tool
-```
-
-Dạng `name` và `arguments`:
-
-```sh
-curl -X POST http://<GATEWAY_IP>/mcp \
-  -H 'Content-Type: application/json' \
-  -d '{"jsonrpc":"2.0","method":"tools/call","params":{"name":"get_status","arguments":{}},"id":"status-1"}'
-```
-
-Dạng tương thích cũ với `command` nằm trực tiếp trong `params`:
-
-```sh
-curl -X POST http://<GATEWAY_IP>/mcp \
-  -H 'Content-Type: application/json' \
-  -d '{"jsonrpc":"2.0","method":"call_tool","params":{"device_id":"lamp-1","command":"toggle","bool_value":true},"id":2}'
-```
-
-Các argument được chuyển sang `gw_message_t`. Những field hiện được chuyển
-tiếp gồm:
-
-```text
-protocol_version
-device_id
-int_value
-bool_value
-name
-device_type
-ble_addr
-ble_addr_type
-```
-
-Nếu `type` không được truyền, component suy luận theo thứ tự:
-
-1. command có trong registry: `gateway_command`;
-2. command không có trong registry nhưng có `device_id`: `device_command`;
-3. các trường hợp còn lại: `gateway_command`.
-
-Client cũng có thể truyền rõ `type` bằng `gateway_command` hoặc
-`device_command`. Giá trị khác sẽ bị từ chối.
-
-Response thành công có dạng:
-
-```json
-{
-  "jsonrpc": "2.0",
-  "id": "status-1",
-  "result": {
-    "success": true,
-    "message": "command result"
-  }
-}
-```
-
-Nếu `dispatch_result.message` là một JSON hợp lệ, component thêm bản parse vào
-field `data`:
-
-```json
-{
-  "jsonrpc": "2.0",
-  "id": 3,
-  "result": {
-    "success": true,
-    "message": "{\"devices\":[]}",
-    "data": {
-      "devices": []
-    }
-  }
-}
-```
-
-Lưu ý: kết quả thực thi command thất bại vẫn nằm trong JSON-RPC `result`, với
-`success: false`. JSON-RPC `error` chỉ dùng cho lỗi protocol, validation hoặc
-lỗi nội bộ trước khi có kết quả từ dispatcher.
-
-## 7. JSON-RPC error
-
-Response lỗi có dạng:
-
-```json
-{
-  "jsonrpc": "2.0",
-  "id": 1,
-  "error": {
-    "code": -32601,
-    "message": "Method not found"
-  }
-}
-```
-
-| Code | Ý nghĩa trong component |
-| ---: | --- |
-| `-32700` | JSON không parse được hoặc không nhận được request body hợp lệ |
-| `-32600` | Request không đúng JSON-RPC 2.0, `id` không hợp lệ hoặc body vượt giới hạn |
-| `-32601` | Method không được hỗ trợ |
-| `-32602` | `params`, tool name, command type hoặc arguments không hợp lệ |
-| `-32603` | Lỗi nội bộ, thường là không đủ bộ nhớ hoặc không tạo được tool list |
-
-Khi không thể tạo JSON response do hết bộ nhớ, HTTP server trả
-`500 Internal Server Error`.
-
-## 8. Luồng xử lý
-
-```text
-POST /mcp
-    │
-    ▼
-Kiểm tra content length và đọc body
-    │
-    ▼
-Parse + validate JSON-RPC 2.0
-    │
-    ├── tools/list ──► lấy command registry ──► tool list
-    │
-    ├── tools/call ──► chuẩn hóa gw_message_t ──► dispatcher
-    │
-    └── method khác ──► -32601 Method not found
-    │
-    ▼
-JSON-RPC result/error hoặc HTTP 204 cho notification
-```
-
-## 9. Build và kiểm thử thủ công
-
-Build firmware từ thư mục gốc:
-
-```sh
-idf.py set-target esp32s3
-idf.py build
-```
-
-Sau khi flash firmware và ESP32 kết nối Wi-Fi, kiểm tra endpoint:
-
-```sh
-curl -i -X POST http://<GATEWAY_IP>/mcp \
-  -H 'Content-Type: application/json' \
-  -d '{"jsonrpc":"2.0","method":"tools/list","id":1}'
-```
-
-Kiểm tra method không tồn tại:
-
-```sh
-curl -i -X POST http://<GATEWAY_IP>/mcp \
-  -H 'Content-Type: application/json' \
-  -d '{"jsonrpc":"2.0","method":"unknown","id":2}'
-```
-
-Kiểm tra notification, kết quả mong đợi là `204 No Content`:
-
-```sh
-curl -i -X POST http://<GATEWAY_IP>/mcp \
-  -H 'Content-Type: application/json' \
-  -d '{"jsonrpc":"2.0","method":"tools/list"}'
-```
-
-## 10. Giới hạn và bảo mật
-
-- Endpoint hiện không yêu cầu API key hoặc cơ chế xác thực khác.
-- HTTP chưa được mã hóa bằng TLS.
-- Không nên expose `POST /mcp` trực tiếp ra Internet.
-- Endpoint không phải MCP server đầy đủ; client yêu cầu MCP handshake/session
+- Bearer token đi trên plaintext HTTP: có thể bị sniff/replay trong LAN.
+  Chỉ dùng trong mạng tin cậy, tuyệt đối không expose ra Internet.
+- Static token không phải MCP OAuth authorization; chưa có rotation UI
+  (rotation thủ công qua NVS key `mcp.token`).
+- Host/Origin check chống DNS rebinding, KHÔNG thay thế authentication.
+- Rate limit là token bucket toàn cục 10 rps (burst 10), đủ cho một agent.
+- Async worker giữ tối đa 3 socket (1 đang chạy + 2 queue) cho `/mcp`.
+- Endpoint vẫn không có session/handshake MCP đầy đủ; client cần session
   chuẩn sẽ không tương thích trực tiếp.
-- Device command có thể chờ ACK trong dispatcher, vì vậy HTTP request có thể
-  kéo dài tới khi command hoàn tất hoặc timeout.
-
-Trong giai đoạn hiện tại, endpoint chỉ nên được sử dụng trong mạng LAN tin cậy.
