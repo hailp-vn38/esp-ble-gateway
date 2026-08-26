@@ -213,8 +213,9 @@ static esp_err_t devices_write_handler(httpd_req_t *request)
                                            request->method == HTTP_POST);
     cJSON_Delete(json);
     if (parse_result != 0) {
-        return web_send_api_error(request, "400 Bad Request",
-                                  "Invalid device fields");
+        return web_send_api_error_code(request, "400 Bad Request",
+                                        "Invalid device fields",
+                                        "invalid_request");
     }
 
     return dispatch_message_async(request, &message);
@@ -228,7 +229,8 @@ static esp_err_t devices_delete_handler(httpd_req_t *request)
         httpd_query_key_value(query, "device_id", device_id,
                               sizeof(device_id)) != ESP_OK ||
         device_id[0] == '\0') {
-        return web_send_api_error(request, "400 Bad Request", "Missing device_id");
+        return web_send_api_error_code(request, "400 Bad Request", "Missing device_id",
+                                        "invalid_request");
     }
 
     gw_message_t message = {
@@ -299,8 +301,9 @@ static esp_err_t command_post_handler(httpd_req_t *request)
         json, "command", GW_MSG_COMMAND_LEN, true);
     if (device_id == NULL || command == NULL) {
         cJSON_Delete(json);
-        return web_send_api_error(request, "400 Bad Request",
-                                  "device_id and command are required");
+        return web_send_api_error_code(request, "400 Bad Request",
+                                  "device_id and command are required",
+                                  "invalid_request");
     }
 
     gw_message_t message = {
@@ -316,8 +319,9 @@ static esp_err_t command_post_handler(httpd_req_t *request)
         if (!cJSON_IsNumber(int_value) ||
             int_value->valuedouble != (double)int_value->valueint) {
             cJSON_Delete(json);
-            return web_send_api_error(request, "400 Bad Request",
-                                      "int_value must be an integer");
+            return web_send_api_error_code(request, "400 Bad Request",
+                                      "int_value must be an integer",
+                                      "invalid_request");
         }
         message.int_value = int_value->valueint;
     }
@@ -326,8 +330,9 @@ static esp_err_t command_post_handler(httpd_req_t *request)
     if (bool_value != NULL) {
         if (!cJSON_IsBool(bool_value)) {
             cJSON_Delete(json);
-            return web_send_api_error(request, "400 Bad Request",
-                                      "bool_value must be boolean");
+            return web_send_api_error_code(request, "400 Bad Request",
+                                      "bool_value must be boolean",
+                                      "invalid_request");
         }
         message.bool_value = cJSON_IsTrue(bool_value);
     }

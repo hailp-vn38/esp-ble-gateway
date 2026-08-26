@@ -39,11 +39,21 @@ esp_err_t web_send_json(httpd_req_t *request, cJSON *json)
 esp_err_t web_send_api_error(httpd_req_t *request, const char *status,
                              const char *message)
 {
+    return web_send_api_error_code(request, status, message, NULL);
+}
+
+esp_err_t web_send_api_error_code(httpd_req_t *request, const char *status,
+                                  const char *message, const char *code)
+{
     httpd_resp_set_status(request, status);
     cJSON *json = cJSON_CreateObject();
     if (json != NULL) {
         cJSON_AddBoolToObject(json, "success", false);
         cJSON_AddStringToObject(json, "message", message);
+        if (code != NULL) {
+            cJSON *error = cJSON_AddObjectToObject(json, "error");
+            if (error != NULL) cJSON_AddStringToObject(error, "code", code);
+        }
     }
     return web_send_json(request, json);
 }

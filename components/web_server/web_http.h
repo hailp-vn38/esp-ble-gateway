@@ -31,6 +31,9 @@ typedef enum {
 esp_err_t web_send_json(httpd_req_t *request, cJSON *json);
 esp_err_t web_send_api_error(httpd_req_t *request, const char *status,
                              const char *message);
+// Same envelope plus a machine-readable error code (Plan v2 §51-§52).
+esp_err_t web_send_api_error_code(httpd_req_t *request, const char *status,
+                                  const char *message, const char *code);
 // Maps a typed body failure onto its HTTP status (Plan v2 §31) and closes
 // the connection whenever unread body bytes would desync keep-alive (§32).
 esp_err_t web_send_body_error(httpd_req_t *request, web_body_status_t status);
