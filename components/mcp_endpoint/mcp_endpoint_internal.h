@@ -196,20 +196,4 @@ int mcp_codec_parse_meta(httpd_req_t *req, mcp_request_meta_t *meta);
 // Builds the server/discover result payload (server identity + capabilities).
 cJSON *mcp_codec_build_discovery(void);
 
-// ---------------------------------------------------------------------------
-// Async worker (mcp_async.c)
-// ---------------------------------------------------------------------------
-
-// Submits an already-normalized device command for background execution.
-// Ownership of id transfers to the worker on success; on failure the caller
-// keeps ownership and should respond synchronously (typically 503).
-esp_err_t mcp_async_submit(httpd_req_t *req, cJSON *id, const gw_message_t *msg,
-                           const mcp_request_meta_t *meta, bool notification);
-
-int mcp_async_init(void);
-void mcp_async_deinit(void);
-// Worker task handle (NULL when not running); lets tests pause scheduling to
-// make queue-full behavior deterministic.
-TaskHandle_t mcp_async_worker(void);
-
 #endif /* MCP_ENDPOINT_INTERNAL_H */

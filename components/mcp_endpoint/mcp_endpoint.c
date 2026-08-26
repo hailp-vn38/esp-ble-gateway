@@ -5,6 +5,7 @@
 #include "cJSON.h"
 #include "esp_log.h"
 
+#include "command_executor.h"
 #include "mcp_endpoint.h"
 #include "mcp_endpoint_internal.h"
 
@@ -163,6 +164,46 @@ static esp_err_t send_gate_error(httpd_req_t *request, mcp_gate_status_t gate)
                                  true);
 }
 
+// Transport-specific completion context for device commands dispatched
+// through the shared command executor (Plan v2 §67): no MCP-owned worker or
+// queue, only formatting and socket release.
+typedef struct {
+    httpd_req_t *request;
+    cJSON *id; // NULL for notifications; ownership moves to the callback
+    mcp_request_meta_t meta;
+    bool notification;
+} mcp_command_context_t;
+
+static void mcp_device_command_completion(const dispatch_result_t *result,
+                                          void *arg)
+{
+    mcp_command_context_t *context = arg;
+
+    if (!context->notification) {
+        mcp_rpc_error_t rpc_error = {0};
+        cJSON *payload =
+            mcp_tools_format_dispatch(result, &context->meta, &rpc_error);
+        if (payload != NULL) {
+            mcp_rpc_send_result_ex(context->request, payload, context->id,
+                                   &context->meta);
+        } else {
+            mcp_rpc_send_error_ex(
+                context->request,
+                rpc_error.code != 0 ? rpc_error.code : -32603,
+                rpc_error.message != NULL ? rpc_error.message : "Internal error",
+                context->id, &context->meta, NULL, false);
+        }
+    }
+    // Notifications answer without a response body (parity with the previous
+    // async worker); the socket is released either way.
+
+    if (context->id != NULL) cJSON_Delete(context->id);
+    if (mcp_transport_get()->async_complete(context->request) != ESP_OK) {
+        ESP_LOGD(TAG, "async_complete failed (client gone?)");
+    }
+    free(context);
+}
+
 static esp_err_t handle_tools_call(httpd_req_t *request, cJSON *root,
                                    const cJSON *id, bool notification,
                                    const mcp_request_meta_t *meta)
@@ -188,23 +229,39 @@ static esp_err_t handle_tools_call(httpd_req_t *request, cJSON *root,
             return mcp_rpc_send_error_ex(request, -32603, "Internal error", id,
                                          meta, NULL, false);
         }
-        if (s_transport.async_begin(request, &request) == ESP_OK) {
-            esp_err_t submitted =
-                mcp_async_submit(request, id_copy, &message, meta, notification);
-            if (submitted == ESP_OK) {
-                return ESP_OK;
-            }
-            s_transport.async_complete(request);
-            if (submitted == ESP_ERR_NO_MEM) {
-                // Queue full / worker gone: answer 503 and release the socket.
+
+        esp_err_t begin_error = s_transport.async_begin(request, &request);
+        if (begin_error == ESP_OK) {
+            mcp_command_context_t *context = malloc(sizeof(*context));
+            if (context != NULL) {
+                context->request = request;
+                context->id = id_copy;
+                context->meta = *meta;
+                context->notification = notification;
+
+                // Queue admission only: the executor worker dispatches and
+                // the completion callback answers. Queue-full keeps 503.
+                esp_err_t submitted = command_executor_submit(
+                    &message, mcp_device_command_completion, context);
+                if (submitted == ESP_OK) {
+                    return ESP_OK;
+                }
+
+                s_transport.async_complete(request);
+                if (id_copy != NULL) cJSON_Delete(id_copy);
+                free(context);
+                if (submitted == ESP_ERR_NO_MEM) {
+                    return mcp_rpc_send_error_ex(
+                        request, -32000, "Busy: command queue full", id, meta,
+                        "503 Service Unavailable", false);
+                }
+                // Executor unavailable entirely: degrade to synchronous
+                // execution rather than lying with a 503.
+            } else {
+                s_transport.async_complete(request);
                 cJSON_Delete(id_copy);
-                return mcp_rpc_send_error_ex(
-                    request, -32000, "Busy: command queue full", id, meta,
-                    "503 Service Unavailable", false);
+                // Out of memory for the context: degrade to synchronous.
             }
-            // Worker unavailable entirely: degrade to synchronous execution
-            // rather than lying with a 503.
-            cJSON_Delete(id_copy);
         } else {
             cJSON_Delete(id_copy);
             // Async handoff unavailable: fall through to synchronous execution.
@@ -338,10 +395,6 @@ int mcp_endpoint_register(httpd_handle_t server)
     if (server == NULL) return -1;
     mcp_transport_set(NULL);
 
-    if (mcp_async_init() != 0) {
-        ESP_LOGE(TAG, "MCP async worker failed to start");
-        return -1;
-    }
     const httpd_uri_t route = {
         .uri = "/mcp",
         .method = HTTP_POST,
@@ -351,7 +404,6 @@ int mcp_endpoint_register(httpd_handle_t server)
     esp_err_t error = httpd_register_uri_handler(server, &route);
     if (error != ESP_OK) {
         ESP_LOGE(TAG, "Could not register POST /mcp: %s", esp_err_to_name(error));
-        mcp_async_deinit();
         return -1;
     }
     ESP_LOGI(TAG, "MCP JSON-RPC endpoint registered at POST /mcp");

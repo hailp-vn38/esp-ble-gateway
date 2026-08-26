@@ -3,12 +3,13 @@
 #include "cJSON.h"
 #include "esp_heap_caps.h"
 #include "freertos/FreeRTOS.h"
-#include "freertos/task.h"
+#include "sdkconfig.h"
 #include "unity.h"
 
 #include "../command_dispatcher_internal.h"
 #include "cbor_codec.h"
 #include "command_dispatcher.h"
+#include "command_executor.h"
 
 #include "test_mcp_transport.h"
 
@@ -23,6 +24,9 @@ static void mcp_setup(void)
     TEST_ASSERT_EQUAL_INT(0, command_dispatcher_init());
     TEST_ASSERT_EQUAL_INT(0, command_dispatcher_freeze_registry());
     mcp_auth_reset_rate_limit();
+    // A previous suite may have left the executor running (aborted test);
+    // device commands must take the synchronous fallback path by default.
+    command_executor_deinit();
 }
 
 // Device hooks whose send never completes: the worker stays blocked inside
@@ -159,43 +163,48 @@ TEST_CASE("queue full answers 503 without dropping the socket", "[mcp_stress]")
     io_reset(NULL);
     install_transport();
     install_device_hooks_blocking();
+    command_executor_deinit(); // deterministic start
+    TEST_ASSERT_EQUAL_INT(ESP_OK, command_executor_init());
 
-    TEST_ASSERT_EQUAL_INT(0, mcp_async_init());
-    TaskHandle_t worker = mcp_async_worker();
-    TEST_ASSERT_NOT_NULL(worker);
+    // Blocking device hooks keep every dispatched job parked in its 2s ACK
+    // wait, so workers and queue slots stay occupied deterministically.
+    // Distinct device ids per job: same-device submissions would hit the
+    // dispatcher's per-device BUSY rule and complete instantly instead.
+    char device_call[256];
+    const int capacity = CONFIG_CMD_EXEC_WORKER_COUNT + CONFIG_CMD_EXEC_QUEUE_LEN;
+    for (int i = 0; i < capacity; i++) {
+        snprintf(device_call, sizeof(device_call),
+                 "{\"jsonrpc\":\"2.0\",\"id\":%d,\"method\":\"tools/call\","
+                 "\"params\":{\"name\":\"device_command\","
+                 "\"arguments\":{\"device_id\":\"relay-%d\","
+                 "\"command\":\"toggle\"}}}", i, i);
+        TEST_ASSERT_EQUAL_INT(0, run_request(device_call));
+        // Accepted submissions answer nothing yet: the response comes from
+        // the executor completion callback.
+        TEST_ASSERT_EQUAL_INT(0, g_io.responses_sent);
+    }
 
-    static httpd_req_t dummy_req_a;
-    static httpd_req_t dummy_req_b;
+    // Capacity exceeded: refused synchronously with 503 on the same request.
+    snprintf(device_call, sizeof(device_call),
+             "{\"jsonrpc\":\"2.0\",\"id\":99,\"method\":\"tools/call\","
+             "\"params\":{\"name\":\"device_command\","
+             "\"arguments\":{\"device_id\":\"relay-overflow\","
+             "\"command\":\"toggle\"}}}");
+    TEST_ASSERT_EQUAL_INT(0, run_request(device_call));
+    TEST_ASSERT_EQUAL_INT(1, g_io.responses_sent);
+    TEST_ASSERT_TRUE(strstr(g_io.status_line, "503") != NULL);
+    cJSON *response = cJSON_Parse(g_io.response);
+    TEST_ASSERT_NOT_NULL(response);
+    cJSON *error = cJSON_GetObjectItemCaseSensitive(response, "error");
+    TEST_ASSERT_TRUE(cJSON_IsNumber(
+        cJSON_GetObjectItemCaseSensitive(error, "code")));
+    cJSON_Delete(response);
 
-    gw_message_t msg = {.protocol_version = GW_PROTOCOL_VERSION};
-    strlcpy(msg.type, "device_command", sizeof(msg.type));
-    strlcpy(msg.device_id, "relay-1", sizeof(msg.device_id));
-    strlcpy(msg.command, "toggle", sizeof(msg.command));
-    msg.has_device_id = 1;
-
-    mcp_request_meta_t meta = {0};
-
-    // Pause the worker so both queue slots stay occupied deterministically.
-    vTaskSuspend(worker);
-    cJSON *id_a = cJSON_CreateNumber(1);
-    cJSON *id_b = cJSON_CreateNumber(2);
-    TEST_ASSERT_EQUAL_INT(ESP_OK,
-                          mcp_async_submit(&dummy_req_a, id_a, &msg, &meta, false));
-    TEST_ASSERT_EQUAL_INT(ESP_OK,
-                          mcp_async_submit(&dummy_req_b, id_b, &msg, &meta, false));
-
-    // Queue capacity is 2: this one must be refused while full.
-    cJSON *id_c = cJSON_CreateNumber(3);
-    TEST_ASSERT_EQUAL_INT(ESP_ERR_NO_MEM,
-                          mcp_async_submit(&dummy_req_a, id_c, &msg, &meta, false));
-    cJSON_Delete(id_c); // caller keeps ownership on failure
-
-    vTaskResume(worker);
-    // Let the worker answer both jobs (each blocks ~2s waiting for an ACK)
-    // before deinit: deinit deliberately drops still-queued jobs.
-    for (int i = 0; i < 700 && g_io.responses_sent < 2; i++) {
+    // Let the executor drain: queued jobs expire at the job deadline,
+    // dispatched jobs return after the dispatcher ACK timeout.
+    for (int i = 0; i < 700 && g_io.responses_sent < capacity + 1; i++) {
         vTaskDelay(pdMS_TO_TICKS(10));
     }
-    TEST_ASSERT_TRUE(g_io.responses_sent >= 2);
-    mcp_async_deinit();
+    TEST_ASSERT_TRUE(g_io.responses_sent >= capacity + 1);
+    command_executor_deinit();
 }
