@@ -161,7 +161,8 @@ TEST_CASE("DNS-U08: A/IN question gets exactly one A answer", "[dns]")
     TEST_ASSERT_TRUE(len > query_len);
     TEST_ASSERT_TRUE(answer_ip_is(pkt, len, &ip));
 
-    /* Answer type must be A/IN with TTL 30 and RDLENGTH 4. */
+    /* Answer type must be A/IN with TTL 30 and RDLENGTH 4 (RFC 1035 layout:
+     * name(2) type(2) class(2) ttl(4) rdlength(2)). */
     const uint8_t *answer = pkt + query_len;
     TEST_ASSERT_EQUAL_HEX8(0xc0, answer[0]);
     TEST_ASSERT_EQUAL_HEX8(0x0c, answer[1]);
@@ -169,10 +170,10 @@ TEST_CASE("DNS-U08: A/IN question gets exactly one A answer", "[dns]")
     TEST_ASSERT_EQUAL_HEX8(0x01, answer[3]);
     TEST_ASSERT_EQUAL_HEX8(0x00, answer[4]);
     TEST_ASSERT_EQUAL_HEX8(0x01, answer[5]);
-    TEST_ASSERT_EQUAL(30, (answer[8] << 24) | (answer[9] << 16) |
-                              (answer[10] << 8) | answer[11]);
-    TEST_ASSERT_EQUAL_HEX8(0x00, answer[12]);
-    TEST_ASSERT_EQUAL_HEX8(0x04, answer[13]);
+    TEST_ASSERT_EQUAL(30, (answer[6] << 24) | (answer[7] << 16) |
+                              (answer[8] << 8) | answer[9]);
+    TEST_ASSERT_EQUAL_HEX8(0x00, answer[10]);
+    TEST_ASSERT_EQUAL_HEX8(0x04, answer[11]);
 }
 
 TEST_CASE("DNS-U09: AAAA/IN gets NOERROR with zero answers", "[dns]")
@@ -279,9 +280,11 @@ TEST_CASE("DNS-B01: A answer that would overflow packet is dropped", "[dns]")
     esp_ip4_addr_t ip;
     make_ip(&ip, 192, 168, 4, 1);
 
-    /* Pad the QNAME so question end leaves < 16 bytes for the answer. */
+    /* Pad the QNAME so the question ends within DNS_ANSWER_LEN bytes of
+     * DNS_MAX_PACKET_LEN: 12 header + 80*(1+5) labels + 1 root + 4 question
+     * = 497, and 497 + 16 > 512 must trip the overflow guard. */
     int offset = 12;
-    for (int i = 0; i < 60; i++) {
+    for (int i = 0; i < 80; i++) {
         pkt[offset++] = 5;
         memcpy(pkt + offset, "aaaaa", 5);
         offset += 5;

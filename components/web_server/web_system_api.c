@@ -46,7 +46,7 @@ static esp_err_t logs_get_handler(httpd_req_t *request)
             }
             cJSON_AddStringToObject(item, "text", s_log_snapshot[i].text);
             cJSON_AddNumberToObject(item, "timestamp_ms",
-                                    s_log_snapshot[i].timestamp_ms);
+                                    s_log_snapshot[i].uptime_ms);
             cJSON_AddItemToArray(array, item);
         }
     }

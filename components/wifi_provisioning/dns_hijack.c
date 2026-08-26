@@ -117,6 +117,22 @@ static void dns_task(void *arg)
         return;
     }
 
+    /* Publish the bound socket and the RUNNING transition atomically. If a
+     * stop request landed while the bind was in flight, honor it instead of
+     * resurrecting a server nobody is waiting for. */
+    xSemaphoreTake(s_dns_mutex, portMAX_DELAY);
+    bool started = s_dns_state == DNS_STATE_STARTING;
+    if (started) {
+        s_dns_socket = sock;
+        s_dns_state = DNS_STATE_RUNNING;
+    }
+    xSemaphoreGive(s_dns_mutex);
+
+    if (!started) {
+        dns_task_cleanup(sock, false);
+        return;
+    }
+
     xEventGroupSetBits(s_dns_events, DNS_EVT_RUNNING);
     ESP_LOGI(TAG, "Captive DNS listening on " IPSTR ":%d",
              IP2STR(&s_redirect_ip), DNS_PORT);

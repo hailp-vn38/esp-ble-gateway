@@ -16,7 +16,8 @@ static const char *TAG = "web_assets";
 // CSS/font plus inline script/style blocks (Plan v2 §64).
 #define DASHBOARD_CSP                                                          \
     "default-src 'none'; connect-src 'self'; script-src 'unsafe-inline'; "     \
-    "style-src 'unsafe-inline'; font-src 'self'; img-src 'self' data:; "       \
+    "style-src 'self' 'unsafe-inline'; font-src 'self'; "                     \
+    "img-src 'self' data:; "                                                  \
     "base-uri 'none'; form-action 'self'; frame-ancestors 'none'"
 
 static void set_security_headers(httpd_req_t *request)

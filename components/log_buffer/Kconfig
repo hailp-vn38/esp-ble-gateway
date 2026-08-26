@@ -1,0 +1,12 @@
+menu "Log Buffer"
+
+    config LOG_BUFFER_TEST_HELPERS
+        bool "Expose log buffer test-only helpers"
+        default n
+        help
+            Exposes log_buffer_test_get_ring_mutex() and
+            log_buffer_test_reset_metrics() so unit tests can force
+            deterministic writer contention and reset metrics. Never enable
+            in production firmware.
+
+endmenu

@@ -20,7 +20,10 @@ static void on_device_notify(const char *device_id, const gw_message_t *msg)
 
 void app_main(void)
 {
-    log_buffer_init();
+    esp_err_t log_error = log_buffer_init();
+    if (log_error != ESP_OK) {
+        ESP_LOGW(TAG, "RAM log buffer unavailable: %s", esp_err_to_name(log_error));
+    }
 
     esp_err_t ret = nvs_flash_init();
     if (ret == ESP_ERR_NVS_NO_FREE_PAGES || ret == ESP_ERR_NVS_NEW_VERSION_FOUND) {
