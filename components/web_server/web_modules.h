@@ -5,6 +5,7 @@
 
 esp_err_t web_assets_register_gateway(httpd_handle_t server);
 esp_err_t web_assets_register_provisioning(httpd_handle_t server);
+esp_err_t web_assets_register_provisioning_errors(httpd_handle_t server);
 
 esp_err_t web_gateway_api_init(void);
 esp_err_t web_gateway_api_register(httpd_handle_t server);

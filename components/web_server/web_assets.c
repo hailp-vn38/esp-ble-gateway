@@ -139,11 +139,32 @@ static esp_err_t favicon_get_handler(httpd_req_t *request)
     return httpd_resp_send(request, NULL, 0);
 }
 
+static esp_err_t send_captive_redirect(httpd_req_t *request)
+{
+    static const char body[] =
+        "<!doctype html><meta http-equiv=\"refresh\" content=\"0;url=/\">"
+        "<a href=\"/\">Open setup</a>";
+
+    httpd_resp_set_status(request, "303 See Other");
+    httpd_resp_set_hdr(request, "Location", "/");
+    httpd_resp_set_type(request, "text/html; charset=utf-8");
+    httpd_resp_set_hdr(request, "Cache-Control", "no-store");
+    set_security_headers(request);
+    return httpd_resp_send(request, body, HTTPD_RESP_USE_STRLEN);
+}
+
 static esp_err_t captive_redirect_handler(httpd_req_t *request)
 {
-    httpd_resp_set_status(request, "302 Found");
-    httpd_resp_set_hdr(request, "Location", "/");
-    return httpd_resp_send(request, NULL, 0);
+    ESP_LOGD(TAG, "Captive probe redirect: %s", request->uri);
+    return send_captive_redirect(request);
+}
+
+static esp_err_t captive_not_found_handler(httpd_req_t *request,
+                                           httpd_err_code_t error)
+{
+    (void)error;
+    ESP_LOGD(TAG, "Unknown URI captive redirect: %s", request->uri);
+    return send_captive_redirect(request);
 }
 
 esp_err_t web_assets_register_gateway(httpd_handle_t server)
@@ -175,4 +196,10 @@ esp_err_t web_assets_register_provisioning(httpd_handle_t server)
          .handler = captive_redirect_handler},
     };
     return web_register_routes(server, routes, WEB_ARRAY_SIZE(routes));
+}
+
+esp_err_t web_assets_register_provisioning_errors(httpd_handle_t server)
+{
+    return httpd_register_err_handler(server, HTTPD_404_NOT_FOUND,
+                                      captive_not_found_handler);
 }

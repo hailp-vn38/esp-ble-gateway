@@ -88,7 +88,17 @@ httpd_handle_t web_server_start_provisioning(void)
         web_system_api_register_provisioning,
         web_wifi_api_register,
     };
-    return start_server(registrars, sizeof(registrars) / sizeof(registrars[0]),
-                        WEB_PROVISIONING_MAX_URI_HANDLERS,
-                        WEB_PROVISIONING_STACK_SIZE, "Provisioning");
+    httpd_handle_t server =
+        start_server(registrars, sizeof(registrars) / sizeof(registrars[0]),
+                     WEB_PROVISIONING_MAX_URI_HANDLERS,
+                     WEB_PROVISIONING_STACK_SIZE, "Provisioning");
+    if (server == NULL) return NULL;
+
+    // Captive funnel for unknown URIs is provisioning-only; gateway mode
+    // must keep plain 404s. Non-fatal: probes + DNS + option 114 survive.
+    if (web_assets_register_provisioning_errors(server) != ESP_OK) {
+        ESP_LOGW(TAG, "Captive 404 handler not registered; only known probe "
+                      "routes redirect");
+    }
+    return server;
 }

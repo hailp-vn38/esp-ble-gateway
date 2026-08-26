@@ -1,7 +1,7 @@
 cmake_minimum_required(VERSION 3.22)
 
 set(EXTRA_COMPONENT_DIRS "../components")
-set(TEST_COMPONENTS "device_store;cbor_codec;command_dispatcher;command_executor;log_buffer;mcp_endpoint;wifi_provisioning;ble_central" CACHE STRING
+set(TEST_COMPONENTS "device_store;cbor_codec;command_dispatcher;command_executor;log_buffer;mcp_endpoint;wifi_provisioning;ble_central;web_server" CACHE STRING
     "Gateway components whose unit tests are included")
 
 include($ENV{IDF_PATH}/tools/cmake/project.cmake)

@@ -15,6 +15,7 @@
 #include "freertos/task.h"
 #include "nvs.h"
 
+#include "captive_portal.h"
 #include "dns_hijack.h"
 #include "wifi_prov.h"
 
@@ -424,8 +425,14 @@ static esp_err_t enter_provisioning(void)
     esp_netif_ip_info_t ap_ip_info;
     error = esp_netif_get_ip_info(s_ap_netif, &ap_ip_info);
     if (error == ESP_OK) {
-        ESP_LOGI(TAG, "SoftAP IPv4 for captive DNS: " IPSTR,
-                 IP2STR(&ap_ip_info.ip));
+        ESP_LOGI(TAG, "SoftAP IPv4: " IPSTR, IP2STR(&ap_ip_info.ip));
+
+        error = captive_portal_configure_dhcp(s_ap_netif, &ap_ip_info.ip);
+        if (error != ESP_OK) {
+            ESP_LOGW(TAG, "Continuing without DHCP option 114 (%s)",
+                     esp_err_to_name(error));
+        }
+
         error = dns_hijack_start(&ap_ip_info.ip);
         if (error != ESP_OK) {
             ESP_LOGW(TAG, "Captive DNS did not start (%s); provisioning is "
@@ -438,7 +445,10 @@ static esp_err_t enter_provisioning(void)
     }
 
     set_state(WIFI_PROV_STATE_PROVISIONING);
-    ESP_LOGI(TAG, "Provisioning portal ready: SSID=%s", s_ap_ssid);
+    const char *portal_uri = captive_portal_uri();
+    ESP_LOGI(TAG, "Provisioning portal ready: SSID=%s AP_IP=" IPSTR " URI=%s",
+             s_ap_ssid, IP2STR(&ap_ip_info.ip),
+             portal_uri != NULL ? portal_uri : "(unavailable)");
     return ESP_OK;
 }
 

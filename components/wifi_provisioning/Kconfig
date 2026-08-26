@@ -28,4 +28,8 @@ config WIFI_PROV_STA_TEST_TIMEOUT_MS
     range 1000 120000
     default 20000
 
+config WIFI_PROV_CAPTIVE_DHCP_OPTION_114
+    bool "Advertise captive portal URI using DHCP option 114"
+    default y
+
 endmenu

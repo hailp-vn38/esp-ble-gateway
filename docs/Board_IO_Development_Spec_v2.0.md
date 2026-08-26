@@ -1,6 +1,6 @@
 # Tài liệu phát triển Component `board_io` — ESP32 BLE Gateway
 
-**Phiên bản:** 2.0  
+**Phiên bản:** 2.1  
 **Ngày cập nhật:** 26/08/2026  
 **Target:** ESP32-S3  
 **Framework:** ESP-IDF 5.4.4 native  
@@ -14,7 +14,22 @@
 
 Phiên bản 2.0 xử lý các mâu thuẫn và khoảng trống kiến trúc được phát hiện khi review v1.0.
 
-## 0.1 Breaking changes
+## 0.0 Changelog v2.1 — prod-hardening
+
+Các thay đổi sau vòng review sẵn sàng triển khai production:
+
+1. Blocklist GPIO ESP32-S3 đầy đủ theo loại module: 22–25 chip-invalid, 26–32 flash, 33–37 octal PSRAM (mục 38, test BO-PIN-011+).
+2. Overlay priority sửa thành `FACTORY_ARMED > RESTART_ARMED > ERROR > ...`: giữ nút phải luôn có feedback kể cả khi base là ERROR (mục 26).
+3. Khóa riêng return value cho display runtime-disabled, khác compile-time disabled (mục 31, BO-API-012).
+4. LED pattern output dùng relative delta + sentinel `NO_TRANSITION`, hết mơ hồ uint32/uint64 (mục 28).
+5. Worker wait dùng `portMAX_DELAY` sentinel thay vì `pdMS_TO_TICKS(UINT32_MAX)` (mục 14).
+6. Validation polarity ↔ pull mode chống phantom press (mục 38, BO-PIN-014).
+7. `board_io_register_event_handler()` trước init bị reject (mục 8.4, BO-API-005).
+8. Double-buffer display là yêu cầu tường minh (mục 32).
+9. CMake thêm `log` vào `PRIV_REQUIRES` (mục 47).
+10. Ghi chú ràng buộc dispatcher registry freeze cho remote command (mục 46).
+
+## 0.1 Breaking changes (v2.0)
 
 1. `board_io` không còn được định nghĩa là single-shot cho toàn bộ boot.
    - `init()` lần hai khi đang chạy vẫn bị từ chối.
@@ -475,6 +490,7 @@ V2 dùng một handler duy nhất.
 
 Rules:
 
+- chưa `RUNNING` (trước init hoặc đang stop) -> `ESP_ERR_INVALID_STATE` (v2.1).
 - `handler != NULL` khi chưa có handler -> `ESP_OK`.
 - register handler thứ hai -> `ESP_ERR_INVALID_STATE`.
 - `handler == NULL` -> unregister handler hiện tại và clear context.
@@ -724,6 +740,8 @@ display next allowed render time
 Pseudo loop:
 
 ```c
+#define BOARD_IO_WAIT_NONE UINT32_MAX
+
 for (;;) {
     uint32_t timeout_ms = compute_next_deadline_ms();
 
@@ -732,7 +750,9 @@ for (;;) {
         0,
         UINT32_MAX,
         &bits,
-        pdMS_TO_TICKS(timeout_ms)
+        (timeout_ms == BOARD_IO_WAIT_NONE)
+            ? portMAX_DELAY
+            : pdMS_TO_TICKS(timeout_ms)
     );
 
     if (bits & BOARD_NOTIFY_STOP) break;
@@ -746,6 +766,10 @@ for (;;) {
 ```
 
 Không dùng busy loop.
+
+`BOARD_IO_WAIT_NONE` là sentinel "không có deadline". Không dùng
+`pdMS_TO_TICKS(UINT32_MAX)` làm timeout vô hạn vì tick math 32-bit có thể
+wrap. Deadline thực tế đều nhỏ (< vài giây) nên an toàn với tick 32-bit.
 
 ---
 
@@ -891,6 +915,8 @@ Khi giữ nút:
 ```
 
 Không emit public semantic event cho tới release.
+
+Armed overlay hiển thị kể cả khi base state là ERROR (xem priority mục 26).
 
 Điều này vừa cho user feedback vừa tránh thực thi action sớm.
 
@@ -1082,17 +1108,8 @@ application control task
 
 # 25. LED base states
 
-```c
-typedef enum {
-    BOARD_STATUS_BOOTING = 0,
-    BOARD_STATUS_PROVISIONING,
-    BOARD_STATUS_WIFI_CONNECTING,
-    BOARD_STATUS_READY,
-    BOARD_STATUS_DEGRADED,
-    BOARD_STATUS_ERROR,
-    BOARD_STATUS_COUNT,
-} board_status_t;
-```
+Enum `board_status_t` có định nghĩa canonical duy nhất ở mục 7 — không
+duplicate tại đây để tránh drift khi sửa enum.
 
 Pattern mặc định cho single-color LED:
 
@@ -1121,14 +1138,14 @@ RESTART_ARMED
 FACTORY_ARMED
 ```
 
-Priority v2:
+Priority v2.1:
 
 ```text
 FACTORY_ARMED
     >
-ERROR base state
-    >
 RESTART_ARMED
+    >
+ERROR base state
     >
 IDENTIFY
     >
@@ -1140,8 +1157,11 @@ base state
 Lý do:
 
 - factory reset destructive feedback luôn phải rõ;
-- ERROR không bị một remote identify/activity che mất;
-- restart armed vẫn có feedback khi không ở ERROR;
+- armed overlay là phản hồi cho hành động vật lý cục bộ của user nên phải
+  thắng mọi trạng thái nền, kể cả ERROR — user giữ nút trên thiết bị đang
+  ERROR vẫn thấy feedback ở mốc restart thay vì phải giữ mù tới factory
+  threshold;
+- ERROR vẫn cao hơn IDENTIFY/ACTIVITY nên tín hiệu remote không che được lỗi;
 - activity có priority thấp.
 
 ---
@@ -1205,11 +1225,19 @@ typedef struct {
 Output:
 
 ```c
+#define BOARD_LED_PATTERN_NO_TRANSITION UINT32_MAX
+
 typedef struct {
     bool logical_on;
-    uint32_t next_transition_ms;
+
+    /* Relative delta (ms) từ now_ms tới transition kế tiếp.
+       BOARD_LED_PATTERN_NO_TRANSITION nếu steady, không có transition. */
+    uint32_t rel_next_transition_ms;
 } board_led_pattern_output_t;
 ```
+
+Caller convert sang absolute deadline: `deadline = now_ms +
+rel_next_transition_ms` (dùng saturating add để tránh wrap).
 
 Pure engine không gọi GPIO.
 
@@ -1292,9 +1320,24 @@ board_io_display_set_enabled(...)
     -> ESP_ERR_NOT_SUPPORTED
 ```
 
-Không silent `ESP_OK`.
+Runtime disabled (`CONFIG_BOARD_IO_DISPLAY_ENABLE=y` nhưng đã gọi
+`set_enabled(false)`):
 
-Điều này giúp caller biết capability không tồn tại.
+```c
+board_io_display_update(frame)
+    -> ESP_OK; frame trở thành latest pending, render ngay khi re-enabled
+
+board_io_display_set_enabled(false)
+    -> ESP_OK (idempotent)
+
+board_io_display_set_enabled(true) khi backend không available
+    -> ESP_ERR_NOT_SUPPORTED
+```
+
+Không silent `ESP_OK` ở mức capability.
+
+Điều này giúp caller phân biệt "capability không tồn tại" với "đang bị tắt
+tạm thời".
 
 ---
 
@@ -1310,9 +1353,20 @@ Không silent `ESP_OK`.
 6. notify worker;
 7. return.
 
+Buffer model bắt buộc (v2.1):
+
+```text
+hai frame buffer tĩnh: pending + render_snapshot
+update():  copy caller frame -> pending      (dưới mutex, ngắn)
+worker:    pending -> render_snapshot        (dưới mutex)
+           render(render_snapshot)           (ngoài lock)
+```
+
 Caller có thể reuse/modify input ngay sau khi API return.
 
 Không giữ pointer của caller.
+
+Render không được chạy khi đang giữ internal lock (BO-DSP-011).
 
 ---
 
@@ -1537,11 +1591,33 @@ Phải kiểm tra:
 - backend-specific pin uniqueness;
 - SDA != SCL nếu I2C backend;
 - `factory_reset_ms > restart_ms`;
-- `debounce_ms < restart_ms`.
+- `debounce_ms < restart_ms`;
+- polarity ↔ pull coherence (bảng bên dưới).
 
-Đặc biệt ESP32-S3 có khoảng số GPIO không tồn tại dù Kconfig range 0..48.
+**Blocklist GPIO ESP32-S3 bắt buộc v2.1.** `GPIO_IS_VALID_GPIO` chỉ biết
+chip-level validity, không biết sơ đồ module. Production validation phải
+reject:
 
-Vì vậy runtime validation bắt buộc dùng ESP-IDF validity macro thay vì chỉ tin Kconfig range.
+```text
+22–25      chip-invalid              -> invalid
+26–32      embedded flash            -> invalid
+33–37      octal PSRAM               -> invalid khi CONFIG_SPIRAM_MODE_OCT=y,
+                                        warning khi quad
+0,3,45,46  strapping                 -> runtime OK, bắt buộc review mục 39
+43,44      UART0 console mặc định    -> warning
+```
+
+Kconfig range `0..48` không mã hóa blocklist này — nó phải là code + test,
+không phải comment.
+
+**Polarity ↔ pull coherence.** Contradiction trực tiếp gây floating input /
+phantom press:
+
+```text
+BUTTON_ACTIVE_LOW=y + PULL_DOWN -> ESP_ERR_INVALID_ARG
+BUTTON_ACTIVE_LOW=n + PULL_UP   -> ESP_ERR_INVALID_ARG
+BUTTON_ACTIVE_LOW=* + PULL_NONE -> valid, log warning (cần external resistor)
+```
 
 Pin 22–25 phải có dedicated test invalid trên ESP32-S3.
 
@@ -1796,6 +1872,11 @@ phải qua application control policy.
 
 `board_io` không tự register command.
 
+Ràng buộc repository: dispatcher registry bị freeze sau init (Appendix C).
+Remote command mới (`identify_gateway`, `set_gateway_display`) phải được
+đăng ký trong window init của application; không được thiết kế
+lazy-registration.
+
 ---
 
 # 47. CMake
@@ -1806,6 +1887,7 @@ Base `components/board_io/CMakeLists.txt`:
 set(board_io_priv_reqs
     esp_driver_gpio
     esp_timer
+    log
 )
 
 # Add bus driver only when concrete backend is enabled.
@@ -1897,7 +1979,11 @@ idf_component_register(
 )
 ```
 
-Internal headers có thể được test thông qua `PRIV_INCLUDE_DIRS`.
+`PRIV_INCLUDE_DIRS ".."` là white-box access tới internal headers
+(FSM, pattern engine) — chủ đích của thiết kế test, không phá rule
+"public header duy nhất" vì chỉ test project nhìn thấy. Mechanism gắn
+component khớp convention hiện có của repo (`<component>/test` qua
+`TEST_COMPONENTS`).
 
 Không thêm test-only symbol vào public API.
 
@@ -1960,7 +2046,8 @@ Expected:
 ESP_ERR_INVALID_STATE
 ```
 
-cho status/signal/display capability có support.
+cho status/signal/display capability có support, bao gồm cả
+`board_io_register_event_handler()` (v2.1).
 
 ## BO-API-006 — invalid status
 
@@ -2012,6 +2099,18 @@ board_io_deinit() -> ESP_ERR_INVALID_STATE
 ```
 
 Không deadlock.
+
+## BO-API-012 — display runtime-disabled semantics (v2.1)
+
+Với `DISPLAY_ENABLE=y`:
+
+```text
+set_enabled(false)          -> ESP_OK
+update(frame) khi disabled  -> ESP_OK, latest pending được giữ
+set_enabled(true)           -> ESP_OK, render latest pending (BO-DSP-007)
+```
+
+Phân biệt rõ với compile-time disabled -> `ESP_ERR_NOT_SUPPORTED`.
 
 ---
 
@@ -2301,7 +2400,17 @@ return latest base
 
 ## BO-LED-OVL-007 — FACTORY_ARMED > ERROR
 
-## BO-LED-OVL-008 — RESTART_ARMED priority
+## BO-LED-OVL-008 — RESTART_ARMED > ERROR (v2.1)
+
+Base ERROR, giữ nút quá restart threshold:
+
+```text
+LED thể hiện RESTART_ARMED, không còn error pattern
+```
+
+## BO-LED-OVL-009 — armed không bị che bởi identify/activity
+
+IDENTIFY active + FACTORY_ARMED -> vẫn FACTORY_ARMED.
 
 ---
 
@@ -2398,6 +2507,32 @@ debounce >= restart threshold -> invalid.
 ## BO-PIN-010
 
 Backend-specific duplicate pin -> invalid.
+
+## BO-PIN-011
+
+GPIO26 (flash blocklist) -> invalid.
+
+## BO-PIN-012
+
+GPIO31 (flash blocklist) -> invalid.
+
+## BO-PIN-013
+
+GPIO35 với `CONFIG_SPIRAM_MODE_OCT=y` -> invalid;
+với quad PSRAM -> valid + warning.
+
+## BO-PIN-014
+
+Polarity/pull contradiction -> invalid:
+
+```text
+ACTIVE_LOW=y + PULL_DOWN -> invalid
+ACTIVE_LOW=n + PULL_UP   -> invalid
+```
+
+## BO-PIN-015
+
+`PULL_NONE` -> init vẫn OK nhưng có warning log.
 
 ---
 
@@ -2948,13 +3083,16 @@ docs/Tai_lieu_Test_ESP32_BLE_Gateway.md
 - [ ] Activity retrigger semantics đúng.
 - [ ] Identify retrigger semantics đúng.
 - [ ] FACTORY_ARMED priority cao nhất.
+- [ ] RESTART_ARMED feedback hiển thị cả khi base ERROR (v2.1).
 - [ ] ERROR không bị activity/identify che.
 - [ ] Display abstraction không phụ thuộc I2C ở base layer.
-- [ ] Display disabled trả `ESP_ERR_NOT_SUPPORTED`.
+- [ ] Display compile-time disabled trả `ESP_ERR_NOT_SUPPORTED`.
+- [ ] Display runtime-disabled giữ latest pending, re-enable render lại (v2.1).
 - [ ] Rapid display update được coalesce.
 - [ ] Optional display failure không kill gateway.
 - [ ] Pin conflict validation pass.
-- [ ] Invalid ESP32-S3 GPIO 22–25 có test.
+- [ ] Blocklist ESP32-S3 có test: 22–25, 26–32, 33–37 octal PSRAM (v2.1).
+- [ ] Polarity/pull contradiction bị reject (v2.1).
 - [ ] Production pin map đã review schematic.
 - [ ] `main/CMakeLists.txt` link board_io.
 - [ ] `test/CMakeLists.txt` include board_io.
@@ -2983,6 +3121,9 @@ docs/Tai_lieu_Test_ESP32_BLE_Gateway.md
 | Activity | latest trigger extends pulse |
 | Identify | retrigger restarts duration |
 | Error state | not obscured by activity/identify |
+| Restart armed | visible feedback even when base is ERROR (v2.1) |
+| Pin blocklist | flash/PSRAM pins rejected per module config (v2.1) |
+| Display runtime off | update accepted, latest pending restored on enable (v2.1) |
 | Display | burst update latest-state-wins |
 | Display refresh | never exceeds configured cap |
 | Display fault | optional fault does not kill worker |
@@ -3123,6 +3264,7 @@ Unity test project chạy độc lập với root firmware project.
 - [ ] Debounce quiet-window.
 - [ ] One semantic event per press.
 - [ ] Exact thresholds.
+- [ ] Armed overlay beats ERROR (v2.1).
 
 ## LED
 
@@ -3136,11 +3278,13 @@ Unity test project chạy độc lập với root firmware project.
 - [ ] Copy frame.
 - [ ] Coalescing.
 - [ ] Refresh cap.
+- [ ] Runtime-disable keeps latest pending (v2.1).
 - [ ] Optional failure isolation.
 
 ## Test
 
 - [ ] Component wired into test app.
+- [ ] S3 GPIO blocklist tests present (v2.1).
 - [ ] No destructive auto-run.
 - [ ] HIL provisioning.
 - [ ] HIL reconnect.
