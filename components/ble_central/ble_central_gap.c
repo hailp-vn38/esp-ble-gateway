@@ -8,7 +8,6 @@
 #include "host/ble_store.h"
 
 #include "ble_central_internal.h"
-#include "device_store.h"
 
 static const char *TAG = "ble_central_gap";
 
@@ -45,7 +44,8 @@ static void gap_release_connection(ble_conn_ref_t ref, uint16_t conn_handle,
         return;
     }
 
-    device_store_set_connected(device_id, 0);
+    // Runtime state is the single source of truth for connectivity; the
+    // persistent mirror was removed with the device_store refactor.
     ESP_LOGW(TAG, "[%s][slot=%u][gen=%u][handle=%u] DISCONNECTED reason=%d",
              device_id, ref.slot_index, (unsigned)ref.generation, conn_handle,
              reason);
@@ -111,9 +111,8 @@ int ble_central_gap_event_handler(struct ble_gap_event *event, void *arg)
         if (ble_gap_conn_find(event->connect.conn_handle, &description) == 0) {
             ble_runtime_set_peer_addr(snap.device_index,
                                       &description.peer_id_addr);
-            device_store_set_ble_addr(device_id,
-                                      description.peer_id_addr.val,
-                                      description.peer_id_addr.type);
+            // Deferred persistence: never write NVS from a host callback.
+            ble_central_identity_submit(device_id, &description.peer_id_addr);
         }
 
         ble_gattc_exchange_mtu(event->connect.conn_handle, NULL, NULL);

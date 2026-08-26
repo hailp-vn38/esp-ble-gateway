@@ -30,6 +30,9 @@ typedef enum {
     DISPATCH_STATUS_INTERNAL_ERROR,
     // The peripheral received and answered the command but reported failure.
     DISPATCH_STATUS_DEVICE_ERROR,
+    // Appended (values preserved for on-wire numeric compatibility):
+    DISPATCH_STATUS_CONFLICT,
+    DISPATCH_STATUS_RESOURCE_EXHAUSTED,
 } dispatch_status_t;
 
 typedef struct {

@@ -49,14 +49,13 @@ bool device_store_entry_create(device_entry_t *entry, const char *device_id,
         return false;
     }
 
+    // device_id is a logical identifier only. BLE transport identity is
+    // set exclusively through device_store_set_ble_identity(); a MAC-looking
+    // device_id must never imply one (refactor plan §7).
     memset(entry, 0, sizeof(*entry));
     strlcpy(entry->device_id, device_id, sizeof(entry->device_id));
     strlcpy(entry->name, name, sizeof(entry->name));
     strlcpy(entry->type, type, sizeof(entry->type));
-    if (device_store_entry_parse_ble_addr(device_id, entry->ble_addr) == 0) {
-        entry->has_ble_addr = 1;
-        entry->ble_addr_type = 0;
-    }
     return true;
 }
 

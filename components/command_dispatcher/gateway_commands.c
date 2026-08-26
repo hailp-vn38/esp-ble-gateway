@@ -20,6 +20,30 @@ static void format_ble_addr(const uint8_t address[6], char output[18])
              address[5], address[4], address[3], address[2], address[1], address[0]);
 }
 
+// Typed Device Store contract -> dispatcher status (refactor plan §11).
+static dispatch_status_t status_for_store_result(device_store_result_t result)
+{
+    switch (result) {
+    case DEVICE_STORE_OK:
+        return DISPATCH_STATUS_OK;
+    case DEVICE_STORE_ERR_INVALID_ARG:
+        return DISPATCH_STATUS_INVALID_ARGUMENT;
+    case DEVICE_STORE_ERR_NOT_FOUND:
+        return DISPATCH_STATUS_NOT_FOUND;
+    case DEVICE_STORE_ERR_DUPLICATE_ID:
+    case DEVICE_STORE_ERR_DUPLICATE_BLE_IDENTITY:
+        return DISPATCH_STATUS_CONFLICT;
+    case DEVICE_STORE_ERR_FULL:
+    case DEVICE_STORE_ERR_CAPACITY_EXCEEDED:
+        return DISPATCH_STATUS_RESOURCE_EXHAUSTED;
+    case DEVICE_STORE_ERR_BUSY:
+        return DISPATCH_STATUS_BUSY;
+    default:
+        // PERSISTENCE/CORRUPT/SCHEMA_TOO_NEW/BUFFER_TOO_SMALL/INVALID_STATE
+        return DISPATCH_STATUS_INTERNAL_ERROR;
+    }
+}
+
 static void cmd_add_device(const gw_message_t *msg, dispatch_result_t *result)
 {
     if (!msg->has_device_id || msg->device_id[0] == '\0') {
@@ -31,44 +55,48 @@ static void cmd_add_device(const gw_message_t *msg, dispatch_result_t *result)
 
     const char *name = msg->name[0] != '\0' ? msg->name : msg->device_id;
     const char *device_type = msg->device_type[0] != '\0' ? msg->device_type : "generic";
-    if (device_store_add(msg->device_id, name, device_type) != 0) {
-        command_dispatcher_set_text_result(result,
-                                           DISPATCH_STATUS_INTERNAL_ERROR,
+    device_store_result_t store_rc =
+        device_store_add(msg->device_id, name, device_type);
+    if (store_rc != DEVICE_STORE_OK) {
+        command_dispatcher_set_text_result(result, status_for_store_result(store_rc),
                                            "Could not add device %s",
                                            msg->device_id);
         return;
     }
 
-    bool persisted = true;
-    if (msg->has_ble_addr &&
-        device_store_set_ble_addr(msg->device_id, msg->ble_addr,
-                                  msg->ble_addr_type) != 0) {
-        device_store_delete(msg->device_id);
-        persisted = false;
-    }
-    if (!persisted) {
-        command_dispatcher_set_text_result(result,
-                                           DISPATCH_STATUS_INTERNAL_ERROR,
-                                           "Could not persist BLE address for %s",
-                                           msg->device_id);
-        return;
+    if (msg->has_ble_addr) {
+        store_rc = device_store_set_ble_identity(msg->device_id, msg->ble_addr,
+                                                 msg->ble_addr_type);
+        if (store_rc != DEVICE_STORE_OK) {
+            device_store_delete(msg->device_id);
+            if (store_rc == DEVICE_STORE_ERR_DUPLICATE_BLE_IDENTITY) {
+                command_dispatcher_set_text_result(
+                    result, DISPATCH_STATUS_CONFLICT,
+                    "BLE address already registered to another device");
+            } else {
+                command_dispatcher_set_text_result(
+                    result, status_for_store_result(store_rc),
+                    "Could not persist BLE identity for %s", msg->device_id);
+            }
+            return;
+        }
     }
 
     // BLE connect is a best-effort side effect: persistence alone defines
     // the outcome of add_device (refactor plan §12).
     bool connect_requested = false;
     device_entry_t entry;
-    if (device_store_get(msg->device_id, &entry) == 0 && entry.has_ble_addr) {
+    if (device_store_get(msg->device_id, &entry) == DEVICE_STORE_OK &&
+        entry.has_ble_identity) {
         connect_requested =
             ble_central_connect(entry.device_id, entry.ble_addr,
                                 entry.ble_addr_type) == 0;
     }
 
-    char payload[192];
+    char payload[160];
     snprintf(payload, sizeof(payload),
-             "{\"device_id\":\"%s\",\"persisted\":%s,\"connect_requested\":%s}",
-             msg->device_id, persisted ? "true" : "false",
-             connect_requested ? "true" : "false");
+             "{\"device_id\":\"%s\",\"persisted\":true,\"connect_requested\":%s}",
+             msg->device_id, connect_requested ? "true" : "false");
     command_dispatcher_set_json_result(result, DISPATCH_STATUS_OK, payload);
 }
 
@@ -84,15 +112,17 @@ static void cmd_delete_device(const gw_message_t *msg, dispatch_result_t *result
     // Snapshot peer identity BEFORE removing the store entry so the BLE
     // layer never has to look up a deleted device (refactor plan §8.1).
     device_entry_t existing;
-    if (device_store_get(msg->device_id, &existing) != 0) {
-        command_dispatcher_set_text_result(result, DISPATCH_STATUS_NOT_FOUND,
+    device_store_result_t store_rc = device_store_get(msg->device_id, &existing);
+    if (store_rc != DEVICE_STORE_OK) {
+        command_dispatcher_set_text_result(result,
+                                           status_for_store_result(store_rc),
                                            "Device %s not found", msg->device_id);
         return;
     }
 
     int forget_rc = ble_central_forget_peer(
         existing.device_id, existing.ble_addr, existing.ble_addr_type,
-        existing.has_ble_addr != 0);
+        existing.has_ble_identity);
     if (forget_rc != 0) {
         // Store entry is kept intact so the operation can be retried.
         ESP_LOGE(TAG, "[DEVICE_DELETE_FAILED] device=%s could not forget BLE peer rc=%d",
@@ -104,13 +134,13 @@ static void cmd_delete_device(const gw_message_t *msg, dispatch_result_t *result
         return;
     }
 
-    int rc = device_store_delete(msg->device_id);
-    if (rc != 0) {
+    device_store_result_t delete_rc = device_store_delete(msg->device_id);
+    if (delete_rc != DEVICE_STORE_OK) {
         // Rare: bond already removed but config remains. Surface loudly.
         ESP_LOGE(TAG, "[DEVICE_DELETE_FAILED] device=%s bond removed but store delete failed",
                  msg->device_id);
         command_dispatcher_set_text_result(result,
-                                           DISPATCH_STATUS_INTERNAL_ERROR,
+                                           status_for_store_result(delete_rc),
                                            "Bond removed but device %s remains configured",
                                            msg->device_id);
         return;
@@ -138,9 +168,11 @@ static void cmd_edit_device(const gw_message_t *msg, dispatch_result_t *result)
         return;
     }
 
-    int rc = device_store_edit(msg->device_id, name, device_type);
-    if (rc != 0) {
-        command_dispatcher_set_text_result(result, DISPATCH_STATUS_NOT_FOUND,
+    device_store_result_t edit_rc =
+        device_store_edit(msg->device_id, name, device_type);
+    if (edit_rc != DEVICE_STORE_OK) {
+        command_dispatcher_set_text_result(result,
+                                           status_for_store_result(edit_rc),
                                            "Device %s not found", msg->device_id);
         return;
     }
@@ -152,8 +184,9 @@ static void cmd_list_devices(const gw_message_t *msg, dispatch_result_t *result)
 {
     (void)msg;
     device_entry_t devices[DEVICE_STORE_MAX_DEVICES];
-    int count = device_store_snapshot(devices, DEVICE_STORE_MAX_DEVICES);
-    if (count < 0) {
+    size_t count = 0;
+    if (device_store_snapshot(devices, DEVICE_STORE_MAX_DEVICES, &count) !=
+        DEVICE_STORE_OK) {
         command_dispatcher_set_text_result(result,
                                            DISPATCH_STATUS_INTERNAL_ERROR,
                                            "Could not read device list");
@@ -168,15 +201,24 @@ static void cmd_list_devices(const gw_message_t *msg, dispatch_result_t *result)
         return;
     }
 
-    for (int i = 0; i < count; i++) {
+    for (size_t i = 0; i < count; i++) {
         cJSON *item = cJSON_CreateObject();
         if (item == NULL) continue;
+
+        // Connection state is merged from the BLE runtime snapshot, never
+        // read from the persistent store (refactor plan §10.4).
+        ble_central_device_status_t status;
+        bool connected =
+            ble_central_get_device_status(devices[i].device_id, &status) ==
+                BLE_CENTRAL_OK &&
+            status.connected;
+
         cJSON_AddStringToObject(item, "device_id", devices[i].device_id);
         cJSON_AddStringToObject(item, "name", devices[i].name);
         cJSON_AddStringToObject(item, "type", devices[i].type);
-        cJSON_AddBoolToObject(item, "connected", devices[i].connected != 0);
-        cJSON_AddBoolToObject(item, "has_ble_addr", devices[i].has_ble_addr != 0);
-        if (devices[i].has_ble_addr) {
+        cJSON_AddBoolToObject(item, "connected", connected);
+        cJSON_AddBoolToObject(item, "has_ble_addr", devices[i].has_ble_identity);
+        if (devices[i].has_ble_identity) {
             char address[18];
             format_ble_addr(devices[i].ble_addr, address);
             cJSON_AddStringToObject(item, "ble_addr", address);

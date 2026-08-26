@@ -47,14 +47,17 @@ static int ble_runtime_register_unlocked(const char *device_id,
 int ble_central_runtime_init(void)
 {
     device_entry_t devices[DEVICE_STORE_MAX_DEVICES];
-    int count = device_store_snapshot(devices, DEVICE_STORE_MAX_DEVICES);
-    if (count < 0) return BLE_CENTRAL_ERR_STACK;
+    size_t count = 0;
+    if (device_store_snapshot(devices, DEVICE_STORE_MAX_DEVICES, &count) !=
+        DEVICE_STORE_OK) {
+        return BLE_CENTRAL_ERR_STACK;
+    }
 
     if (!ble_state_lock()) return BLE_CENTRAL_ERR_STATE;
 
     memset(g_ble_devices, 0, sizeof(g_ble_devices));
-    for (int i = 0; i < count; i++) {
-        if (!devices[i].has_ble_addr) continue;
+    for (size_t i = 0; i < count; i++) {
+        if (!devices[i].has_ble_identity) continue;
 
         ble_addr_t addr;
         addr.type = devices[i].ble_addr_type;

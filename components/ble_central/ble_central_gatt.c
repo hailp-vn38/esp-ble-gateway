@@ -3,7 +3,6 @@
 #include "host/ble_hs.h"
 
 #include "ble_central_internal.h"
-#include "device_store.h"
 
 static const char *TAG = "ble_central_gatt";
 
@@ -60,7 +59,6 @@ static void gatt_mark_ready(ble_callback_ctx_t *ctx, const ble_conn_slot_t *snap
 
     ble_state_set_ready(ctx->ref);
     ble_scheduler_note_success(snap->device_index);
-    device_store_set_connected(device_id, 1);
     ESP_LOGI(TAG,
              "[%s][slot=%u][gen=%u][handle=%u] READY (command=%u status=%u "
              "cccd=%u mtu=%u)",

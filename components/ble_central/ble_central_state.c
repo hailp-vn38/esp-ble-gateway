@@ -209,6 +209,14 @@ void ble_central_metrics_notify_received(void)
     }
 }
 
+void ble_central_metrics_identity_persist_failure(void)
+{
+    if (ble_state_lock()) {
+        s_metrics.identity_persist_failures++;
+        ble_state_unlock();
+    }
+}
+
 int ble_state_reserve_connection(int device_index, ble_conn_ref_t *out_ref,
                                  int64_t now_ms)
 {

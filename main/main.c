@@ -48,7 +48,7 @@ void app_main(void)
         return;
     }
 
-    if (device_store_init() != 0) {
+    if (device_store_init() != DEVICE_STORE_OK) {
         ESP_LOGE(TAG, "Device store initialization failed");
         return;
     }

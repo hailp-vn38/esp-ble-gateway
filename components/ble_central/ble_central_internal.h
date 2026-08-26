@@ -118,6 +118,7 @@ typedef struct {
     uint32_t notify_dropped;
     uint32_t notify_decode_errors;
     uint32_t mtu_rejects;
+    uint32_t identity_persist_failures;
 } ble_central_metrics_t;
 
 extern ble_conn_slot_t g_ble_connections[BLE_CENTRAL_MAX_CONN];
@@ -178,6 +179,7 @@ void ble_central_metrics_notify_dropped(void);
 void ble_central_metrics_notify_decode_error(void);
 void ble_central_metrics_mtu_reject(void);
 void ble_central_metrics_notify_received(void);
+void ble_central_metrics_identity_persist_failure(void);
 int ble_central_active_count_unlocked(void);
 uint16_t ble_central_calculate_conn_interval(void);
 int ble_connection_start(int device_index);
@@ -199,6 +201,11 @@ int ble_central_notify_init(ble_central_notify_cb_t notify_cb);
 void ble_central_notify_worker(void *arg);
 void ble_central_notify_enqueue(const char *device_id, const uint8_t *data,
                                 uint16_t len);
+
+int ble_central_identity_init(void);
+// Non-blocking identity hand-off for NimBLE host callbacks. The worker task
+// owns the actual device_store persistence; see ble_central_identity.c.
+void ble_central_identity_submit(const char *device_id, const ble_addr_t *addr);
 
 void ble_central_abort_discovery(ble_callback_ctx_t *ctx, const char *reason);
 void ble_central_start_gatt_discovery(ble_callback_ctx_t *ctx);

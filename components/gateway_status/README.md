@@ -14,7 +14,8 @@ Không block BLE I/O; an toàn gọi từ HTTPD task hoặc dispatcher handler; 
 
 | Trường | Nguồn |
 |---|---|
-| `device_count`, `connected_count` | `device_store_snapshot()` |
+| `device_count` | `device_store_snapshot()` |
+| `connected_count` | `ble_central_get_device_status()` (merge với snapshot) |
 | `ble_link_count` | `ble_central_active_count()` |
 | `ip`, `wifi_connected`, `provisioning`, `wifi_state` | `wifi_prov_*` |
 | `free_heap`, `uptime_ms`, `firmware_version`, `idf_version` | esp_system / esp_timer / app_desc |

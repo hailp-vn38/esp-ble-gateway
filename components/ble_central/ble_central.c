@@ -36,10 +36,6 @@ static void on_ble_host_reset(int reason)
     ble_central_scan_reset();
     ESP_LOGE(TAG, "NimBLE host reset, reason=%d (cleared %u link(s))", reason,
              (unsigned)mirror_count);
-
-    for (size_t i = 0; i < mirror_count; i++) {
-        device_store_set_connected(device_ids[i], 0);
-    }
 }
 
 static void on_ble_host_sync(void)
@@ -58,6 +54,10 @@ int ble_central_init(ble_central_notify_cb_t notify_cb)
 {
     if (ble_central_state_init(notify_cb) != 0) return -1;
     if (ble_central_runtime_init() != BLE_CENTRAL_OK) return -1;
+    if (ble_central_identity_init() != 0) {
+        ESP_LOGE(TAG, "Identity persistence worker failed to start");
+        return -1;
+    }
     ble_central_scan_reset();
 
     esp_err_t error = nimble_port_init();
@@ -295,4 +295,45 @@ int ble_central_active_count(void)
     int count = ble_central_active_count_unlocked();
     ble_state_unlock();
     return count;
+}
+
+ble_central_err_t ble_central_get_device_status(
+    const char *device_id, ble_central_device_status_t *out_status)
+{
+    if (device_id == NULL || out_status == NULL) {
+        return BLE_CENTRAL_ERR_INVALID_ARG;
+    }
+    memset(out_status, 0, sizeof(*out_status));
+    if (!ble_state_lock()) return BLE_CENTRAL_ERR_STATE;
+
+    ble_central_err_t result = BLE_CENTRAL_ERR_NOT_FOUND;
+    for (int i = 0; i < DEVICE_STORE_MAX_DEVICES; i++) {
+        const ble_device_runtime_t *dev = &g_ble_devices[i];
+        if (!dev->in_use || strcmp(dev->device_id, device_id) != 0) continue;
+
+        out_status->known = true;
+        // The runtime and public state enums are intentionally aligned.
+        out_status->state = (ble_central_device_state_t)dev->state;
+        result = BLE_CENTRAL_OK;
+
+        int slot_index = dev->connection_slot;
+        if (slot_index >= 0 && slot_index < BLE_CENTRAL_MAX_CONN) {
+            const ble_conn_slot_t *slot = &g_ble_connections[slot_index];
+            switch (slot->state) {
+            case BLE_CONN_SECURING:
+            case BLE_CONN_DISCOVERING:
+            case BLE_CONN_READY:
+            case BLE_CONN_DISCONNECTING:
+                out_status->connected = true;
+                break;
+            default:
+                break;
+            }
+            out_status->ready = slot->state == BLE_CONN_READY;
+        }
+        break;
+    }
+
+    ble_state_unlock();
+    return result;
 }

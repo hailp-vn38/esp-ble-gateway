@@ -63,9 +63,12 @@ static const char *http_status_for(const dispatch_result_t *result)
     case DISPATCH_STATUS_NOT_FOUND:
         return "404 Not Found";
     case DISPATCH_STATUS_BUSY:
+    case DISPATCH_STATUS_CONFLICT:
         return "409 Conflict";
     case DISPATCH_STATUS_TIMEOUT:
         return "504 Gateway Timeout";
+    case DISPATCH_STATUS_RESOURCE_EXHAUSTED:
+        return "507 Insufficient Storage";
     case DISPATCH_STATUS_NOT_CONNECTED:
     case DISPATCH_STATUS_TRANSPORT_ERROR:
     case DISPATCH_STATUS_DEVICE_ERROR:
@@ -81,6 +84,8 @@ static const char *error_code_for(const dispatch_result_t *result)
     case DISPATCH_STATUS_INVALID_ARGUMENT: return "invalid_request";
     case DISPATCH_STATUS_NOT_FOUND: return "device_not_found";
     case DISPATCH_STATUS_BUSY: return "device_busy";
+    case DISPATCH_STATUS_CONFLICT: return "conflict";
+    case DISPATCH_STATUS_RESOURCE_EXHAUSTED: return "store_full";
     case DISPATCH_STATUS_TIMEOUT: return "command_timeout";
     case DISPATCH_STATUS_NOT_CONNECTED: return "device_not_connected";
     case DISPATCH_STATUS_TRANSPORT_ERROR: return "transport_error";

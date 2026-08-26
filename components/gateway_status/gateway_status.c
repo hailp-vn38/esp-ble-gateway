@@ -18,11 +18,21 @@ esp_err_t gateway_status_get(gateway_status_t *status)
     memset(status, 0, sizeof(*status));
 
     device_entry_t devices[DEVICE_STORE_MAX_DEVICES];
-    int count = device_store_snapshot(devices, DEVICE_STORE_MAX_DEVICES);
-    if (count < 0) count = 0;
+    size_t count = 0;
+    if (device_store_snapshot(devices, DEVICE_STORE_MAX_DEVICES, &count) !=
+        DEVICE_STORE_OK) {
+        count = 0;
+    }
     status->device_count = count;
-    for (int i = 0; i < count; i++) {
-        status->connected_count += devices[i].connected != 0;
+    // Connection state comes from the BLE runtime; the persistent store no
+    // longer mirrors it.
+    for (size_t i = 0; i < count; i++) {
+        ble_central_device_status_t device_status;
+        if (ble_central_get_device_status(devices[i].device_id,
+                                          &device_status) == BLE_CENTRAL_OK &&
+            device_status.connected) {
+            status->connected_count++;
+        }
     }
     status->ble_link_count = ble_central_active_count();
 

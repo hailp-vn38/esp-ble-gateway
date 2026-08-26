@@ -3,6 +3,7 @@ idf_component_register(
         "ble_central.c"
         "ble_central_gap.c"
         "ble_central_gatt.c"
+        "ble_central_identity.c"
         "ble_central_notify.c"
         "ble_central_runtime.c"
         "ble_central_scan.c"
