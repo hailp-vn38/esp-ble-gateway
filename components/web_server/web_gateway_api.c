@@ -9,21 +9,16 @@
 #include "cJSON.h"
 #include "esp_log.h"
 #include "freertos/FreeRTOS.h"
-#include "freertos/semphr.h"
 #include "freertos/task.h"
 
 #include "command_dispatcher.h"
+#include "command_executor.h"
 #include "web_http.h"
 
-#define COMMAND_WORKER_COUNT 3
-#define COMMAND_WORKER_STACK 8192
-
 static const char *TAG = "web_gateway_api";
-static SemaphoreHandle_t s_command_slots;
 
 typedef struct {
     httpd_req_t *request;
-    gw_message_t message;
 } command_async_context_t;
 
 static int hex_value(char value)
@@ -223,18 +218,14 @@ static esp_err_t devices_delete_handler(httpd_req_t *request)
     return send_dispatch_result(request, &result);
 }
 
-static void command_http_worker(void *arg)
+static void command_completion(const dispatch_result_t *result, void *arg)
 {
     command_async_context_t *context = arg;
-    dispatch_result_t result;
-    command_dispatcher_handle(&context->message, &result);
-    send_dispatch_result(context->request, &result);
+    send_dispatch_result(context->request, result);
     if (httpd_req_async_handler_complete(context->request) != ESP_OK) {
         ESP_LOGW(TAG, "Could not complete asynchronous command request");
     }
     free(context);
-    xSemaphoreGive(s_command_slots);
-    vTaskDelete(NULL);
 }
 
 static esp_err_t command_post_handler(httpd_req_t *request)
@@ -285,45 +276,34 @@ static esp_err_t command_post_handler(httpd_req_t *request)
     }
     cJSON_Delete(json);
 
-    if (s_command_slots == NULL || xSemaphoreTake(s_command_slots, 0) != pdTRUE) {
-        return web_send_api_error(request, "503 Service Unavailable",
-                                  "All command workers are busy");
-    }
-
-    command_async_context_t *context = calloc(1, sizeof(*context));
+    command_async_context_t *context = malloc(sizeof(*context));
     if (context == NULL) {
-        xSemaphoreGive(s_command_slots);
         return web_send_api_error(request, "503 Service Unavailable",
-                                  "Could not allocate command worker");
+                                  "Could not allocate command context");
     }
-    context->message = message;
 
     esp_err_t error = httpd_req_async_handler_begin(request, &context->request);
     if (error != ESP_OK) {
         free(context);
-        xSemaphoreGive(s_command_slots);
         return web_send_api_error(request, "503 Service Unavailable",
                                   "Could not start asynchronous command");
     }
 
-    if (xTaskCreate(command_http_worker, "http_command", COMMAND_WORKER_STACK,
-                    context, 5, NULL) != pdPASS) {
+    // Executor admission failure (queue full or shutting down) answers 503
+    // inline; device-level BUSY still comes back later as 409 via completion.
+    if (command_executor_submit(&message, command_completion, context) !=
+        ESP_OK) {
         web_send_api_error(context->request, "503 Service Unavailable",
-                           "Could not start command worker");
+                           "Command executor is full");
         httpd_req_async_handler_complete(context->request);
         free(context);
-        xSemaphoreGive(s_command_slots);
     }
     return ESP_OK;
 }
 
 esp_err_t web_gateway_api_init(void)
 {
-    if (s_command_slots == NULL) {
-        s_command_slots = xSemaphoreCreateCounting(COMMAND_WORKER_COUNT,
-                                                   COMMAND_WORKER_COUNT);
-    }
-    return s_command_slots != NULL ? ESP_OK : ESP_ERR_NO_MEM;
+    return ESP_OK;
 }
 
 esp_err_t web_gateway_api_register(httpd_handle_t server)
