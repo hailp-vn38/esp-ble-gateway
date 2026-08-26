@@ -2,7 +2,6 @@
 #include <string.h>
 
 #include "esp_log.h"
-#include "esp_timer.h"
 #include "host/ble_gap.h"
 #include "host/ble_gatt.h"
 #include "host/ble_hs.h"
@@ -29,24 +28,17 @@ static void nimble_host_task(void *param)
 
 static void on_ble_host_reset(int reason)
 {
-    g_ble_host_synced = false;
+    char device_ids[DEVICE_STORE_MAX_DEVICES][GW_MSG_DEVICE_ID_LEN];
+    size_t mirror_count =
+        ble_state_handle_host_reset(device_ids, DEVICE_STORE_MAX_DEVICES);
+
+    ble_host_set_ready(false);
     ble_central_scan_reset();
-    ESP_LOGE(TAG, "NimBLE host reset, reason=%d", reason);
+    ESP_LOGE(TAG, "NimBLE host reset, reason=%d (cleared %u link(s))", reason,
+             (unsigned)mirror_count);
 
-    if (ble_central_lock_connections()) {
-        for (int i = 0; i < BLE_CENTRAL_MAX_CONN; i++) {
-            ble_conn_slot_t *slot = &g_ble_connections[i];
-            if (slot->state == BLE_CONN_SLOT_FREE) continue;
-
-            device_store_set_connected(slot->device_id, 0);
-            if (slot->forget_requested) {
-                memset(slot, 0, sizeof(*slot));
-            } else {
-                ble_central_reset_runtime_handles(slot);
-                slot->state = BLE_CONN_SLOT_IDLE;
-            }
-        }
-        ble_central_unlock_connections();
+    for (size_t i = 0; i < mirror_count; i++) {
+        device_store_set_connected(device_ids[i], 0);
     }
 }
 
@@ -57,7 +49,7 @@ static void on_ble_host_sync(void)
         ESP_LOGE(TAG, "Could not infer own BLE address type: %d", rc);
         return;
     }
-    g_ble_host_synced = true;
+    ble_host_set_ready(true);
     ESP_LOGI(TAG, "NimBLE host synced (own_addr_type=%u)",
              g_ble_own_addr_type);
 }
@@ -65,6 +57,7 @@ static void on_ble_host_sync(void)
 int ble_central_init(ble_central_notify_cb_t notify_cb)
 {
     if (ble_central_state_init(notify_cb) != 0) return -1;
+    if (ble_central_runtime_init() != BLE_CENTRAL_OK) return -1;
     ble_central_scan_reset();
 
     esp_err_t error = nimble_port_init();
@@ -90,175 +83,216 @@ int ble_central_init(ble_central_notify_cb_t notify_cb)
 int ble_central_connect(const char *device_id, const uint8_t *ble_addr,
                         uint8_t addr_type)
 {
-    if (device_id == NULL || device_id[0] == '\0' || ble_addr == NULL) return -1;
-    if (!g_ble_host_synced) return -2;
-    if (!ble_central_lock_connections()) return -1;
+    if (device_id == NULL || device_id[0] == '\0' || ble_addr == NULL) {
+        return BLE_CENTRAL_ERR_INVALID_ARG;
+    }
+    if (!ble_host_is_ready()) return BLE_CENTRAL_ERR_NOT_READY;
 
     device_entry_t registered_device;
     if (device_store_get(device_id, &registered_device) != 0) {
-        ble_central_unlock_connections();
-        return -3;
+        return BLE_CENTRAL_ERR_NOT_FOUND;
     }
 
-    ble_conn_slot_t *slot = ble_central_find_slot_unlocked(device_id);
-    if (slot == NULL) {
-        slot = ble_central_allocate_slot_unlocked();
-        if (slot == NULL) {
-            ble_central_unlock_connections();
-            ESP_LOGE(TAG, "No free connection slot (max=%d)",
-                     BLE_CENTRAL_MAX_CONN);
-            return -1;
-        }
-        memset(slot, 0, sizeof(*slot));
-        ble_central_reset_runtime_handles(slot);
-        strlcpy(slot->device_id, device_id, sizeof(slot->device_id));
-        slot->state = BLE_CONN_SLOT_IDLE;
-    }
-    if (slot->state != BLE_CONN_SLOT_IDLE) {
-        ble_central_unlock_connections();
-        return -1;
-    }
+    ble_addr_t peer_addr;
+    peer_addr.type = addr_type;
+    memcpy(peer_addr.val, ble_addr, sizeof(peer_addr.val));
 
-    slot->peer_addr.type = addr_type;
-    memcpy(slot->peer_addr.val, ble_addr, sizeof(slot->peer_addr.val));
-    slot->forget_requested = false;
-    slot->state = BLE_CONN_SLOT_CONNECTING;
-    slot->last_attempt_ms = esp_timer_get_time() / 1000;
-    ble_addr_t peer_addr = slot->peer_addr;
-    ble_central_unlock_connections();
+    int device_index = ble_runtime_find_or_register(device_id, &peer_addr);
+    if (device_index < 0) return device_index;
 
-    uint16_t interval = ble_central_calculate_conn_interval();
-    struct ble_gap_conn_params parameters = {
-        .scan_itvl = 16,
-        .scan_window = 16,
-        .itvl_min = interval,
-        .itvl_max = interval,
-        .latency = BLE_CONN_LATENCY,
-        .supervision_timeout = BLE_CONN_TIMEOUT_UNITS,
-        .min_ce_len = 0,
-        .max_ce_len = 0,
-    };
-
-    int rc = ble_gap_connect(g_ble_own_addr_type, &peer_addr,
-                             BLE_CONNECT_TIMEOUT_MS, &parameters,
-                             ble_central_gap_event_handler, slot);
-    if (rc != 0) {
-        if (ble_central_lock_connections()) {
-            if (slot->state == BLE_CONN_SLOT_CONNECTING) {
-                slot->state = BLE_CONN_SLOT_IDLE;
-            }
-            ble_central_unlock_connections();
-        }
-        ESP_LOGW(TAG, "[%s] ble_gap_connect failed: %d", device_id, rc);
-        return -1;
-    }
-
-    ESP_LOGI(TAG, "[%s] Connecting (interval=%.1f ms)", device_id,
-             interval * 1.25f);
-    return 0;
+    return ble_connection_start(device_index);
 }
 
 int ble_central_disconnect(const char *device_id)
 {
-    if (device_id == NULL || !ble_central_lock_connections()) return -1;
-    ble_conn_slot_t *slot = ble_central_find_slot_unlocked(device_id);
-    uint16_t handle = slot != NULL ? slot->conn_handle
-                                   : BLE_HS_CONN_HANDLE_NONE;
-    ble_central_unlock_connections();
-    if (handle == BLE_HS_CONN_HANDLE_NONE) return -1;
-    return ble_gap_terminate(handle, BLE_ERR_REM_USER_CONN_TERM) == 0 ? 0 : -1;
+    if (device_id == NULL) return BLE_CENTRAL_ERR_INVALID_ARG;
+
+    int device_index = ble_runtime_find(device_id);
+    if (device_index < 0) return BLE_CENTRAL_ERR_NOT_FOUND;
+
+    uint16_t conn_handle = BLE_HS_CONN_HANDLE_NONE;
+    if (!ble_state_lock()) return BLE_CENTRAL_ERR_STATE;
+
+    do {
+        int slot_index = g_ble_devices[device_index].connection_slot;
+        if (slot_index < 0 || slot_index >= BLE_CENTRAL_MAX_CONN) break;
+
+        ble_conn_slot_t *slot = &g_ble_connections[slot_index];
+        if (slot->state == BLE_CONN_FREE ||
+            slot->conn_handle == BLE_HS_CONN_HANDLE_NONE) break;
+
+        conn_handle = slot->conn_handle;
+        slot->state = BLE_CONN_DISCONNECTING;
+    } while (0);
+    ble_state_unlock();
+
+    if (conn_handle == BLE_HS_CONN_HANDLE_NONE) {
+        return BLE_CENTRAL_ERR_NOT_CONNECTED;
+    }
+
+    int rc = ble_gap_terminate(conn_handle, BLE_ERR_REM_USER_CONN_TERM);
+    return rc == 0 ? BLE_CENTRAL_OK : BLE_CENTRAL_ERR_STACK;
 }
 
 int ble_central_forget_peer(const char *device_id, const uint8_t ble_addr[6],
                             uint8_t ble_addr_type, bool has_ble_addr)
 {
-    if (device_id == NULL || !ble_central_lock_connections()) return -1;
-    ble_conn_slot_t *slot = ble_central_find_slot_unlocked(device_id);
-    ble_addr_t peer_address = {0};
-    bool has_peer_address = has_ble_addr && ble_addr != NULL;
-    if (has_peer_address) {
-        peer_address.type = ble_addr_type;
-        memcpy(peer_address.val, ble_addr, sizeof(peer_address.val));
-    }
-    if (slot != NULL) {
-        // The runtime connection always knows the freshest peer identity.
-        peer_address = slot->peer_addr;
-        has_peer_address = true;
+    if (device_id == NULL || device_id[0] == '\0') {
+        return BLE_CENTRAL_ERR_INVALID_ARG;
     }
 
-    ble_conn_slot_state_t state = BLE_CONN_SLOT_FREE;
-    uint16_t handle = BLE_HS_CONN_HANDLE_NONE;
-    if (slot != NULL) {
-        state = slot->state;
-        handle = slot->conn_handle;
-        if (state == BLE_CONN_SLOT_IDLE) {
-            memset(slot, 0, sizeof(*slot));
-        } else {
-            slot->forget_requested = true;
+    bool has_bond_addr = false;
+    ble_addr_t bond_addr = {0};
+    bool need_cancel = false;
+    bool need_terminate = false;
+    uint16_t terminate_handle = BLE_HS_CONN_HANDLE_NONE;
+    bool had_link = false;
+    int runtime_index = ble_runtime_find(device_id);
+
+    if (!ble_state_lock()) return BLE_CENTRAL_ERR_STATE;
+    if (runtime_index >= 0) {
+        ble_device_runtime_t *dev = &g_ble_devices[runtime_index];
+        if (dev->has_peer_addr) {
+            bond_addr = dev->peer_addr;
+            has_bond_addr = true;
+        }
+        if (dev->state != BLE_DEVICE_REMOVING) {
+            dev->reconnect_enabled = false;
+            dev->state = BLE_DEVICE_REMOVING;
+        }
+
+        int slot_index = dev->connection_slot;
+        if (slot_index >= 0 && slot_index < BLE_CENTRAL_MAX_CONN &&
+            g_ble_connections[slot_index].state != BLE_CONN_FREE) {
+            ble_conn_slot_t *slot = &g_ble_connections[slot_index];
+            had_link = true;
+            if (slot->state == BLE_CONN_CONNECTING) {
+                need_cancel = true;
+            } else if (slot->conn_handle != BLE_HS_CONN_HANDLE_NONE) {
+                need_terminate = true;
+                terminate_handle = slot->conn_handle;
+                slot->state = BLE_CONN_DISCONNECTING;
+            }
         }
     }
-    ble_central_unlock_connections();
+    ble_state_unlock();
 
-    if (state == BLE_CONN_SLOT_CONNECTING) {
+    if (!has_bond_addr && has_ble_addr && ble_addr != NULL) {
+        bond_addr.type = ble_addr_type;
+        memcpy(bond_addr.val, ble_addr, sizeof(bond_addr.val));
+        has_bond_addr = true;
+    }
+
+    if (need_cancel) {
         ble_gap_conn_cancel();
-    } else if (handle != BLE_HS_CONN_HANDLE_NONE) {
-        ble_gap_terminate(handle, BLE_ERR_REM_USER_CONN_TERM);
+    } else if (need_terminate) {
+        ble_gap_terminate(terminate_handle, BLE_ERR_REM_USER_CONN_TERM);
     }
 
-    if (!has_peer_address) return 0;
-    if (!g_ble_host_synced) {
-        ESP_LOGW(TAG, "[%s] BLE host not synced; bond not deleted", device_id);
-        return -1;
+    if (!had_link) {
+        if (runtime_index >= 0) {
+            ble_runtime_finalize_remove(runtime_index);
+        }
+        if (!has_bond_addr) return BLE_CENTRAL_OK;
+        if (!ble_host_is_ready()) {
+            ESP_LOGW(TAG, "[%s] BLE host not synced; bond not deleted",
+                     device_id);
+            return BLE_CENTRAL_ERR_STACK;
+        }
+        int rc = ble_store_util_delete_peer(&bond_addr);
+        if (rc != 0 && rc != BLE_HS_ENOENT) {
+            ESP_LOGE(TAG, "[%s] Could not delete bond: %d", device_id, rc);
+            return BLE_CENTRAL_ERR_STACK;
+        }
     }
-    int rc = ble_store_util_delete_peer(&peer_address);
-    if (rc != 0 && rc != BLE_HS_ENOENT) {
-        ESP_LOGE(TAG, "[%s] Could not delete bond: %d", device_id, rc);
-        return -1;
-    }
-    return 0;
+
+    ESP_LOGI(TAG, "[%s] Forget requested (%s)", device_id,
+             need_cancel ? "canceling connect"
+                         : need_terminate ? "terminating link"
+                                          : "no active link");
+    return BLE_CENTRAL_OK;
 }
 
 int ble_central_send_command(const char *device_id, const gw_message_t *msg)
 {
-    if (device_id == NULL || msg == NULL ||
-        !ble_central_lock_connections()) {
-        return -1;
-    }
-    ble_conn_slot_t *slot = ble_central_find_slot_unlocked(device_id);
+    if (device_id == NULL || msg == NULL) return BLE_CENTRAL_ERR_INVALID_ARG;
+
+    int device_index = ble_runtime_find(device_id);
+    if (device_index < 0) return BLE_CENTRAL_ERR_NOT_FOUND;
+
     uint16_t conn_handle = BLE_HS_CONN_HANDLE_NONE;
     uint16_t value_handle = 0;
-    if (slot != NULL && slot->state == BLE_CONN_SLOT_READY) {
+    uint16_t cached_mtu = 23;
+    if (!ble_state_lock()) return BLE_CENTRAL_ERR_STATE;
+
+    do {
+        int slot_index = g_ble_devices[device_index].connection_slot;
+        if (slot_index < 0 || slot_index >= BLE_CENTRAL_MAX_CONN) break;
+
+        ble_conn_slot_t *slot = &g_ble_connections[slot_index];
+        if (slot->state == BLE_CONN_FREE) break;
+        if (slot->state != BLE_CONN_READY ||
+            slot->conn_handle == BLE_HS_CONN_HANDLE_NONE ||
+            slot->command_val_handle == 0) {
+            break;
+        }
+
         conn_handle = slot->conn_handle;
         value_handle = slot->command_val_handle;
+        cached_mtu = slot->mtu;
+    } while (0);
+    ble_state_unlock();
+
+    if (conn_handle == BLE_HS_CONN_HANDLE_NONE || value_handle == 0) {
+        return BLE_CENTRAL_ERR_NOT_CONNECTED;
     }
-    ble_central_unlock_connections();
-    if (conn_handle == BLE_HS_CONN_HANDLE_NONE || value_handle == 0) return -1;
+
+    uint16_t mtu = cached_mtu;
+    uint16_t max_payload = mtu > 3 ? (uint16_t)(mtu - 3) : 0;
 
     uint8_t buffer[GW_MSG_MAX_LEN];
     int length = cbor_codec_encode(msg, buffer, sizeof(buffer));
-    if (length <= 0) return -1;
+    if (length <= 0) return BLE_CENTRAL_ERR_ENCODE;
+    if ((uint16_t)length > max_payload) {
+        ble_central_metrics_mtu_reject();
+        ESP_LOGE(TAG, "[%s] Payload %d exceeds MTU payload %u", device_id,
+                 length, max_payload);
+        return BLE_CENTRAL_ERR_MESSAGE_TOO_LARGE;
+    }
+
     int rc = ble_gattc_write_no_rsp_flat(conn_handle, value_handle, buffer,
                                          length);
     if (rc != 0) {
         ESP_LOGE(TAG, "[%s] GATT write failed: %d", device_id, rc);
-        return -1;
+        return BLE_CENTRAL_ERR_STACK;
     }
-    return 0;
+    return BLE_CENTRAL_OK;
 }
 
 int ble_central_is_connected(const char *device_id)
 {
-    if (device_id == NULL || !ble_central_lock_connections()) return 0;
-    ble_conn_slot_t *slot = ble_central_find_slot_unlocked(device_id);
-    int connected = slot != NULL && slot->state == BLE_CONN_SLOT_READY;
-    ble_central_unlock_connections();
+    if (device_id == NULL) return 0;
+
+    int device_index = ble_runtime_find(device_id);
+    if (device_index < 0) return 0;
+
+    int connected = 0;
+    if (!ble_state_lock()) return 0;
+
+    int slot_index = g_ble_devices[device_index].connection_slot;
+    if (slot_index >= 0 && slot_index < BLE_CENTRAL_MAX_CONN &&
+        g_ble_connections[slot_index].state == BLE_CONN_READY) {
+        connected = 1;
+    }
+
+    ble_state_unlock();
     return connected;
 }
 
 int ble_central_active_count(void)
 {
-    if (!ble_central_lock_connections()) return 0;
+    if (!ble_state_lock()) return 0;
     int count = ble_central_active_count_unlocked();
-    ble_central_unlock_connections();
+    ble_state_unlock();
     return count;
 }

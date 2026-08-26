@@ -8,6 +8,22 @@
 
 #define BLE_CENTRAL_MAX_CONN   CONFIG_BT_NIMBLE_MAX_CONNECTIONS
 
+typedef enum {
+    BLE_CENTRAL_OK = 0,
+    BLE_CENTRAL_ERR_INVALID_ARG = -1,
+    BLE_CENTRAL_ERR_NOT_READY = -2,
+    BLE_CENTRAL_ERR_NOT_FOUND = -3,
+    BLE_CENTRAL_ERR_NO_SLOT = -4,
+    BLE_CENTRAL_ERR_BUSY = -5,
+    BLE_CENTRAL_ERR_CONNECT_IN_PROGRESS = -6,
+    BLE_CENTRAL_ERR_NOT_CONNECTED = -7,
+    BLE_CENTRAL_ERR_ENCODE = -8,
+    BLE_CENTRAL_ERR_MESSAGE_TOO_LARGE = -9,
+    BLE_CENTRAL_ERR_STACK = -10,
+    BLE_CENTRAL_ERR_NO_RESOURCE = -11,
+    BLE_CENTRAL_ERR_STATE = -12,
+} ble_central_err_t;
+
 typedef void (*ble_central_notify_cb_t)(const char *device_id, const gw_message_t *msg);
 
 typedef struct {

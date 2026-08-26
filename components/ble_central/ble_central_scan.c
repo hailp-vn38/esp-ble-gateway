@@ -62,7 +62,8 @@ void ble_central_scan_reset(void)
 
 int ble_central_scan_start(ble_central_scan_result_cb_t scan_result_cb)
 {
-    if (!g_ble_host_synced || scan_result_cb == NULL || ble_gap_disc_active()) {
+    if (!ble_host_is_ready() || scan_result_cb == NULL ||
+        ble_gap_disc_active()) {
         return -1;
     }
     s_scan_result_cb = scan_result_cb;

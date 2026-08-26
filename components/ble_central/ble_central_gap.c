@@ -1,97 +1,160 @@
 #include <string.h>
 
 #include "esp_log.h"
-#include "esp_timer.h"
 #include "host/ble_gatt.h"
 #include "host/ble_hs.h"
 #include "host/ble_hs_mbuf.h"
 #include "host/ble_sm.h"
 #include "host/ble_store.h"
-#include "host/util/util.h"
 
 #include "ble_central_internal.h"
-#include "cbor_codec.h"
 #include "device_store.h"
 
 static const char *TAG = "ble_central_gap";
 
+static bool gap_ctx_snapshot(const ble_callback_ctx_t *ctx,
+                             ble_conn_slot_t *snap, uint16_t conn_handle)
+{
+    if (!ble_state_ctx_snapshot(ctx, snap)) {
+        ble_central_metrics_stale_callback();
+        return false;
+    }
+    if (conn_handle != BLE_HS_CONN_HANDLE_NONE &&
+        snap->conn_handle != conn_handle) {
+        ble_central_metrics_stale_callback();
+        return false;
+    }
+    return true;
+}
+
+static void gap_release_connection(ble_conn_ref_t ref, uint16_t conn_handle,
+                                   int reason, int64_t now_ms)
+{
+    char device_id[GW_MSG_DEVICE_ID_LEN];
+    bool removing = false;
+    ble_addr_t peer_addr;
+    bool has_peer_addr = false;
+
+    bool consumed = ble_state_on_disconnect(
+        (ble_conn_event_ref_t){.ref = ref, .conn_handle = conn_handle},
+        now_ms, device_id, sizeof(device_id), &removing, &peer_addr,
+        &has_peer_addr);
+    if (!consumed) {
+        ESP_LOGD(TAG, "stale disconnect ref slot=%u gen=%u", ref.slot_index,
+                 (unsigned)ref.generation);
+        return;
+    }
+
+    device_store_set_connected(device_id, 0);
+    ESP_LOGW(TAG, "[%s][slot=%u][gen=%u][handle=%u] DISCONNECTED reason=%d",
+             device_id, ref.slot_index, (unsigned)ref.generation, conn_handle,
+             reason);
+
+    if (!removing) return;
+
+    int idx = ble_runtime_find(device_id);
+    if (idx >= 0) ble_runtime_finalize_remove(idx);
+
+    if (!has_peer_addr) return;
+    if (!ble_host_is_ready()) {
+        ESP_LOGW(TAG, "[%s] BLE host not synced; bond not deleted", device_id);
+        return;
+    }
+    int rc = ble_store_util_delete_peer(&peer_addr);
+    if (rc != 0 && rc != BLE_HS_ENOENT) {
+        ESP_LOGE(TAG, "[%s] Could not delete bond: %d", device_id, rc);
+    }
+}
+
 int ble_central_gap_event_handler(struct ble_gap_event *event, void *arg)
 {
-    ble_conn_slot_t *slot = arg;
+    ble_callback_ctx_t *ctx = arg;
 
     switch (event->type) {
-    case BLE_GAP_EVENT_CONNECT:
-        if (slot == NULL) return 0;
-        if (event->connect.status != 0) {
-            ESP_LOGW(TAG, "[%s] Connect failed, status=%d", slot->device_id,
-                     event->connect.status);
-            if (ble_central_lock_connections()) {
-                ble_central_reset_runtime_handles(slot);
-                if (slot->forget_requested) {
-                    memset(slot, 0, sizeof(*slot));
-                } else {
-                    slot->state = BLE_CONN_SLOT_IDLE;
-                }
-                ble_central_unlock_connections();
+    case BLE_GAP_EVENT_CONNECT: {
+        ble_conn_slot_t snap;
+        if (!gap_ctx_snapshot(ctx, &snap, BLE_HS_CONN_HANDLE_NONE)) {
+            if (event->connect.status == 0 &&
+                event->connect.conn_handle != BLE_HS_CONN_HANDLE_NONE) {
+                ble_gap_terminate(event->connect.conn_handle,
+                                  BLE_ERR_REM_USER_CONN_TERM);
             }
             return 0;
         }
 
-        if (ble_central_lock_connections()) {
-            slot->conn_handle = event->connect.conn_handle;
-            slot->state = BLE_CONN_SLOT_SECURING;
-            slot->discovery_started_ms = esp_timer_get_time() / 1000;
-            ble_central_unlock_connections();
+        char device_id[GW_MSG_DEVICE_ID_LEN];
+        if (!ble_runtime_get_device_id(snap.device_index, device_id,
+                                       sizeof(device_id))) {
+            device_id[0] = '\0';
         }
-        device_store_set_connected(slot->device_id, 0);
+
+        if (event->connect.status != 0) {
+            ESP_LOGW(TAG, "[%s][slot=%u][gen=%u] Connect failed, status=%d",
+                     device_id, ctx->ref.slot_index,
+                     (unsigned)ctx->ref.generation, event->connect.status);
+            gap_release_connection(ctx->ref, ctx->conn_handle,
+                                   event->connect.status, ble_now_ms());
+            ble_state_ctx_release_by_ref(ctx->ref);
+            return 0;
+        }
+
+        if (!ble_state_on_connect_success(ctx->ref,
+                                          event->connect.conn_handle,
+                                          ble_now_ms())) {
+            ble_central_metrics_stale_callback();
+            ble_gap_terminate(event->connect.conn_handle,
+                              BLE_ERR_REM_USER_CONN_TERM);
+            return 0;
+        }
 
         struct ble_gap_conn_desc description;
-        if (ble_gap_conn_find(slot->conn_handle, &description) == 0) {
-            device_store_set_ble_addr(slot->device_id,
+        if (ble_gap_conn_find(event->connect.conn_handle, &description) == 0) {
+            ble_runtime_set_peer_addr(snap.device_index,
+                                      &description.peer_id_addr);
+            device_store_set_ble_addr(device_id,
                                       description.peer_id_addr.val,
                                       description.peer_id_addr.type);
-            if (ble_central_lock_connections()) {
-                slot->peer_addr = description.peer_id_addr;
-                ble_central_unlock_connections();
-            }
         }
 
-        ble_gattc_exchange_mtu(slot->conn_handle, NULL, NULL);
-        int security_rc = ble_gap_security_initiate(slot->conn_handle);
+        ble_gattc_exchange_mtu(event->connect.conn_handle, NULL, NULL);
+        int security_rc =
+            ble_gap_security_initiate(event->connect.conn_handle);
         if (security_rc != 0 && security_rc != BLE_HS_EALREADY) {
-            ble_central_abort_discovery(slot, "failed to start link security");
+            ESP_LOGE(TAG, "[%s] Failed to start link security: %d", device_id,
+                     security_rc);
+            ble_central_metrics_security_failure();
+            ble_gap_terminate(event->connect.conn_handle,
+                              BLE_ERR_REM_USER_CONN_TERM);
             return 0;
         }
-        ESP_LOGI(TAG, "[%s] Link connected, securing", slot->device_id);
+        ESP_LOGI(TAG, "[%s][slot=%u][gen=%u][handle=%u] SECURING", device_id,
+                 ctx->ref.slot_index, (unsigned)ctx->ref.generation,
+                 event->connect.conn_handle);
         return 0;
+    }
 
-    case BLE_GAP_EVENT_DISCONNECT:
-        if (slot == NULL) return 0;
-        ESP_LOGW(TAG, "[%s] Disconnected, reason=%d", slot->device_id,
-                 event->disconnect.reason);
-        device_store_set_connected(slot->device_id, 0);
-        if (ble_central_lock_connections()) {
-            ble_central_reset_runtime_handles(slot);
-            slot->last_attempt_ms = esp_timer_get_time() / 1000;
-            if (slot->forget_requested) {
-                memset(slot, 0, sizeof(*slot));
-            } else {
-                slot->state = BLE_CONN_SLOT_IDLE;
-            }
-            ble_central_unlock_connections();
+    case BLE_GAP_EVENT_DISCONNECT: {
+        ble_conn_slot_t snap;
+        if (ble_state_ctx_snapshot(ctx, &snap)) {
+            gap_release_connection(ctx->ref, event->disconnect.conn.conn_handle,
+                                   event->disconnect.reason, ble_now_ms());
+        } else {
+            ble_central_metrics_stale_callback();
         }
+        ble_state_ctx_release_by_ref(ctx->ref);
         return 0;
+    }
 
     case BLE_GAP_EVENT_NOTIFY_RX: {
-        ble_central_notify_cb_t notify_cb = ble_central_notify_callback();
-        if (slot == NULL || notify_cb == NULL ||
-            event->notify_rx.attr_handle != slot->status_val_handle) {
+        ble_conn_slot_t snap;
+        if (!gap_ctx_snapshot(ctx, &snap, event->notify_rx.conn_handle) ||
+            event->notify_rx.attr_handle != snap.status_val_handle) {
             return 0;
         }
+
         uint16_t packet_len = OS_MBUF_PKTLEN(event->notify_rx.om);
         if (packet_len == 0 || packet_len > GW_MSG_MAX_LEN) {
-            ESP_LOGE(TAG, "[%s] Invalid notify length: %u", slot->device_id,
-                     packet_len);
+            ESP_LOGE(TAG, "Invalid notify length: %u", packet_len);
             return 0;
         }
 
@@ -100,37 +163,63 @@ int ble_central_gap_event_handler(struct ble_gap_event *event, void *arg)
         if (ble_hs_mbuf_to_flat(event->notify_rx.om, buffer, sizeof(buffer),
                                 &copied) != 0 ||
             copied != packet_len) {
-            ESP_LOGE(TAG, "[%s] Failed to copy notify payload", slot->device_id);
+            ESP_LOGE(TAG, "Failed to copy notify payload");
             return 0;
         }
 
-        gw_message_t message;
-        if (cbor_codec_decode(buffer, copied, &message) == 0) {
-            notify_cb(slot->device_id, &message);
-        } else {
-            ESP_LOGE(TAG, "[%s] Invalid CBOR notify", slot->device_id);
+        char device_id[GW_MSG_DEVICE_ID_LEN];
+        if (!ble_runtime_get_device_id(snap.device_index, device_id,
+                                       sizeof(device_id))) {
+            return 0;
+        }
+        ble_central_notify_enqueue(device_id, buffer, copied);
+        return 0;
+    }
+
+    case BLE_GAP_EVENT_MTU: {
+        ble_conn_slot_t snap;
+        if (!gap_ctx_snapshot(ctx, &snap, event->mtu.conn_handle)) return 0;
+
+        ble_state_update_mtu((ble_conn_event_ref_t){.ref = ctx->ref,
+                                                    .conn_handle =
+                                                        event->mtu.conn_handle},
+                             event->mtu.value);
+        char device_id[GW_MSG_DEVICE_ID_LEN];
+        if (ble_runtime_get_device_id(snap.device_index, device_id,
+                                      sizeof(device_id))) {
+            ESP_LOGI(TAG, "[%s][handle=%u] MTU updated to %u", device_id,
+                     event->mtu.conn_handle, event->mtu.value);
         }
         return 0;
     }
 
-    case BLE_GAP_EVENT_MTU:
-        if (slot != NULL) {
-            ESP_LOGI(TAG, "[%s] MTU updated to %u", slot->device_id,
-                     event->mtu.value);
+    case BLE_GAP_EVENT_ENC_CHANGE: {
+        ble_conn_slot_t snap;
+        if (!gap_ctx_snapshot(ctx, &snap, event->enc_change.conn_handle)) {
+            return 0;
         }
-        return 0;
 
-    case BLE_GAP_EVENT_ENC_CHANGE:
-        if (slot == NULL) return 0;
         if (event->enc_change.status != 0) {
-            ESP_LOGW(TAG, "[%s] Security setup failed: %d", slot->device_id,
+            char device_id[GW_MSG_DEVICE_ID_LEN];
+            ble_runtime_get_device_id(snap.device_index, device_id,
+                                      sizeof(device_id));
+            ESP_LOGW(TAG, "[%s] Security setup failed: %d", device_id,
                      event->enc_change.status);
-            ble_central_abort_discovery(slot, "link security failed");
-        } else {
-            ESP_LOGI(TAG, "[%s] Link secured, discovering GATT", slot->device_id);
-            ble_central_start_gatt_discovery(slot);
+            ble_central_metrics_security_failure();
+            ble_gap_terminate(event->enc_change.conn_handle,
+                              BLE_ERR_REM_USER_CONN_TERM);
+            return 0;
         }
+
+        char device_id[GW_MSG_DEVICE_ID_LEN];
+        ble_runtime_get_device_id(snap.device_index, device_id,
+                                  sizeof(device_id));
+        ESP_LOGI(TAG, "[%s][slot=%u][gen=%u][handle=%u] DISCOVERING", device_id,
+                 ctx->ref.slot_index, (unsigned)ctx->ref.generation,
+                 event->enc_change.conn_handle);
+        ble_central_start_gatt_discovery(ctx);
         return 0;
+    }
 
     case BLE_GAP_EVENT_REPEAT_PAIRING: {
         struct ble_gap_conn_desc repeat_description;

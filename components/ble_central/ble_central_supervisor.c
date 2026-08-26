@@ -6,103 +6,114 @@
 #include "host/ble_hs.h"
 
 #include "ble_central_internal.h"
-#include "device_store.h"
 
 static const char *TAG = "ble_central_supervisor";
-static TaskHandle_t s_reconnect_task;
-static volatile bool s_reconnect_running;
 
-static bool snapshot_slot_state(const char *device_id,
-                                ble_conn_slot_state_t *state,
-                                int64_t *last_attempt_ms)
+typedef enum {
+    BLE_SUPERVISOR_STOPPED = 0,
+    BLE_SUPERVISOR_RUNNING,
+    BLE_SUPERVISOR_STOPPING,
+} ble_supervisor_state_t;
+
+static ble_supervisor_state_t s_supervisor_state;
+static TaskHandle_t s_supervisor_task;
+
+static bool supervisor_state_is(ble_supervisor_state_t state)
 {
-    bool found = false;
-    if (ble_central_lock_connections()) {
-        ble_conn_slot_t *slot = ble_central_find_slot_unlocked(device_id);
-        if (slot != NULL) {
-            *state = slot->state;
-            *last_attempt_ms = slot->last_attempt_ms;
-            found = true;
-        }
-        ble_central_unlock_connections();
+    bool match = false;
+    if (ble_state_lock()) {
+        match = s_supervisor_state == state;
+        ble_state_unlock();
     }
-    return found;
+    return match;
 }
 
-static void terminate_timed_out_discoveries(int64_t now_ms)
+static void terminate_timed_out_connections(int64_t now_ms)
 {
-    uint16_t timed_out_handles[BLE_CENTRAL_MAX_CONN];
-    int timed_out_count = 0;
-    if (!ble_central_lock_connections()) return;
+    ble_timeout_entry_t entries[BLE_CENTRAL_MAX_CONN];
+    size_t count =
+        ble_state_collect_timeouts(now_ms, entries, BLE_CENTRAL_MAX_CONN);
 
-    for (int i = 0; i < BLE_CENTRAL_MAX_CONN; i++) {
-        if ((g_ble_connections[i].state == BLE_CONN_SLOT_SECURING ||
-             g_ble_connections[i].state == BLE_CONN_SLOT_DISCOVERING) &&
-            now_ms - g_ble_connections[i].discovery_started_ms >=
-                BLE_DISCOVERY_TIMEOUT_MS) {
-            timed_out_handles[timed_out_count++] =
-                g_ble_connections[i].conn_handle;
-            ESP_LOGE(TAG, "[%s] GATT discovery timed out",
-                     g_ble_connections[i].device_id);
+    for (size_t i = 0; i < count; i++) {
+        ESP_LOGE(TAG, "[%s] %s timeout",
+                 entries[i].device_id,
+                 entries[i].is_discovery ? "GATT discovery" : "Security");
+        if (entries[i].is_discovery) {
+            ble_central_metrics_discovery_failure();
+        } else {
+            ble_central_metrics_security_failure();
         }
-    }
-    ble_central_unlock_connections();
-
-    for (int i = 0; i < timed_out_count; i++) {
-        ble_gap_terminate(timed_out_handles[i], BLE_ERR_REM_USER_CONN_TERM);
+        ble_gap_terminate(entries[i].conn_handle, BLE_ERR_REM_USER_CONN_TERM);
     }
 }
 
 static void reconnect_supervisor_task(void *arg)
 {
-    while (s_reconnect_running) {
-        int64_t now_ms = esp_timer_get_time() / 1000;
-        terminate_timed_out_discoveries(now_ms);
+    (void)arg;
+    while (supervisor_state_is(BLE_SUPERVISOR_RUNNING)) {
+        int64_t now_ms = ble_now_ms();
 
-        if (g_ble_host_synced && !ble_gap_disc_active()) {
-            device_entry_t devices[DEVICE_STORE_MAX_DEVICES];
-            int count = device_store_snapshot(devices, DEVICE_STORE_MAX_DEVICES);
-            for (int i = 0; i < count; i++) {
-                if (devices[i].connected || !devices[i].has_ble_addr) continue;
+        terminate_timed_out_connections(now_ms);
 
-                ble_conn_slot_state_t state = BLE_CONN_SLOT_IDLE;
-                int64_t last_attempt_ms = 0;
-                bool has_slot = snapshot_slot_state(
-                    devices[i].device_id, &state, &last_attempt_ms);
-                if (has_slot && state != BLE_CONN_SLOT_IDLE) continue;
-                if (has_slot &&
-                    now_ms - last_attempt_ms < BLE_RECONNECT_INTERVAL_MS) {
-                    continue;
-                }
+        if (!ble_host_is_ready() || ble_gap_disc_active()) {
+            goto sleep;
+        }
 
-                ble_central_connect(devices[i].device_id, devices[i].ble_addr,
-                                    devices[i].ble_addr_type);
-                /* NimBLE controllers commonly serialize connection procedures. */
-                break;
+        int device_index = ble_scheduler_next_device(now_ms);
+        if (device_index >= 0) {
+            int rc = ble_connection_start(device_index);
+            if (rc != BLE_CENTRAL_OK &&
+                rc != BLE_CENTRAL_ERR_CONNECT_IN_PROGRESS &&
+                rc != BLE_CENTRAL_ERR_NO_SLOT &&
+                rc != BLE_CENTRAL_ERR_STACK) {
+                ble_scheduler_note_failure(device_index, now_ms);
             }
         }
+
+sleep:
         vTaskDelay(pdMS_TO_TICKS(BLE_SUPERVISOR_TICK_MS));
     }
 
-    s_reconnect_task = NULL;
+    if (ble_state_lock()) {
+        s_supervisor_state = BLE_SUPERVISOR_STOPPED;
+        s_supervisor_task = NULL;
+        ble_state_unlock();
+    }
+    ESP_LOGI(TAG, "Reconnect supervisor stopped");
     vTaskDelete(NULL);
 }
 
 int ble_central_start_reconnect_supervisor(void)
 {
-    if (s_reconnect_running) return 0;
-    s_reconnect_running = true;
+    if (!ble_state_lock()) return -1;
+    if (s_supervisor_state != BLE_SUPERVISOR_STOPPED) {
+        bool running = s_supervisor_state == BLE_SUPERVISOR_RUNNING;
+        ble_state_unlock();
+        return running ? 0 : -1;
+    }
+    s_supervisor_state = BLE_SUPERVISOR_RUNNING;
+    ble_state_unlock();
+
     BaseType_t result = xTaskCreate(reconnect_supervisor_task, "ble_reconnect",
-                                    4096, NULL, 4, &s_reconnect_task);
+                                    4096, NULL, 4, &s_supervisor_task);
     if (result != pdPASS) {
-        s_reconnect_running = false;
-        s_reconnect_task = NULL;
+        if (ble_state_lock()) {
+            s_supervisor_state = BLE_SUPERVISOR_STOPPED;
+            s_supervisor_task = NULL;
+            ble_state_unlock();
+        }
         return -1;
     }
+
+    ESP_LOGI(TAG, "Reconnect supervisor started");
     return 0;
 }
 
 void ble_central_stop_reconnect_supervisor(void)
 {
-    s_reconnect_running = false;
+    if (!ble_state_lock()) return;
+    if (s_supervisor_state == BLE_SUPERVISOR_RUNNING) {
+        s_supervisor_state = BLE_SUPERVISOR_STOPPING;
+    }
+    ble_state_unlock();
 }

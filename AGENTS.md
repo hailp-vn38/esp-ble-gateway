@@ -6,6 +6,8 @@ ESP-IDF firmware for ESP32-S3 (BLE Central gateway with Web UI / REST / JSON-RPC
 
 Requires ESP-IDF environment (`idf.py` on PATH). QCBOR is a git submodule — run first after clone or it will be missing:
 
+path idf : "/Users/lamphuchai/.espressif/v5.4.4/esp-idf"
+
 ```sh
 git submodule update --init --recursive
 idf.py set-target esp32s3   # required once before first build

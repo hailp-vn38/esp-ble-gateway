@@ -6,6 +6,7 @@ CONFIG_BT_NIMBLE_ROLE_OBSERVER=y
 CONFIG_BT_NIMBLE_ROLE_PERIPHERAL=n
 CONFIG_BT_NIMBLE_ROLE_BROADCASTER=n
 CONFIG_BT_NIMBLE_GATT_CLIENT=y
+CONFIG_UNITY_ENABLE_64BIT=y
 CONFIG_ESPTOOLPY_FLASHSIZE_16MB=y
 # Unity tests place dispatch_result_t (~4.1 KB) and other fixtures on the
 # main task stack; the 3584-byte default overflows.
