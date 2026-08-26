@@ -21,6 +21,9 @@ typedef struct {
     httpd_req_t *request;
 } command_async_context_t;
 
+static esp_err_t dispatch_message_async(httpd_req_t *request,
+                                        const gw_message_t *message);
+
 static int hex_value(char value)
 {
     if (value >= '0' && value <= '9') return value - '0';
@@ -72,6 +75,20 @@ static const char *http_status_for(const dispatch_result_t *result)
     }
 }
 
+static const char *error_code_for(const dispatch_result_t *result)
+{
+    switch (result->status) {
+    case DISPATCH_STATUS_INVALID_ARGUMENT: return "invalid_request";
+    case DISPATCH_STATUS_NOT_FOUND: return "device_not_found";
+    case DISPATCH_STATUS_BUSY: return "device_busy";
+    case DISPATCH_STATUS_TIMEOUT: return "command_timeout";
+    case DISPATCH_STATUS_NOT_CONNECTED: return "device_not_connected";
+    case DISPATCH_STATUS_TRANSPORT_ERROR: return "transport_error";
+    case DISPATCH_STATUS_DEVICE_ERROR: return "device_error";
+    default: return "internal_error";
+    }
+}
+
 static esp_err_t send_dispatch_result(httpd_req_t *request,
                                       const dispatch_result_t *result)
 {
@@ -85,6 +102,15 @@ static esp_err_t send_dispatch_result(httpd_req_t *request,
         cJSON_AddStringToObject(
             json, "message",
             result->format == DISPATCH_RESULT_TEXT ? result->payload : "");
+        if (!ok) {
+            // Machine-readable code (Plan v2 §51-§52); message stays put for
+            // backward compatibility with the dashboard.
+            cJSON *error = cJSON_AddObjectToObject(json, "error");
+            if (error != NULL) {
+                cJSON_AddStringToObject(error, "code",
+                                        error_code_for(result));
+            }
+        }
         if (result->format == DISPATCH_RESULT_JSON) {
             cJSON *data = cJSON_Parse(result->payload);
             if (data != NULL) cJSON_AddItemToObject(json, "data", data);
@@ -191,9 +217,7 @@ static esp_err_t devices_write_handler(httpd_req_t *request)
                                   "Invalid device fields");
     }
 
-    dispatch_result_t result;
-    command_dispatcher_handle(&message, &result);
-    return send_dispatch_result(request, &result);
+    return dispatch_message_async(request, &message);
 }
 
 static esp_err_t devices_delete_handler(httpd_req_t *request)
@@ -215,9 +239,7 @@ static esp_err_t devices_delete_handler(httpd_req_t *request)
     strlcpy(message.command, "delete_device", sizeof(message.command));
     strlcpy(message.device_id, device_id, sizeof(message.device_id));
 
-    dispatch_result_t result;
-    command_dispatcher_handle(&message, &result);
-    return send_dispatch_result(request, &result);
+    return dispatch_message_async(request, &message);
 }
 
 static void command_completion(const dispatch_result_t *result, void *arg)
@@ -228,6 +250,37 @@ static void command_completion(const dispatch_result_t *result, void *arg)
         ESP_LOGW(TAG, "Could not complete asynchronous command request");
     }
     free(context);
+}
+
+// Shared async dispatch path for every mutating endpoint (Plan v2 §43):
+// the HTTPD task only parses and enqueues; executor workers run the
+// dispatcher so BLE ACK waits never block HTTP.
+static esp_err_t dispatch_message_async(httpd_req_t *request,
+                                        const gw_message_t *message)
+{
+    command_async_context_t *context = malloc(sizeof(*context));
+    if (context == NULL) {
+        return web_send_api_error(request, "503 Service Unavailable",
+                                  "Could not allocate command context");
+    }
+
+    esp_err_t error = httpd_req_async_handler_begin(request, &context->request);
+    if (error != ESP_OK) {
+        free(context);
+        return web_send_api_error(request, "503 Service Unavailable",
+                                  "Could not start asynchronous dispatch");
+    }
+
+    // Queue admission failure answers 503 inline; device-level BUSY still
+    // comes back later as 409 via completion.
+    if (command_executor_submit(message, command_completion, context) !=
+        ESP_OK) {
+        web_send_api_error(context->request, "503 Service Unavailable",
+                           "Command executor is full");
+        httpd_req_async_handler_complete(context->request);
+        free(context);
+    }
+    return ESP_OK;
 }
 
 static esp_err_t command_post_handler(httpd_req_t *request)
@@ -280,29 +333,7 @@ static esp_err_t command_post_handler(httpd_req_t *request)
     }
     cJSON_Delete(json);
 
-    command_async_context_t *context = malloc(sizeof(*context));
-    if (context == NULL) {
-        return web_send_api_error(request, "503 Service Unavailable",
-                                  "Could not allocate command context");
-    }
-
-    esp_err_t error = httpd_req_async_handler_begin(request, &context->request);
-    if (error != ESP_OK) {
-        free(context);
-        return web_send_api_error(request, "503 Service Unavailable",
-                                  "Could not start asynchronous command");
-    }
-
-    // Executor admission failure (queue full or shutting down) answers 503
-    // inline; device-level BUSY still comes back later as 409 via completion.
-    if (command_executor_submit(&message, command_completion, context) !=
-        ESP_OK) {
-        web_send_api_error(context->request, "503 Service Unavailable",
-                           "Command executor is full");
-        httpd_req_async_handler_complete(context->request);
-        free(context);
-    }
-    return ESP_OK;
+    return dispatch_message_async(request, &message);
 }
 
 esp_err_t web_gateway_api_init(void)

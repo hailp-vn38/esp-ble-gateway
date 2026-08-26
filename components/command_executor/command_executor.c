@@ -21,6 +21,7 @@ typedef struct {
     gw_message_t message;
     command_completion_fn completion;
     void *context;
+    int64_t submitted_at_us;
     int64_t deadline_us;
 } command_job_t;
 
@@ -78,7 +79,15 @@ static void worker_loop(void *arg)
         if (xQueueReceive(s_queue, &job, portMAX_DELAY) != pdTRUE) continue;
         if (job.completion == NULL) break; // shutdown pill
 
-        if (esp_timer_get_time() >= job.deadline_us) {
+        int64_t now_us = esp_timer_get_time();
+        uint32_t wait_ms = (uint32_t)((now_us - job.submitted_at_us) / 1000);
+        taskENTER_CRITICAL(&s_stats_mux);
+        if (wait_ms > s_stats.max_queue_wait_ms) {
+            s_stats.max_queue_wait_ms = wait_ms;
+        }
+        taskEXIT_CRITICAL(&s_stats_mux);
+
+        if (now_us >= job.deadline_us) {
             stats_increment(&s_stats.queue_timeout);
             complete_expired_job(worker, &job);
             continue;
@@ -168,6 +177,7 @@ esp_err_t command_executor_submit(const gw_message_t *message,
         .message = *message,
         .completion = completion,
         .context = context,
+        .submitted_at_us = esp_timer_get_time(),
         .deadline_us =
             esp_timer_get_time() + CONFIG_CMD_EXEC_JOB_TIMEOUT_MS * 1000LL,
     };
@@ -188,10 +198,24 @@ esp_err_t command_executor_submit(const gw_message_t *message,
     return ESP_OK;
 }
 
-void command_executor_get_stats(command_executor_stats_t *stats)
+void command_executor_get_stats(command_executor_stats_t *stats,
+                                uint32_t *worker_stack_min_bytes)
 {
+    if (worker_stack_min_bytes != NULL) *worker_stack_min_bytes = 0;
     if (stats == NULL) return;
     taskENTER_CRITICAL(&s_stats_mux);
     *stats = s_stats;
     taskEXIT_CRITICAL(&s_stats_mux);
+
+    if (worker_stack_min_bytes != NULL) {
+        uint32_t min_bytes = 0;
+        for (size_t i = 0; i < CONFIG_CMD_EXEC_WORKER_COUNT; i++) {
+            TaskHandle_t task = s_workers[i].task;
+            if (task == NULL) continue;
+            UBaseType_t words = uxTaskGetStackHighWaterMark(task);
+            uint32_t bytes = (uint32_t)(words * sizeof(StackType_t));
+            if (min_bytes == 0 || bytes < min_bytes) min_bytes = bytes;
+        }
+        *worker_stack_min_bytes = min_bytes; // Plan v2 §55/§86
+    }
 }

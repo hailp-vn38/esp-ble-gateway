@@ -15,8 +15,14 @@ typedef struct {
     uint32_t queue_timeout;
     uint32_t dispatch_timeout;
     uint32_t max_queue_depth;
+    uint32_t max_queue_wait_ms;   // Plan v2 §54 latency signal
     uint32_t active_workers;
 } command_executor_stats_t;
+
+// Fills stats and reports the smallest stack high-water mark across live
+// workers in *worker_stack_min_bytes (0 when no worker is running).
+void command_executor_get_stats(command_executor_stats_t *stats,
+                                uint32_t *worker_stack_min_bytes);
 
 // Result lifetime contract (Plan v2 §12): the result pointer is valid only
 // while the callback runs. Do not store it, free it, or use it after the
@@ -43,7 +49,5 @@ void command_executor_deinit(void);
 esp_err_t command_executor_submit(const gw_message_t *message,
                                   command_completion_fn completion,
                                   void *context);
-
-void command_executor_get_stats(command_executor_stats_t *stats);
 
 #endif // COMMAND_EXECUTOR_H

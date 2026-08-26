@@ -6,6 +6,8 @@
 #include "esp_log.h"
 
 #include "ble_central.h"
+#include "gateway_status.h"
+
 #include "command_dispatcher.h"
 #include "command_dispatcher_internal.h"
 #include "device_store.h"
@@ -199,22 +201,20 @@ static void cmd_list_devices(const gw_message_t *msg, dispatch_result_t *result)
 static void cmd_get_status(const gw_message_t *msg, dispatch_result_t *result)
 {
     (void)msg;
-    device_entry_t devices[DEVICE_STORE_MAX_DEVICES];
-    int count = device_store_snapshot(devices, DEVICE_STORE_MAX_DEVICES);
-    if (count < 0) {
+    gateway_status_t status;
+    if (gateway_status_get(&status) != ESP_OK) {
         command_dispatcher_set_text_result(result,
                                            DISPATCH_STATUS_INTERNAL_ERROR,
                                            "Could not read gateway status");
         return;
     }
 
-    int ready_count = 0;
-    for (int i = 0; i < count; i++) ready_count += devices[i].connected != 0;
     char payload[160];
     snprintf(payload, sizeof(payload),
              "{\"status\":\"ok\",\"device_count\":%d,"
              "\"connected_count\":%d,\"ble_link_count\":%d}",
-             count, ready_count, ble_central_active_count());
+             status.device_count, status.connected_count,
+             status.ble_link_count);
     command_dispatcher_set_json_result(result, DISPATCH_STATUS_OK, payload);
 }
 

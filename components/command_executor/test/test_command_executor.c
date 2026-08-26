@@ -121,7 +121,9 @@ TEST_CASE("submit runs a command and reports stats", "[command_executor]")
     TEST_ASSERT_EQUAL_INT(1, tally.ok_count);
 
     command_executor_stats_t stats;
-    command_executor_get_stats(&stats);
+    uint32_t worker_stack_min = 0;
+    command_executor_get_stats(&stats, &worker_stack_min);
+    TEST_ASSERT_GREATER_THAN_UINT32(0, worker_stack_min);
     TEST_ASSERT_EQUAL_UINT32(1, stats.submitted);
     TEST_ASSERT_EQUAL_UINT32(1, stats.completed);
     TEST_ASSERT_EQUAL_UINT32(0, stats.queue_full);
@@ -153,7 +155,9 @@ TEST_CASE("queue-full submissions are rejected synchronously", "[command_executo
     TEST_ASSERT_EQUAL_INT(0, tally.timeout_count);
 
     command_executor_stats_t stats;
-    command_executor_get_stats(&stats);
+    uint32_t worker_stack_min = 0;
+    command_executor_get_stats(&stats, &worker_stack_min);
+    TEST_ASSERT_GREATER_THAN_UINT32(0, worker_stack_min);
     // Rejected submissions are not counted as submitted.
     TEST_ASSERT_EQUAL_UINT32((uint32_t)capacity, stats.submitted);
     TEST_ASSERT_EQUAL_UINT32((uint32_t)capacity, stats.completed);
@@ -187,7 +191,7 @@ TEST_CASE("expired jobs complete with timeout without dispatching", "[command_ex
     TEST_ASSERT_EQUAL_INT(CONFIG_CMD_EXEC_QUEUE_LEN, tally.timeout_count);
 
     command_executor_stats_t stats;
-    command_executor_get_stats(&stats);
+    command_executor_get_stats(&stats, NULL);
     TEST_ASSERT_EQUAL_UINT32(CONFIG_CMD_EXEC_QUEUE_LEN, stats.queue_timeout);
     TEST_ASSERT_EQUAL_UINT32(0, stats.dispatch_timeout);
 

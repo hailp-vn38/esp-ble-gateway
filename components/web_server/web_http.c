@@ -7,6 +7,13 @@
 
 static const char *TAG = "web_http";
 
+// Common hardening headers on every API response (Plan v2 §64, P2 review).
+static void set_security_headers(httpd_req_t *request)
+{
+    httpd_resp_set_hdr(request, "X-Content-Type-Options", "nosniff");
+    httpd_resp_set_hdr(request, "Referrer-Policy", "no-referrer");
+}
+
 esp_err_t web_send_json(httpd_req_t *request, cJSON *json)
 {
     if (json == NULL) {
@@ -23,6 +30,7 @@ esp_err_t web_send_json(httpd_req_t *request, cJSON *json)
 
     httpd_resp_set_type(request, "application/json");
     httpd_resp_set_hdr(request, "Cache-Control", "no-store");
+    set_security_headers(request);
     esp_err_t result = httpd_resp_send(request, text, HTTPD_RESP_USE_STRLEN);
     cJSON_free(text);
     return result;
@@ -44,6 +52,7 @@ esp_err_t web_send_body_error(httpd_req_t *request, web_body_status_t status)
 {
     const char *http_status = "500 Internal Server Error";
     const char *message = "Could not process the request body";
+    const char *code = "internal_error";
     bool close_conn = true;
 
     switch (status) {
@@ -52,24 +61,29 @@ esp_err_t web_send_body_error(httpd_req_t *request, web_body_status_t status)
     case WEB_BODY_EMPTY:
         http_status = "400 Bad Request";
         message = "Empty request body";
+        code = "invalid_request";
         close_conn = false; // nothing was expected on the socket
         break;
     case WEB_BODY_INVALID_JSON:
         http_status = "400 Bad Request";
         message = "Invalid JSON body";
+        code = "invalid_request";
         close_conn = false; // body was fully consumed
         break;
     case WEB_BODY_TOO_LARGE:
         http_status = "413 Content Too Large";
         message = "Request body exceeds the endpoint limit";
+        code = "payload_too_large";
         break;
     case WEB_BODY_TIMEOUT:
         http_status = "408 Request Timeout";
         message = "Request body did not arrive in time";
+        code = "request_timeout";
         break;
     case WEB_BODY_IO_ERROR:
         http_status = "400 Bad Request";
         message = "Could not read the request body";
+        code = "internal_error";
         break;
     }
 
@@ -78,7 +92,15 @@ esp_err_t web_send_body_error(httpd_req_t *request, web_body_status_t status)
     if (close_conn) {
         httpd_resp_set_hdr(request, "Connection", "close");
     }
-    return web_send_api_error(request, http_status, message);
+    httpd_resp_set_status(request, http_status);
+    cJSON *json = cJSON_CreateObject();
+    if (json != NULL) {
+        cJSON_AddBoolToObject(json, "success", false);
+        cJSON_AddStringToObject(json, "message", message);
+        cJSON *error = cJSON_AddObjectToObject(json, "error");
+        if (error != NULL) cJSON_AddStringToObject(error, "code", code);
+    }
+    return web_send_json(request, json);
 }
 
 static web_body_status_t read_request_body(httpd_req_t *request, char *buffer,

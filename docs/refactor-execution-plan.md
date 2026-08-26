@@ -155,8 +155,8 @@ dashboard.
 | GĐ3 Migrate REST | ✅ Đã test trên board | 400 sync / 502 async NOT_CONNECTED đúng mapping; burst 90 lệnh, heap ổn định (94868→94324→94508); status/logs responsive |
 | GĐ4 Migrate MCP + xóa mcp_async | ✅ Đã test trên board | Xóa `mcp_async.c` + Kconfig stack; `/mcp` device_command → executor completion format JSON-RPC (§67); queue-full 503 test lại qua executor thật; 119 PASS / 8 FAIL DNS pre-existing |
 | GĐ5 HTTP body correctness | ✅ Đã test trên board | 413+close với body lớn; 408+close sau ~3.4s với slow client; keep-alive GIỮ cho body đã consume (400 rồi request kế tiếp vẫn OK trên cùng socket); limit theo endpoint đúng (600B: devices=413, command=400) |
-| GĐ6 Services + headroom | ⏳ | Route headroom đã nâng sẵn ở GĐ0 |
-| GĐ7 P2 metrics/tuning | ⏳ | |
+| GĐ6 Services + headroom | ✅ Code xong, build pass | Component `gateway_status` — single source cho `/api/status` + dispatcher `get_status` (§45); POST/PUT/DELETE devices qua executor (§43); cần verify HTTP thật sau khi provision |
+| GĐ7 P2 metrics/tuning | ✅ Code xong, build pass | `/api/status` thêm block `executor` (stats + `max_queue_wait_ms` + `worker_stack_min_bytes` §53-55); error codes machine-readable §51-52; security headers nosniff/referrer-policy; CSP mở rộng cho dashboard |
 
 ### Việc cần làm tay (cần hardware)
 
