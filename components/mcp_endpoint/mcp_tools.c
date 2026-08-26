@@ -137,6 +137,21 @@ static mcp_resolve_status_t normalize_arguments(const cJSON *arguments,
         copied = copied && copy_optional_field(normalized, arguments,
                                                optional_fields[i]);
     }
+    // Preserve the historical integer `value` alias while publishing the
+    // canonical int_value/bool_value fields in the tool schema.
+    if (strcmp(message_type, "device_command") == 0 &&
+        cJSON_GetObjectItemCaseSensitive(normalized, "int_value") == NULL) {
+        const cJSON *legacy_value =
+            cJSON_GetObjectItemCaseSensitive(arguments, "value");
+        if (legacy_value != NULL) {
+            cJSON *copy = cJSON_Duplicate(legacy_value, true);
+            if (copy == NULL) {
+                copied = false;
+            } else {
+                cJSON_AddItemToObject(normalized, "int_value", copy);
+            }
+        }
+    }
 
     char *json = copied ? cJSON_PrintUnformatted(normalized) : NULL;
     cJSON_Delete(normalized);

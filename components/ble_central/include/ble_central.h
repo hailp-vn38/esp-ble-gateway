@@ -25,6 +25,8 @@ typedef enum {
 } ble_central_err_t;
 
 typedef void (*ble_central_notify_cb_t)(const char *device_id, const gw_message_t *msg);
+typedef void (*ble_central_ready_cb_t)(const char *device_id);
+typedef void (*ble_central_disconnect_cb_t)(const char *device_id);
 
 // Runtime connection state of one device, owned entirely by BLE Central.
 typedef enum {
@@ -52,6 +54,8 @@ typedef struct {
 typedef void (*ble_central_scan_result_cb_t)(const ble_scan_result_t *result);
 
 int ble_central_init(ble_central_notify_cb_t notify_cb);
+void ble_central_set_lifecycle_callbacks(ble_central_ready_cb_t ready_cb,
+                                         ble_central_disconnect_cb_t disconnect_cb);
 int ble_central_connect(const char *device_id, const uint8_t *ble_addr, uint8_t addr_type);
 int ble_central_disconnect(const char *device_id);
 // Tears down any runtime connection for device_id and deletes the stored

@@ -10,7 +10,9 @@
 #define GW_MSG_COMMAND_LEN      32
 #define GW_MSG_NAME_LEN         32
 #define GW_MSG_DEVICE_TYPE_LEN  16
-#define GW_PROTOCOL_VERSION      2
+#define GW_MSG_CAP_LABEL_LEN     32
+#define GW_MSG_CAP_UNIT_LEN      12
+#define GW_PROTOCOL_VERSION      3
 
 typedef struct {
     uint8_t protocol_version;
@@ -21,12 +23,38 @@ typedef struct {
     int has_request_id;
     int  int_value;
     int  bool_value;
+    int  has_int_value;
+    int  has_bool_value;
     int  has_device_id;
     char name[GW_MSG_NAME_LEN];
     char device_type[GW_MSG_DEVICE_TYPE_LEN];
     uint8_t ble_addr[6];
     uint8_t ble_addr_type;
     int has_ble_addr;
+
+    // Protocol v3 capability discovery metadata. These fields are optional
+    // and only meaningful for capabilities_begin/capability_item/
+    // capabilities_end messages.
+    uint32_t snapshot_id;
+    int has_snapshot_id;
+    uint16_t sequence;
+    int has_sequence;
+    uint16_t total;
+    int has_total;
+    uint8_t value_type;
+    int has_value_type;
+    uint8_t capability_flags;
+    int has_capability_flags;
+    int32_t min_value;
+    int has_min_value;
+    int32_t max_value;
+    int has_max_value;
+    uint32_t step;
+    int has_step;
+    char capability_label[GW_MSG_CAP_LABEL_LEN];
+    char capability_unit[GW_MSG_CAP_UNIT_LEN];
+    uint32_t capability_revision;
+    int has_capability_revision;
 } gw_message_t;
 
 int cbor_codec_decode(const uint8_t *buf, size_t len, gw_message_t *out_msg);

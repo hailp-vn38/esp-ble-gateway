@@ -127,6 +127,8 @@ extern uint8_t g_ble_own_addr_type;
 extern const ble_uuid16_t g_ble_gateway_service_uuid;
 
 int64_t ble_now_ms(void);
+void ble_central_emit_ready(const char *device_id);
+void ble_central_emit_disconnected(const char *device_id);
 
 bool ble_state_lock(void);
 void ble_state_unlock(void);

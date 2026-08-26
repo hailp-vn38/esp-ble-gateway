@@ -25,7 +25,7 @@ idf_component_register(
     INCLUDE_DIRS "include"
     REQUIRES esp_http_server cbor_codec command_dispatcher command_executor
              device_store gateway_status log_buffer wifi_provisioning
-             ble_central espressif__cjson esp_system esp_timer freertos
+             ble_central device_capabilities espressif__cjson esp_system esp_timer freertos
              esp_wifi esp_app_format
     EMBED_FILES
              "www/dashboard.html"

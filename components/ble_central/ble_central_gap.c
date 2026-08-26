@@ -49,6 +49,7 @@ static void gap_release_connection(ble_conn_ref_t ref, uint16_t conn_handle,
     ESP_LOGW(TAG, "[%s][slot=%u][gen=%u][handle=%u] DISCONNECTED reason=%d",
              device_id, ref.slot_index, (unsigned)ref.generation, conn_handle,
              reason);
+    ble_central_emit_disconnected(device_id);
 
     if (!removing) return;
 

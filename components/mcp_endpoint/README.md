@@ -109,10 +109,11 @@ Quy tắc JSON-RPC giữ nguyên như trước: `jsonrpc:"2.0"`, `method` bắt 
 
 ### 6.1. Tool registry
 
-`tools/list` chỉ trả về 6 tool cố định — hết hidden command surface:
+`tools/list` chỉ trả về 7 tool cố định — hết hidden command surface:
 
 ```text
-add_device, edit_device, delete_device, list_devices, get_status, device_command
+add_device, edit_device, delete_device, list_devices, get_status,
+list_device_capabilities, device_command
 ```
 
 Mỗi tool có inputSchema riêng (`required`, `maxLength`, `pattern` BLE address,
@@ -128,6 +129,10 @@ Tool `device_command` chỉ cho phép các command liệt kê trong
 `CONFIG_MCP_DEVICE_COMMAND_ALLOWLIST` (comma-separated; mặc định rỗng = cấm
 tất cả). Command ngoài allowlist → **tool error** (`isError:true` /
 legacy `success:false`), không phải protocol error.
+
+Nếu gateway đã có capability snapshot, `device_command` còn phải tồn tại trong
+snapshot và argument phải đúng type/range. Capability do peripheral quảng bá
+không bao giờ tự mở rộng allowlist MCP.
 
 `device_command` được thực thi trên async worker (1 worker, queue 2):
 request nhận `503 {code:-32000}` khi queue đầy; HTTPD task không bao giờ bị

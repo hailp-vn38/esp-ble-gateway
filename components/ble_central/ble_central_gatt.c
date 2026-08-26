@@ -65,6 +65,7 @@ static void gatt_mark_ready(ble_callback_ctx_t *ctx, const ble_conn_slot_t *snap
              device_id, ctx->ref.slot_index, (unsigned)ctx->ref.generation,
              snap->conn_handle, snap->command_val_handle,
              snap->status_val_handle, snap->status_cccd_handle, snap->mtu);
+    ble_central_emit_ready(device_id);
 }
 
 static int on_subscribe_write(uint16_t conn_handle,

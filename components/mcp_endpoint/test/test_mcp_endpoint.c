@@ -77,7 +77,7 @@ TEST_CASE("tools/list returns registered tools with schemas", "[mcp_endpoint]")
     TEST_ASSERT_NOT_NULL(result);
     cJSON *tools = cJSON_GetObjectItemCaseSensitive(result, "tools");
     TEST_ASSERT_TRUE(cJSON_IsArray(tools));
-    TEST_ASSERT_EQUAL_INT(6, cJSON_GetArraySize(tools));
+    TEST_ASSERT_EQUAL_INT(7, cJSON_GetArraySize(tools));
 
     cJSON *first = cJSON_GetArrayItem(tools, 0);
     TEST_ASSERT_EQUAL_STRING("add_device",

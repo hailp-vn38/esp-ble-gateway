@@ -2,6 +2,7 @@
 #include "esp_log.h"
 #include "esp_system.h"
 #include "nvs_flash.h"
+#include <stdlib.h>
 
 #include "ble_central.h"
 #include "board_io.h"
@@ -9,6 +10,7 @@
 #include "command_dispatcher.h"
 #include "command_executor.h"
 #include "device_store.h"
+#include "device_capabilities.h"
 #include "log_buffer.h"
 #include "mcp_endpoint.h"
 #include "web_server.h"
@@ -18,7 +20,53 @@ static const char *TAG = "app_main";
 
 static void on_device_notify(const char *device_id, const gw_message_t *msg)
 {
+    if (device_capabilities_on_notify(device_id, msg)) return;
     command_dispatcher_on_device_notify(device_id, msg);
+}
+
+static void on_device_ready(const char *device_id)
+{
+    if (device_capabilities_on_ready(device_id) != ESP_OK) {
+        ESP_LOGW(TAG, "[%s] capability discovery could not be queued", device_id);
+    }
+}
+
+typedef struct {
+    device_cap_submit_done_fn done;
+    void *context;
+} capability_submit_bridge_t;
+
+static void capability_executor_completion(const dispatch_result_t *result,
+                                           void *context)
+{
+    capability_submit_bridge_t *bridge = context;
+    device_cap_submit_result_t outcome = DEVICE_CAP_SUBMIT_ERROR;
+    if (result != NULL) {
+        if (result->status == DISPATCH_STATUS_OK) {
+            outcome = DEVICE_CAP_SUBMIT_OK;
+        } else if (result->status == DISPATCH_STATUS_DEVICE_ERROR ||
+                   result->status == DISPATCH_STATUS_UNSUPPORTED_COMMAND) {
+            outcome = DEVICE_CAP_SUBMIT_REJECTED;
+        } else if (result->status == DISPATCH_STATUS_TIMEOUT) {
+            outcome = DEVICE_CAP_SUBMIT_TIMEOUT;
+        }
+    }
+    bridge->done(outcome, bridge->context);
+    free(bridge);
+}
+
+static esp_err_t capability_submit(const gw_message_t *message,
+                                   device_cap_submit_done_fn done,
+                                   void *context)
+{
+    capability_submit_bridge_t *bridge = malloc(sizeof(*bridge));
+    if (bridge == NULL) return ESP_ERR_NO_MEM;
+    bridge->done = done;
+    bridge->context = context;
+    esp_err_t error = command_executor_submit(
+        message, capability_executor_completion, bridge);
+    if (error != ESP_OK) free(bridge);
+    return error;
 }
 
 static void on_board_io_event(board_io_event_t event, void *context)
@@ -96,6 +144,10 @@ void app_main(void)
         ESP_LOGE(TAG, "Device store initialization failed");
         return;
     }
+    if (device_capabilities_init() != ESP_OK) {
+        ESP_LOGE(TAG, "Device capability manager initialization failed");
+        return;
+    }
     if (command_dispatcher_init() != 0) {
         ESP_LOGE(TAG, "Command dispatcher initialization failed");
         return;
@@ -104,16 +156,19 @@ void app_main(void)
         ESP_LOGE(TAG, "Command dispatcher registry freeze failed");
         return;
     }
+    if (command_executor_init() != ESP_OK) {
+        ESP_LOGE(TAG, "Command executor initialization failed");
+        return;
+    }
+    device_capabilities_set_submitter(capability_submit);
     if (ble_central_init(on_device_notify) != 0) {
         ESP_LOGE(TAG, "BLE central initialization failed");
         return;
     }
+    ble_central_set_lifecycle_callbacks(on_device_ready,
+                                        device_capabilities_on_disconnect);
     if (ble_central_start_reconnect_supervisor() != 0) {
         ESP_LOGE(TAG, "BLE reconnect supervisor could not be started");
-        return;
-    }
-    if (command_executor_init() != ESP_OK) {
-        ESP_LOGE(TAG, "Command executor initialization failed");
         return;
     }
 

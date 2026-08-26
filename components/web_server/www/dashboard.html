@@ -188,12 +188,14 @@
                         </div>
 
                         <div class="bg-white p-5 rounded-xl border border-gray-200 shadow-sm">
-                            <h3 class="font-semibold text-gray-900 mb-4 border-b border-gray-100 pb-2">Device Command</h3>
+                            <div class="flex items-center justify-between mb-4 border-b border-gray-100 pb-2">
+                                <h3 class="font-semibold text-gray-900">Device Commands</h3>
+                                <button onclick="devices.refreshCapabilities()" class="text-xs text-brand-600 hover:text-brand-700">Refresh</button>
+                            </div>
                             <div class="space-y-3">
-                                <button id="btn-device-toggle" onclick="devices.sendToggle()" class="w-full px-4 py-2.5 bg-brand-600 text-white rounded-lg hover:bg-brand-700 transition-colors shadow-sm text-sm font-medium flex items-center justify-center">
-                                    <i class="ph ph-power mr-2"></i> Toggle
-                                </button>
-                                <div class="flex gap-2">
+                                <p id="capability-state" class="text-xs text-gray-500">Capabilities unknown</p>
+                                <div id="capability-controls" class="space-y-3"></div>
+                                <div id="legacy-command-controls" class="flex gap-2">
                                     <input id="input-device-command" type="text" value="toggle" maxlength="31" class="min-w-0 flex-1 px-3 py-2 border border-gray-300 rounded-lg text-sm" aria-label="Custom command">
                                     <button onclick="devices.sendCustomCommand()" class="px-4 py-2 bg-white border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 text-sm font-medium">Send</button>
                                 </div>
@@ -591,11 +593,24 @@
             getLogs() {
                 return this.request('/api/logs');
             },
-            sendCommand(deviceId, command, boolValue = true) {
+            getCapabilities(deviceId) {
+                return this.request(`/api/capabilities?device_id=${encodeURIComponent(deviceId)}`);
+            },
+            refreshCapabilities(deviceId) {
+                return this.request('/api/capabilities/refresh', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({device_id: deviceId})
+                });
+            },
+            sendCommand(deviceId, command, valueType = 'none', value = null) {
+                const payload = {device_id: deviceId, command};
+                if (valueType === 'boolean') payload.bool_value = Boolean(value);
+                if (valueType === 'integer') payload.int_value = Number(value);
                 return this.request('/api/command', {
                     method: 'POST',
                     headers: {'Content-Type': 'application/json'},
-                    body: JSON.stringify({device_id: deviceId, command, bool_value: boolValue})
+                    body: JSON.stringify(payload)
                 });
             },
             restart() {
@@ -1193,6 +1208,7 @@
 
                 // Load Logs
                 logger.renderDeviceLogs(dev.id);
+                this.loadCapabilities(dev);
 
                 // Switch view
                 nav.switchTab('device-detail');
@@ -1236,7 +1252,7 @@
 
             async sendToggle() {
                 if (!state.selectedDeviceDetail) return;
-                await this.sendCommand('toggle');
+                await this.sendCommand('toggle', 'boolean', true);
             },
 
             async sendCustomCommand() {
@@ -1245,19 +1261,97 @@
                     ui.showToast('Command cannot be empty', 'error');
                     return;
                 }
-                await this.sendCommand(command);
+                await this.sendCommand(command, 'boolean', true);
             },
 
-            async sendCommand(command) {
+            async sendCommand(command, valueType = 'none', value = null) {
                 const device = state.selectedDeviceDetail;
                 if (!device) return;
                 try {
-                    const result = await api.sendCommand(device.id, command);
+                    const result = await api.sendCommand(device.id, command, valueType, value);
                     ui.showToast(result.message || `Command ${command} completed`, 'success');
                     await logger.refresh();
                 } catch (error) {
                     ui.showToast(error.message, 'error');
                     await logger.refresh();
+                }
+            },
+
+            async refreshCapabilities() {
+                const device = state.selectedDeviceDetail;
+                if (!device) return;
+                try {
+                    await api.refreshCapabilities(device.id);
+                    ui.showToast('Capability refresh queued', 'success');
+                    setTimeout(() => this.loadCapabilities(device), 2500);
+                } catch (error) {
+                    ui.showToast(error.message, 'error');
+                }
+            },
+
+            async loadCapabilities(device) {
+                const stateText = document.getElementById('capability-state');
+                const controls = document.getElementById('capability-controls');
+                const legacy = document.getElementById('legacy-command-controls');
+                controls.replaceChildren();
+                stateText.textContent = 'Loading capabilities...';
+                try {
+                    const response = await api.getCapabilities(device.id);
+                    const snapshot = response.data || {};
+                    stateText.textContent = `Capability state: ${snapshot.state || 'unknown'}`;
+                    const commands = Array.isArray(snapshot.commands) ? snapshot.commands : [];
+                    legacy.classList.toggle('hidden', commands.length > 0 && snapshot.state === 'ready');
+                    commands.forEach(capability => {
+                        const row = document.createElement('div');
+                        row.className = 'space-y-1';
+                        const label = document.createElement('label');
+                        label.className = 'block text-sm font-medium text-gray-700';
+                        label.textContent = capability.label || capability.name;
+                        row.appendChild(label);
+
+                        if (capability.value_type === 'integer') {
+                            const wrapper = document.createElement('div');
+                            wrapper.className = 'flex gap-2';
+                            const input = document.createElement('input');
+                            input.type = 'number';
+                            input.min = capability.minimum;
+                            input.max = capability.maximum;
+                            input.step = capability.step || 1;
+                            input.value = capability.minimum;
+                            input.className = 'min-w-0 flex-1 px-3 py-2 border border-gray-300 rounded-lg text-sm';
+                            const button = document.createElement('button');
+                            button.className = 'px-4 py-2 bg-brand-600 text-white rounded-lg text-sm';
+                            button.textContent = capability.unit ? `Set ${capability.unit}` : 'Set';
+                            button.onclick = () => this.sendCommand(capability.name, 'integer', input.value);
+                            wrapper.append(input, button);
+                            row.appendChild(wrapper);
+                        } else if (capability.value_type === 'boolean') {
+                            const wrapper = document.createElement('div');
+                            wrapper.className = 'grid grid-cols-2 gap-2';
+                            ['On', 'Off'].forEach((text, index) => {
+                                const button = document.createElement('button');
+                                button.className = 'px-4 py-2 bg-brand-600 text-white rounded-lg text-sm';
+                                button.textContent = text;
+                                button.onclick = () => this.sendCommand(capability.name, 'boolean', index === 0);
+                                wrapper.appendChild(button);
+                            });
+                            row.appendChild(wrapper);
+                        } else {
+                            const button = document.createElement('button');
+                            button.className = 'w-full px-4 py-2 bg-brand-600 text-white rounded-lg text-sm';
+                            button.textContent = capability.destructive ? 'Run (confirmation required)' : 'Run';
+                            button.onclick = () => {
+                                if (!capability.destructive || confirm(`Run ${capability.name}?`)) {
+                                    this.sendCommand(capability.name);
+                                }
+                            };
+                            row.appendChild(button);
+                        }
+                        controls.appendChild(row);
+                    });
+                } catch (error) {
+                    stateText.textContent = `Capabilities unavailable: ${error.message}`;
+                    legacy.classList.remove('hidden');
                 }
             },
 

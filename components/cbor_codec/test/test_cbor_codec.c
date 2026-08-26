@@ -90,6 +90,50 @@ TEST_CASE("CBOR encode/decode preserves request_id", "[cbor_codec]")
     TEST_ASSERT_FALSE(decoded.has_request_id);
 }
 
+TEST_CASE("CBOR v3 preserves capability item metadata", "[cbor_codec]")
+{
+    const gw_message_t input = {
+        .protocol_version = 3,
+        .type = "capability_item",
+        .device_id = "lamp-1",
+        .command = "set_brightness",
+        .has_device_id = 1,
+        .snapshot_id = 88,
+        .has_snapshot_id = 1,
+        .sequence = 1,
+        .has_sequence = 1,
+        .value_type = 2,
+        .has_value_type = 1,
+        .capability_flags = 1,
+        .has_capability_flags = 1,
+        .min_value = 0,
+        .has_min_value = 1,
+        .max_value = 100,
+        .has_max_value = 1,
+        .step = 5,
+        .has_step = 1,
+        .capability_label = "Brightness",
+        .capability_unit = "%",
+    };
+    uint8_t encoded[GW_MSG_MAX_LEN];
+    int length = cbor_codec_encode(&input, encoded, sizeof(encoded));
+    TEST_ASSERT_GREATER_THAN(0, length);
+
+    gw_message_t decoded;
+    TEST_ASSERT_EQUAL_INT(0, cbor_codec_decode(encoded, length, &decoded));
+    TEST_ASSERT_EQUAL_UINT32(88, decoded.snapshot_id);
+    TEST_ASSERT_EQUAL_UINT16(1, decoded.sequence);
+    TEST_ASSERT_EQUAL_UINT8(2, decoded.value_type);
+    TEST_ASSERT_EQUAL_INT32(0, decoded.min_value);
+    TEST_ASSERT_EQUAL_INT32(100, decoded.max_value);
+    TEST_ASSERT_EQUAL_UINT32(5, decoded.step);
+    TEST_ASSERT_EQUAL_STRING("Brightness", decoded.capability_label);
+    TEST_ASSERT_EQUAL_STRING("%", decoded.capability_unit);
+    TEST_ASSERT_TRUE(decoded.has_snapshot_id);
+    TEST_ASSERT_TRUE(decoded.has_sequence);
+    TEST_ASSERT_TRUE(decoded.has_value_type);
+}
+
 TEST_CASE("JSON conversion validates and preserves values", "[cbor_codec]")
 {
     const char *json =

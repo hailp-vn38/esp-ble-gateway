@@ -13,6 +13,8 @@
 
 #include "command_dispatcher.h"
 #include "command_executor.h"
+#include "device_capabilities.h"
+#include "ble_central.h"
 #include "web_http.h"
 
 static const char *TAG = "web_gateway_api";
@@ -59,6 +61,8 @@ static const char *http_status_for(const dispatch_result_t *result)
     case DISPATCH_STATUS_OK:
         return "200 OK";
     case DISPATCH_STATUS_INVALID_ARGUMENT:
+    case DISPATCH_STATUS_UNSUPPORTED_COMMAND:
+    case DISPATCH_STATUS_INVALID_COMMAND_ARGUMENT:
         return "400 Bad Request";
     case DISPATCH_STATUS_NOT_FOUND:
         return "404 Not Found";
@@ -90,6 +94,9 @@ static const char *error_code_for(const dispatch_result_t *result)
     case DISPATCH_STATUS_NOT_CONNECTED: return "device_not_connected";
     case DISPATCH_STATUS_TRANSPORT_ERROR: return "transport_error";
     case DISPATCH_STATUS_DEVICE_ERROR: return "device_error";
+    case DISPATCH_STATUS_UNSUPPORTED_COMMAND: return "unsupported_command";
+    case DISPATCH_STATUS_INVALID_COMMAND_ARGUMENT:
+        return "invalid_command_argument";
     default: return "internal_error";
     }
 }
@@ -329,6 +336,7 @@ static esp_err_t command_post_handler(httpd_req_t *request)
                                       "invalid_request");
         }
         message.int_value = int_value->valueint;
+        message.has_int_value = true;
     }
 
     const cJSON *bool_value = cJSON_GetObjectItemCaseSensitive(json, "bool_value");
@@ -340,10 +348,88 @@ static esp_err_t command_post_handler(httpd_req_t *request)
                                       "invalid_request");
         }
         message.bool_value = cJSON_IsTrue(bool_value);
+        message.has_bool_value = true;
     }
     cJSON_Delete(json);
 
     return dispatch_message_async(request, &message);
+}
+
+static esp_err_t capabilities_get_handler(httpd_req_t *request)
+{
+    char query[128];
+    char device_id[GW_MSG_DEVICE_ID_LEN] = {0};
+    if (httpd_req_get_url_query_str(request, query, sizeof(query)) != ESP_OK ||
+        httpd_query_key_value(query, "device_id", device_id,
+                              sizeof(device_id)) != ESP_OK ||
+        device_id[0] == '\0') {
+        return web_send_api_error_code(request, "400 Bad Request",
+                                       "Missing device_id", "invalid_request");
+    }
+    gw_message_t message = {
+        .protocol_version = GW_PROTOCOL_VERSION,
+        .has_device_id = true,
+    };
+    strlcpy(message.type, "gateway_command", sizeof(message.type));
+    strlcpy(message.command, "list_device_capabilities",
+            sizeof(message.command));
+    strlcpy(message.device_id, device_id, sizeof(message.device_id));
+    dispatch_result_t result;
+    command_dispatcher_handle(&message, &result);
+    return send_dispatch_result(request, &result);
+}
+
+static esp_err_t capabilities_refresh_handler(httpd_req_t *request)
+{
+    char body[WEB_COMMAND_BODY_MAX_LEN];
+    web_body_status_t body_status;
+    cJSON *json = web_parse_request_json(request, body, sizeof(body),
+                                         &body_status);
+    if (json == NULL) return web_send_body_error(request, body_status);
+    const char *device_id = web_get_json_string(
+        json, "device_id", GW_MSG_DEVICE_ID_LEN, true);
+    if (device_id == NULL) {
+        cJSON_Delete(json);
+        return web_send_api_error_code(request, "400 Bad Request",
+                                       "Missing device_id", "invalid_request");
+    }
+    device_capability_snapshot_t snapshot;
+    esp_err_t snapshot_error = device_capabilities_get(device_id, &snapshot);
+    if (snapshot_error == ESP_ERR_NOT_FOUND) {
+        cJSON_Delete(json);
+        return web_send_api_error_code(request, "404 Not Found",
+                                       "Device not found", "device_not_found");
+    }
+    if (snapshot_error == ESP_OK &&
+        snapshot.state == DEVICE_CAP_STATE_DISCOVERING) {
+        cJSON_Delete(json);
+        return web_send_api_error_code(request, "409 Conflict",
+                                       "Capability discovery is already running",
+                                       "device_busy");
+    }
+    if (ble_central_is_connected(device_id) <= 0) {
+        cJSON_Delete(json);
+        return web_send_api_error_code(request, "502 Bad Gateway",
+                                       "Device is not connected",
+                                       "device_not_connected");
+    }
+    esp_err_t error = device_capabilities_refresh(device_id);
+    cJSON_Delete(json);
+    if (error == ESP_ERR_NOT_FOUND) {
+        return web_send_api_error_code(request, "404 Not Found",
+                                       "Device not found", "device_not_found");
+    }
+    if (error != ESP_OK) {
+        return web_send_api_error_code(request, "503 Service Unavailable",
+                                       "Capability refresh queue is full",
+                                       "queue_full");
+    }
+    httpd_resp_set_status(request, "202 Accepted");
+    cJSON *response = cJSON_CreateObject();
+    cJSON_AddBoolToObject(response, "success", true);
+    cJSON_AddStringToObject(response, "message",
+                           "Capability refresh queued");
+    return web_send_json(request, response);
 }
 
 esp_err_t web_gateway_api_init(void)
@@ -364,6 +450,10 @@ esp_err_t web_gateway_api_register(httpd_handle_t server)
          .handler = devices_delete_handler},
         {.uri = "/api/command", .method = HTTP_POST,
          .handler = command_post_handler},
+        {.uri = "/api/capabilities", .method = HTTP_GET,
+         .handler = capabilities_get_handler},
+        {.uri = "/api/capabilities/refresh", .method = HTTP_POST,
+         .handler = capabilities_refresh_handler},
     };
     return web_register_routes(server, routes, WEB_ARRAY_SIZE(routes));
 }

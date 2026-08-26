@@ -19,6 +19,32 @@
 void ble_store_config_init(void);
 
 static const char *TAG = "ble_central";
+static ble_central_ready_cb_t s_ready_cb;
+static ble_central_disconnect_cb_t s_disconnect_cb;
+
+void ble_central_set_lifecycle_callbacks(
+    ble_central_ready_cb_t ready_cb,
+    ble_central_disconnect_cb_t disconnect_cb)
+{
+    s_ready_cb = ready_cb;
+    s_disconnect_cb = disconnect_cb;
+}
+
+void ble_central_emit_ready(const char *device_id)
+{
+    ble_central_ready_cb_t callback = s_ready_cb;
+    if (callback != NULL && device_id != NULL && device_id[0] != '\0') {
+        callback(device_id);
+    }
+}
+
+void ble_central_emit_disconnected(const char *device_id)
+{
+    ble_central_disconnect_cb_t callback = s_disconnect_cb;
+    if (callback != NULL && device_id != NULL && device_id[0] != '\0') {
+        callback(device_id);
+    }
+}
 
 static void nimble_host_task(void *param)
 {
@@ -36,6 +62,9 @@ static void on_ble_host_reset(int reason)
     ble_central_scan_reset();
     ESP_LOGE(TAG, "NimBLE host reset, reason=%d (cleared %u link(s))", reason,
              (unsigned)mirror_count);
+    for (size_t i = 0; i < mirror_count; i++) {
+        ble_central_emit_disconnected(device_ids[i]);
+    }
 }
 
 static void on_ble_host_sync(void)

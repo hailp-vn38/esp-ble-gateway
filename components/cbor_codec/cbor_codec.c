@@ -25,6 +25,17 @@ enum {
     CBOR_KEY_BLE_ADDR = 8,
     CBOR_KEY_BLE_ADDR_TYPE = 9,
     CBOR_KEY_REQUEST_ID = 10,
+    CBOR_KEY_SNAPSHOT_ID = 11,
+    CBOR_KEY_SEQUENCE = 12,
+    CBOR_KEY_TOTAL = 13,
+    CBOR_KEY_VALUE_TYPE = 14,
+    CBOR_KEY_CAPABILITY_FLAGS = 15,
+    CBOR_KEY_MIN_VALUE = 16,
+    CBOR_KEY_MAX_VALUE = 17,
+    CBOR_KEY_STEP = 18,
+    CBOR_KEY_CAPABILITY_LABEL = 19,
+    CBOR_KEY_CAPABILITY_UNIT = 20,
+    CBOR_KEY_CAPABILITY_REVISION = 21,
 };
 
 static bool valid_string(const char *value, size_t capacity, bool allow_empty)
@@ -83,7 +94,11 @@ int cbor_codec_encode(const gw_message_t *msg, uint8_t *out_buf, size_t out_buf_
         !valid_string(msg->command, sizeof(msg->command), false) ||
         (msg->has_device_id && !valid_string(msg->device_id, sizeof(msg->device_id), false)) ||
         !valid_string(msg->name, sizeof(msg->name), true) ||
-        !valid_string(msg->device_type, sizeof(msg->device_type), true)) {
+        !valid_string(msg->device_type, sizeof(msg->device_type), true) ||
+        !valid_string(msg->capability_label,
+                      sizeof(msg->capability_label), true) ||
+        !valid_string(msg->capability_unit,
+                      sizeof(msg->capability_unit), true)) {
         return -1;
     }
 
@@ -114,6 +129,48 @@ int cbor_codec_encode(const gw_message_t *msg, uint8_t *out_buf, size_t out_buf_
         QCBOREncode_AddUInt64ToMapN(&context, CBOR_KEY_BLE_ADDR_TYPE,
                                     msg->ble_addr_type);
     }
+    if (msg->has_snapshot_id) {
+        QCBOREncode_AddUInt64ToMapN(&context, CBOR_KEY_SNAPSHOT_ID,
+                                    msg->snapshot_id);
+    }
+    if (msg->has_sequence) {
+        QCBOREncode_AddUInt64ToMapN(&context, CBOR_KEY_SEQUENCE,
+                                    msg->sequence);
+    }
+    if (msg->has_total) {
+        QCBOREncode_AddUInt64ToMapN(&context, CBOR_KEY_TOTAL, msg->total);
+    }
+    if (msg->has_value_type) {
+        QCBOREncode_AddUInt64ToMapN(&context, CBOR_KEY_VALUE_TYPE,
+                                    msg->value_type);
+    }
+    if (msg->has_capability_flags) {
+        QCBOREncode_AddUInt64ToMapN(&context, CBOR_KEY_CAPABILITY_FLAGS,
+                                    msg->capability_flags);
+    }
+    if (msg->has_min_value) {
+        QCBOREncode_AddInt64ToMapN(&context, CBOR_KEY_MIN_VALUE,
+                                   msg->min_value);
+    }
+    if (msg->has_max_value) {
+        QCBOREncode_AddInt64ToMapN(&context, CBOR_KEY_MAX_VALUE,
+                                   msg->max_value);
+    }
+    if (msg->has_step) {
+        QCBOREncode_AddUInt64ToMapN(&context, CBOR_KEY_STEP, msg->step);
+    }
+    if (msg->capability_label[0] != '\0') {
+        QCBOREncode_AddSZStringToMapN(&context, CBOR_KEY_CAPABILITY_LABEL,
+                                      msg->capability_label);
+    }
+    if (msg->capability_unit[0] != '\0') {
+        QCBOREncode_AddSZStringToMapN(&context, CBOR_KEY_CAPABILITY_UNIT,
+                                      msg->capability_unit);
+    }
+    if (msg->has_capability_revision) {
+        QCBOREncode_AddUInt64ToMapN(&context, CBOR_KEY_CAPABILITY_REVISION,
+                                    msg->capability_revision);
+    }
     QCBOREncode_CloseMap(&context);
 
     UsefulBufC encoded;
@@ -130,6 +187,22 @@ static QCBORError get_optional_text(QCBORDecodeContext *context, int64_t key,
 {
     *value = NULLUsefulBufC;
     QCBORDecode_GetTextStringInMapN(context, key, value);
+    return QCBORDecode_GetAndResetError(context);
+}
+
+static QCBORError get_optional_uint(QCBORDecodeContext *context, int64_t key,
+                                    uint64_t *value)
+{
+    *value = 0;
+    QCBORDecode_GetUInt64InMapN(context, key, value);
+    return QCBORDecode_GetAndResetError(context);
+}
+
+static QCBORError get_optional_int(QCBORDecodeContext *context, int64_t key,
+                                   int64_t *value)
+{
+    *value = 0;
+    QCBORDecode_GetInt64InMapN(context, key, value);
     return QCBORDecode_GetAndResetError(context);
 }
 
@@ -232,12 +305,95 @@ int cbor_codec_decode(const uint8_t *buf, size_t len, gw_message_t *out_msg)
         return -1;
     }
 
+    uint64_t optional_uint = 0;
+    error = get_optional_uint(&context, CBOR_KEY_SNAPSHOT_ID, &optional_uint);
+    if (error == QCBOR_SUCCESS) {
+        if (optional_uint == 0 || optional_uint > UINT32_MAX) return -1;
+        out_msg->snapshot_id = (uint32_t)optional_uint;
+        out_msg->has_snapshot_id = 1;
+    } else if (error != QCBOR_ERR_LABEL_NOT_FOUND) return -1;
+
+    error = get_optional_uint(&context, CBOR_KEY_SEQUENCE, &optional_uint);
+    if (error == QCBOR_SUCCESS) {
+        if (optional_uint > UINT16_MAX) return -1;
+        out_msg->sequence = (uint16_t)optional_uint;
+        out_msg->has_sequence = 1;
+    } else if (error != QCBOR_ERR_LABEL_NOT_FOUND) return -1;
+
+    error = get_optional_uint(&context, CBOR_KEY_TOTAL, &optional_uint);
+    if (error == QCBOR_SUCCESS) {
+        if (optional_uint > UINT16_MAX) return -1;
+        out_msg->total = (uint16_t)optional_uint;
+        out_msg->has_total = 1;
+    } else if (error != QCBOR_ERR_LABEL_NOT_FOUND) return -1;
+
+    error = get_optional_uint(&context, CBOR_KEY_VALUE_TYPE, &optional_uint);
+    if (error == QCBOR_SUCCESS) {
+        if (optional_uint > UINT8_MAX) return -1;
+        out_msg->value_type = (uint8_t)optional_uint;
+        out_msg->has_value_type = 1;
+    } else if (error != QCBOR_ERR_LABEL_NOT_FOUND) return -1;
+
+    error = get_optional_uint(&context, CBOR_KEY_CAPABILITY_FLAGS,
+                              &optional_uint);
+    if (error == QCBOR_SUCCESS) {
+        if (optional_uint > UINT8_MAX) return -1;
+        out_msg->capability_flags = (uint8_t)optional_uint;
+        out_msg->has_capability_flags = 1;
+    } else if (error != QCBOR_ERR_LABEL_NOT_FOUND) return -1;
+
+    int64_t optional_int = 0;
+    error = get_optional_int(&context, CBOR_KEY_MIN_VALUE, &optional_int);
+    if (error == QCBOR_SUCCESS) {
+        if (optional_int < INT32_MIN || optional_int > INT32_MAX) return -1;
+        out_msg->min_value = (int32_t)optional_int;
+        out_msg->has_min_value = 1;
+    } else if (error != QCBOR_ERR_LABEL_NOT_FOUND) return -1;
+
+    error = get_optional_int(&context, CBOR_KEY_MAX_VALUE, &optional_int);
+    if (error == QCBOR_SUCCESS) {
+        if (optional_int < INT32_MIN || optional_int > INT32_MAX) return -1;
+        out_msg->max_value = (int32_t)optional_int;
+        out_msg->has_max_value = 1;
+    } else if (error != QCBOR_ERR_LABEL_NOT_FOUND) return -1;
+
+    error = get_optional_uint(&context, CBOR_KEY_STEP, &optional_uint);
+    if (error == QCBOR_SUCCESS) {
+        if (optional_uint > UINT32_MAX) return -1;
+        out_msg->step = (uint32_t)optional_uint;
+        out_msg->has_step = 1;
+    } else if (error != QCBOR_ERR_LABEL_NOT_FOUND) return -1;
+
+    error = get_optional_text(&context, CBOR_KEY_CAPABILITY_LABEL,
+                              &optional_value);
+    if (error == QCBOR_SUCCESS) {
+        if (copy_text(optional_value, out_msg->capability_label,
+                      sizeof(out_msg->capability_label), true) != 0) return -1;
+    } else if (error != QCBOR_ERR_LABEL_NOT_FOUND) return -1;
+
+    error = get_optional_text(&context, CBOR_KEY_CAPABILITY_UNIT,
+                              &optional_value);
+    if (error == QCBOR_SUCCESS) {
+        if (copy_text(optional_value, out_msg->capability_unit,
+                      sizeof(out_msg->capability_unit), true) != 0) return -1;
+    } else if (error != QCBOR_ERR_LABEL_NOT_FOUND) return -1;
+
+    error = get_optional_uint(&context, CBOR_KEY_CAPABILITY_REVISION,
+                              &optional_uint);
+    if (error == QCBOR_SUCCESS) {
+        if (optional_uint > UINT32_MAX) return -1;
+        out_msg->capability_revision = (uint32_t)optional_uint;
+        out_msg->has_capability_revision = 1;
+    } else if (error != QCBOR_ERR_LABEL_NOT_FOUND) return -1;
+
     QCBORDecode_ExitMap(&context);
     if (QCBORDecode_Finish(&context) != QCBOR_SUCCESS) return -1;
 
     out_msg->protocol_version = (uint8_t)protocol_version;
     out_msg->int_value = (int)int_value;
     out_msg->bool_value = bool_value;
+    out_msg->has_int_value = 1;
+    out_msg->has_bool_value = 1;
     return 0;
 }
 
@@ -265,6 +421,28 @@ int cbor_codec_msg_to_json(const gw_message_t *msg, char *out_json, size_t out_j
         cJSON_AddStringToObject(root, "ble_addr", address);
         cJSON_AddNumberToObject(root, "ble_addr_type", msg->ble_addr_type);
     }
+    if (msg->has_snapshot_id) {
+        cJSON_AddNumberToObject(root, "snapshot_id", msg->snapshot_id);
+    }
+    if (msg->has_sequence) cJSON_AddNumberToObject(root, "sequence", msg->sequence);
+    if (msg->has_total) cJSON_AddNumberToObject(root, "total", msg->total);
+    if (msg->has_value_type) cJSON_AddNumberToObject(root, "value_type", msg->value_type);
+    if (msg->has_capability_flags) {
+        cJSON_AddNumberToObject(root, "capability_flags", msg->capability_flags);
+    }
+    if (msg->has_min_value) cJSON_AddNumberToObject(root, "min_value", msg->min_value);
+    if (msg->has_max_value) cJSON_AddNumberToObject(root, "max_value", msg->max_value);
+    if (msg->has_step) cJSON_AddNumberToObject(root, "step", msg->step);
+    if (msg->capability_label[0] != '\0') {
+        cJSON_AddStringToObject(root, "capability_label", msg->capability_label);
+    }
+    if (msg->capability_unit[0] != '\0') {
+        cJSON_AddStringToObject(root, "capability_unit", msg->capability_unit);
+    }
+    if (msg->has_capability_revision) {
+        cJSON_AddNumberToObject(root, "capability_revision",
+                               msg->capability_revision);
+    }
 
     bool printed = cJSON_PrintPreallocated(root, out_json, (int)out_json_cap, false);
     cJSON_Delete(root);
@@ -281,6 +459,23 @@ static int copy_json_string(const cJSON *root, const char *key, char *destinatio
         return -1;
     }
     strlcpy(destination, item->valuestring, capacity);
+    return 0;
+}
+
+static int optional_json_integer(const cJSON *root, const char *key,
+                                 int64_t minimum, uint64_t maximum,
+                                 int64_t *value, bool *present)
+{
+    const cJSON *item = cJSON_GetObjectItemCaseSensitive(root, key);
+    *present = item != NULL;
+    if (item == NULL) return 0;
+    if (!cJSON_IsNumber(item) || item->valuedouble < (double)minimum ||
+        item->valuedouble > (double)maximum) {
+        return -1;
+    }
+    int64_t integer = (int64_t)item->valuedouble;
+    if (item->valuedouble != (double)integer) return -1;
+    *value = integer;
     return 0;
 }
 
@@ -343,12 +538,78 @@ int cbor_codec_json_to_msg(const char *json_str, gw_message_t *out_msg)
             goto cleanup;
         }
         out_msg->int_value = int_item->valueint;
+        out_msg->has_int_value = 1;
     }
 
     const cJSON *bool_item = cJSON_GetObjectItemCaseSensitive(root, "bool_value");
     if (bool_item != NULL) {
         if (!cJSON_IsBool(bool_item)) goto cleanup;
         out_msg->bool_value = cJSON_IsTrue(bool_item);
+        out_msg->has_bool_value = 1;
+    }
+
+    int64_t numeric = 0;
+    bool present = false;
+    if (optional_json_integer(root, "snapshot_id", 1, UINT32_MAX,
+                              &numeric, &present) != 0) goto cleanup;
+    if (present) {
+        out_msg->snapshot_id = (uint32_t)numeric;
+        out_msg->has_snapshot_id = 1;
+    }
+    if (optional_json_integer(root, "sequence", 0, UINT16_MAX,
+                              &numeric, &present) != 0) goto cleanup;
+    if (present) {
+        out_msg->sequence = (uint16_t)numeric;
+        out_msg->has_sequence = 1;
+    }
+    if (optional_json_integer(root, "total", 0, UINT16_MAX,
+                              &numeric, &present) != 0) goto cleanup;
+    if (present) {
+        out_msg->total = (uint16_t)numeric;
+        out_msg->has_total = 1;
+    }
+    if (optional_json_integer(root, "value_type", 0, UINT8_MAX,
+                              &numeric, &present) != 0) goto cleanup;
+    if (present) {
+        out_msg->value_type = (uint8_t)numeric;
+        out_msg->has_value_type = 1;
+    }
+    if (optional_json_integer(root, "capability_flags", 0, UINT8_MAX,
+                              &numeric, &present) != 0) goto cleanup;
+    if (present) {
+        out_msg->capability_flags = (uint8_t)numeric;
+        out_msg->has_capability_flags = 1;
+    }
+    if (optional_json_integer(root, "min_value", INT32_MIN, INT32_MAX,
+                              &numeric, &present) != 0) goto cleanup;
+    if (present) {
+        out_msg->min_value = (int32_t)numeric;
+        out_msg->has_min_value = 1;
+    }
+    if (optional_json_integer(root, "max_value", INT32_MIN, INT32_MAX,
+                              &numeric, &present) != 0) goto cleanup;
+    if (present) {
+        out_msg->max_value = (int32_t)numeric;
+        out_msg->has_max_value = 1;
+    }
+    if (optional_json_integer(root, "step", 0, UINT32_MAX,
+                              &numeric, &present) != 0) goto cleanup;
+    if (present) {
+        out_msg->step = (uint32_t)numeric;
+        out_msg->has_step = 1;
+    }
+    if (copy_json_string(root, "capability_label",
+                         out_msg->capability_label,
+                         sizeof(out_msg->capability_label), false) < 0 ||
+        copy_json_string(root, "capability_unit", out_msg->capability_unit,
+                         sizeof(out_msg->capability_unit), false) < 0) {
+        goto cleanup;
+    }
+    if (optional_json_integer(root, "capability_revision", 0, UINT32_MAX,
+                              &numeric, &present) != 0) goto cleanup;
+    if (present) {
+        out_msg->capability_revision = (uint32_t)numeric;
+        out_msg->has_capability_revision = 1;
     }
 
     const cJSON *address_item = cJSON_GetObjectItemCaseSensitive(root, "ble_addr");

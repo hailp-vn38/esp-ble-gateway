@@ -108,6 +108,7 @@ TEST_CASE("dispatcher registers default commands", "[dispatcher]")
     TEST_ASSERT_TRUE(command_dispatcher_is_registered("edit_device"));
     TEST_ASSERT_TRUE(command_dispatcher_is_registered("list_devices"));
     TEST_ASSERT_TRUE(command_dispatcher_is_registered("get_status"));
+    TEST_ASSERT_TRUE(command_dispatcher_is_registered("list_device_capabilities"));
     TEST_ASSERT_FALSE(command_dispatcher_is_registered("does_not_exist"));
 }
 
@@ -153,7 +154,7 @@ TEST_CASE("dispatcher copy out registered names", "[dispatcher]")
     char names[DISPATCHER_MAX_COMMANDS][GW_MSG_COMMAND_LEN];
     int count = command_dispatcher_get_registered_names(names,
                                                         DISPATCHER_MAX_COMMANDS);
-    TEST_ASSERT_EQUAL_INT(5, count);
+    TEST_ASSERT_EQUAL_INT(6, count);
     // Mutating caller copies must not affect the registry.
     names[0][0] = 'X';
     TEST_ASSERT_TRUE(command_dispatcher_is_registered("add_device"));
@@ -284,11 +285,21 @@ TEST_CASE("device command completes with matching ACK", "[dispatcher]")
     dispatch_result_t result;
     command_dispatcher_handle(&message, &result);
     TEST_ASSERT_TRUE(dispatch_result_is_ok(&result));
-    TEST_ASSERT_EQUAL_INT(GW_PROTOCOL_VERSION, s_captured_wire.protocol_version);
+    TEST_ASSERT_EQUAL_INT(2, s_captured_wire.protocol_version);
     TEST_ASSERT_TRUE(s_captured_wire.has_request_id);
     TEST_ASSERT_NOT_EQUAL(0, s_captured_wire.request_id);
     // The caller's message stays immutable.
     TEST_ASSERT_FALSE(message.has_request_id);
+}
+
+TEST_CASE("capability discovery query uses protocol v3", "[dispatcher]")
+{
+    fresh_frozen_dispatcher();
+    dispatch_result_t result;
+    dispatch_device_command("relay-1", "describe_capabilities", &result);
+    TEST_ASSERT_TRUE(dispatch_result_is_ok(&result));
+    TEST_ASSERT_EQUAL_INT(GW_PROTOCOL_VERSION,
+                          s_captured_wire.protocol_version);
 }
 
 TEST_CASE("device command times out without ACK and releases slot",

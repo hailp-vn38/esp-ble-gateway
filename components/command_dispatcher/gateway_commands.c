@@ -11,6 +11,7 @@
 #include "command_dispatcher.h"
 #include "command_dispatcher_internal.h"
 #include "device_store.h"
+#include "device_capabilities.h"
 
 static const char *TAG = "dispatcher";
 
@@ -146,6 +147,12 @@ static void cmd_delete_device(const gw_message_t *msg, dispatch_result_t *result
         return;
     }
 
+    esp_err_t capability_rc = device_capabilities_forget(msg->device_id);
+    if (capability_rc != ESP_OK) {
+        ESP_LOGW(TAG, "[%s] device deleted but capability cache cleanup failed: %s",
+                 msg->device_id, esp_err_to_name(capability_rc));
+    }
+
     command_dispatcher_set_text_result(result, DISPATCH_STATUS_OK,
                                        "Device %s deleted", msg->device_id);
 }
@@ -260,13 +267,98 @@ static void cmd_get_status(const gw_message_t *msg, dispatch_result_t *result)
     command_dispatcher_set_json_result(result, DISPATCH_STATUS_OK, payload);
 }
 
+static void cmd_list_device_capabilities(const gw_message_t *msg,
+                                         dispatch_result_t *result)
+{
+    if (!msg->has_device_id || msg->device_id[0] == '\0') {
+        command_dispatcher_set_text_result(result,
+                                           DISPATCH_STATUS_INVALID_ARGUMENT,
+                                           "Missing device_id");
+        return;
+    }
+
+    device_capability_snapshot_t snapshot;
+    esp_err_t error = device_capabilities_get(msg->device_id, &snapshot);
+    if (error == ESP_ERR_NOT_FOUND) {
+        command_dispatcher_set_text_result(result, DISPATCH_STATUS_NOT_FOUND,
+                                           "Device %s not found",
+                                           msg->device_id);
+        return;
+    }
+    if (error != ESP_OK) {
+        command_dispatcher_set_text_result(result,
+                                           DISPATCH_STATUS_INTERNAL_ERROR,
+                                           "Could not read device capabilities");
+        return;
+    }
+
+    cJSON *root = cJSON_CreateObject();
+    cJSON *commands = cJSON_CreateArray();
+    if (root == NULL || commands == NULL) {
+        cJSON_Delete(root);
+        cJSON_Delete(commands);
+        command_dispatcher_set_text_result(result,
+                                           DISPATCH_STATUS_INTERNAL_ERROR,
+                                           "Out of memory");
+        return;
+    }
+    cJSON_AddStringToObject(root, "device_id", snapshot.device_id);
+    cJSON_AddStringToObject(root, "state",
+                           device_capabilities_state_name(snapshot.state));
+    cJSON_AddNumberToObject(root, "revision", snapshot.revision);
+    cJSON_AddBoolToObject(root, "stale",
+                         snapshot.state == DEVICE_CAP_STATE_STALE);
+    cJSON_AddItemToObject(root, "commands", commands);
+
+    for (size_t i = 0; i < snapshot.count; i++) {
+        const device_capability_t *capability = &snapshot.items[i];
+        cJSON *item = cJSON_CreateObject();
+        if (item == NULL) continue;
+        cJSON_AddStringToObject(item, "name", capability->command);
+        cJSON_AddStringToObject(item, "label", capability->label);
+        const char *value_type =
+            capability->value_type == DEVICE_CAP_VALUE_BOOL
+                ? "boolean"
+                : capability->value_type == DEVICE_CAP_VALUE_INT ? "integer"
+                                                                  : "none";
+        cJSON_AddStringToObject(item, "value_type", value_type);
+        cJSON_AddBoolToObject(item, "idempotent",
+                              (capability->flags &
+                               DEVICE_CAP_FLAG_IDEMPOTENT) != 0);
+        cJSON_AddBoolToObject(item, "destructive",
+                              (capability->flags &
+                               DEVICE_CAP_FLAG_DESTRUCTIVE) != 0);
+        if (capability->value_type == DEVICE_CAP_VALUE_INT) {
+            cJSON_AddNumberToObject(item, "minimum", capability->min_value);
+            cJSON_AddNumberToObject(item, "maximum", capability->max_value);
+            cJSON_AddNumberToObject(item, "step", capability->step);
+            cJSON_AddStringToObject(item, "unit", capability->unit);
+        }
+        cJSON_AddItemToArray(commands, item);
+    }
+
+    bool printed = cJSON_PrintPreallocated(root, result->payload,
+                                           sizeof(result->payload), false);
+    cJSON_Delete(root);
+    if (!printed) {
+        command_dispatcher_set_text_result(result,
+                                           DISPATCH_STATUS_INTERNAL_ERROR,
+                                           "Capability list is too large");
+        return;
+    }
+    result->status = DISPATCH_STATUS_OK;
+    result->format = DISPATCH_RESULT_JSON;
+}
+
 int gateway_commands_register_defaults(void)
 {
     if (command_registry_register("add_device", cmd_add_device) != 0 ||
         command_registry_register("delete_device", cmd_delete_device) != 0 ||
         command_registry_register("edit_device", cmd_edit_device) != 0 ||
         command_registry_register("list_devices", cmd_list_devices) != 0 ||
-        command_registry_register("get_status", cmd_get_status) != 0) {
+        command_registry_register("get_status", cmd_get_status) != 0 ||
+        command_registry_register("list_device_capabilities",
+                                  cmd_list_device_capabilities) != 0) {
         return -1;
     }
     return 0;

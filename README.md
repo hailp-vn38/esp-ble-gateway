@@ -16,6 +16,8 @@ thiết bị DIY và cung cấp Web UI, REST API cùng endpoint JSON-RPC qua Wi-
 - Message BLE là CBOR chuẩn qua QCBOR 1.6.1; JSON dùng cJSON 1.7.19~2.
 - Dispatcher có registry động, định tuyến gateway/device command và chờ ACK
   riêng cho từng thiết bị.
+- Capability Discovery tự hỏi peripheral sau khi BLE session READY, lưu snapshot
+  command vào NVS và validate kiểu/range argument trước khi gửi.
 - Web UI quản lý Wi-Fi, quét BLE, CRUD thiết bị, gửi lệnh và xem log/status.
 - Dashboard không chồng request định kỳ: trạng thái/thiết bị cập nhật mỗi 5 giây,
   log mỗi 10 giây; lệnh thiết bị chạy trên worker riêng để không khóa HTTP task.
@@ -31,8 +33,11 @@ Thiết bị con cần quảng bá và triển khai các UUID 16-bit sau:
 - Status characteristic (notify): `0xABF2`
 - CCCD chuẩn: `0x2902`
 
-Gateway dùng protocol version `1`. Payload CBOR là map có key số để giảm kích
-thước; schema nằm trong `components/cbor_codec/cbor_codec.c`.
+Gateway dùng protocol version `3` và vẫn nhận message v1/v2. Payload CBOR là map
+có key số để giảm kích thước; schema nằm trong
+`components/cbor_codec/cbor_codec.c`. Peripheral v3 nhận command reserved
+`describe_capabilities`, rồi notify `capabilities_begin`, các
+`capability_item`, `capabilities_end` và ACK cuối cùng.
 
 ## Build và flash
 
@@ -98,6 +103,8 @@ curl http://192.168.4.1/api/wifi
 | `PUT` | `/api/devices` | Sửa tên hoặc loại thiết bị |
 | `DELETE` | `/api/devices?device_id=...` | Xóa thiết bị |
 | `POST` | `/api/command` | Gửi lệnh tới thiết bị và chờ ACK |
+| `GET` | `/api/capabilities?device_id=...` | Capability snapshot của thiết bị |
+| `POST` | `/api/capabilities/refresh` | Yêu cầu discovery lại capability |
 | `GET` | `/api/logs` | 64 circular log mới nhất |
 | `POST` | `/api/wifi/scan` | Bắt đầu quét Wi-Fi nền; chỉ provisioning |
 | `GET` | `/api/wifi/scan` | Trạng thái và kết quả Wi-Fi scan đã cache |
@@ -171,6 +178,7 @@ triển khai service `0xABF0`.
 ```text
 main/                         Khởi động và nối các module
 components/device_store/      NVS device registry
+components/device_capabilities/ Capability cache, discovery và validation
 components/wifi_provisioning/ Wi-Fi STA/SoftAP và captive DNS
 components/ble_central/       NimBLE Central/GATT Client
 components/cbor_codec/        QCBOR và JSON codec

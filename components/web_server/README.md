@@ -8,7 +8,7 @@ Lớp HTTP của gateway: Web UI nhúng + REST + captive portal. Chạy `esp_htt
 web_server.c        # start server 2 chế độ; route capacity constants
 web_http.c/.h       # helper chung: JSON/error/body/route registration
 web_assets.c        # assets nhúng (EMBED_FILES), CSP/security headers, captive redirect + 404 handler
-web_gateway_api.c   # /api/devices, /api/command
+web_gateway_api.c   # /api/devices, /api/command, /api/capabilities*
 web_system_api.c    # /api/status, /api/logs, /api/restart
 web_ble_api.c       # /api/ble/scan (esp_timer + deadline guard)
 web_wifi_api.c      # /api/wifi*, chỉ đăng ký ở provisioning mode
@@ -33,6 +33,8 @@ Server config: Gateway = 21 URI slots / stack 12288 · Provisioning = 14 / 8192.
 | `POST /api/devices` / `PUT` | add/edit device — async executor |
 | `DELETE /api/devices?device_id=` | Xóa device — async executor |
 | `POST /api/command` | Gửi device_command tới BLE peripheral — async executor |
+| `GET /api/capabilities?device_id=` | Đọc capability snapshot |
+| `POST /api/capabilities/refresh` | Enqueue discovery lại capability |
 | `GET /api/status` | Snapshot từ `gateway_status` + block `"executor"` metrics |
 | `GET /api/logs` | Log gần đây từ `log_buffer` |
 | `POST /api/restart` | Schedule restart sau 1s |
@@ -58,7 +60,7 @@ Captive 404 handler chỉ được đăng ký trong `web_server_start_provisioni
  "error": {"code": "device_not_connected"}}
 ```
 
-`error.code` chỉ xuất hiện khi thất bại: `invalid_request`, `payload_too_large`, `request_timeout`, `device_not_found`, `device_busy`, `device_not_connected`, `command_timeout`, `transport_error`, `device_error`, `internal_error`.
+`error.code` chỉ xuất hiện khi thất bại: `invalid_request`, `payload_too_large`, `request_timeout`, `device_not_found`, `device_busy`, `device_not_connected`, `unsupported_command`, `invalid_command_argument`, `command_timeout`, `transport_error`, `device_error`, `internal_error`.
 
 HTTP mapping: OK→200 · invalid→400 · not_found→404 · busy→409 · timeout→504 · not_connected/transport/device_error→502 · queue-full→503.
 

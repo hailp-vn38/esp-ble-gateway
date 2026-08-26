@@ -11,7 +11,7 @@
 static const char *TAG = "web_server";
 
 // Route budget (Plan v2 §36-§40): current routes vs configured slots.
-// Gateway: assets 5 + gateway API 5 + system API 3 + BLE API 3 + MCP 1 = 17.
+// Gateway: assets 5 + gateway API 7 + system API 3 + BLE API 3 + MCP 1 = 19.
 #define WEB_GATEWAY_MAX_URI_HANDLERS 21
 #define WEB_GATEWAY_STACK_SIZE       12288
 

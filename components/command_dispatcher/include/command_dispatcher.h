@@ -33,6 +33,8 @@ typedef enum {
     // Appended (values preserved for on-wire numeric compatibility):
     DISPATCH_STATUS_CONFLICT,
     DISPATCH_STATUS_RESOURCE_EXHAUSTED,
+    DISPATCH_STATUS_UNSUPPORTED_COMMAND,
+    DISPATCH_STATUS_INVALID_COMMAND_ARGUMENT,
 } dispatch_status_t;
 
 typedef struct {

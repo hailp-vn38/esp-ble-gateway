@@ -50,7 +50,8 @@ components/command_dispatcher/
 
 ## 3. Protocol message (`cbor_codec.h`)
 
-Dispatcher dùng `gw_message_t` của component `cbor_codec`, **protocol version 2**:
+Dispatcher dùng `gw_message_t` của component `cbor_codec`, **protocol version 3**
+(vẫn nhận v1/v2):
 
 ```c
 typedef struct {
@@ -81,6 +82,10 @@ Message type trên wire:
 | `device_event` | Telemetry/notification | Không bao giờ complete pending command |
 
 > ⚠️ Peripheral firmware phải hỗ trợ protocol v2 (echo `request_id`). Peripheral v1 sẽ bị log `[ACK_UNMATCHED]`.
+
+Protocol v3 bổ sung capability discovery. Khi snapshot đã biết, device command
+được kiểm tra qua `device_capabilities` trước khi cấp pending request; command
+không quảng bá hoặc argument sai type/range bị từ chối trước BLE write.
 
 ---
 
@@ -198,6 +203,7 @@ Kết quả text dạng: `Device <id> acknowledged/rejected '<command>'`.
 | `edit_device` | OK / NOT_FOUND | Text | Cần `name` hoặc `device_type` |
 | `list_devices` | OK | JSON array | Payload quá lớn → INTERNAL_ERROR |
 | `get_status` | OK | JSON | device_count / connected_count / ble_link_count |
+| `list_device_capabilities` | OK | JSON | Snapshot command do peripheral quảng bá |
 
 Lifecycle delete không để orphan bond: peer identity được snapshot **trước khi** xóa store entry, BLE layer không quay lại lookup store; lỗi xóa bond thực tế được propagate lên caller.
 
