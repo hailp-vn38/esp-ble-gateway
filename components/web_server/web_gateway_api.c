@@ -9,22 +9,20 @@
 #include "cJSON.h"
 #include "esp_log.h"
 #include "freertos/FreeRTOS.h"
-#include "freertos/semphr.h"
 #include "freertos/task.h"
 
 #include "command_dispatcher.h"
+#include "command_executor.h"
 #include "web_http.h"
 
-#define COMMAND_WORKER_COUNT 3
-#define COMMAND_WORKER_STACK 8192
-
 static const char *TAG = "web_gateway_api";
-static SemaphoreHandle_t s_command_slots;
 
 typedef struct {
     httpd_req_t *request;
-    gw_message_t message;
 } command_async_context_t;
+
+static esp_err_t dispatch_message_async(httpd_req_t *request,
+                                        const gw_message_t *message);
 
 static int hex_value(char value)
 {
@@ -77,6 +75,20 @@ static const char *http_status_for(const dispatch_result_t *result)
     }
 }
 
+static const char *error_code_for(const dispatch_result_t *result)
+{
+    switch (result->status) {
+    case DISPATCH_STATUS_INVALID_ARGUMENT: return "invalid_request";
+    case DISPATCH_STATUS_NOT_FOUND: return "device_not_found";
+    case DISPATCH_STATUS_BUSY: return "device_busy";
+    case DISPATCH_STATUS_TIMEOUT: return "command_timeout";
+    case DISPATCH_STATUS_NOT_CONNECTED: return "device_not_connected";
+    case DISPATCH_STATUS_TRANSPORT_ERROR: return "transport_error";
+    case DISPATCH_STATUS_DEVICE_ERROR: return "device_error";
+    default: return "internal_error";
+    }
+}
+
 static esp_err_t send_dispatch_result(httpd_req_t *request,
                                       const dispatch_result_t *result)
 {
@@ -90,6 +102,15 @@ static esp_err_t send_dispatch_result(httpd_req_t *request,
         cJSON_AddStringToObject(
             json, "message",
             result->format == DISPATCH_RESULT_TEXT ? result->payload : "");
+        if (!ok) {
+            // Machine-readable code (Plan v2 §51-§52); message stays put for
+            // backward compatibility with the dashboard.
+            cJSON *error = cJSON_AddObjectToObject(json, "error");
+            if (error != NULL) {
+                cJSON_AddStringToObject(error, "code",
+                                        error_code_for(result));
+            }
+        }
         if (result->format == DISPATCH_RESULT_JSON) {
             cJSON *data = cJSON_Parse(result->payload);
             if (data != NULL) cJSON_AddItemToObject(json, "data", data);
@@ -177,10 +198,12 @@ static int fill_device_message(const cJSON *json, gw_message_t *message,
 
 static esp_err_t devices_write_handler(httpd_req_t *request)
 {
-    char body[WEB_REQUEST_BODY_MAX_LEN];
-    cJSON *json = web_parse_request_json(request, body, sizeof(body));
+    char body[WEB_DEVICE_BODY_MAX_LEN];
+    web_body_status_t body_status;
+    cJSON *json = web_parse_request_json(request, body, sizeof(body),
+                                         &body_status);
     if (json == NULL) {
-        return web_send_api_error(request, "400 Bad Request", "Invalid JSON body");
+        return web_send_body_error(request, body_status);
     }
 
     const char *command =
@@ -190,13 +213,12 @@ static esp_err_t devices_write_handler(httpd_req_t *request)
                                            request->method == HTTP_POST);
     cJSON_Delete(json);
     if (parse_result != 0) {
-        return web_send_api_error(request, "400 Bad Request",
-                                  "Invalid device fields");
+        return web_send_api_error_code(request, "400 Bad Request",
+                                        "Invalid device fields",
+                                        "invalid_request");
     }
 
-    dispatch_result_t result;
-    command_dispatcher_handle(&message, &result);
-    return send_dispatch_result(request, &result);
+    return dispatch_message_async(request, &message);
 }
 
 static esp_err_t devices_delete_handler(httpd_req_t *request)
@@ -207,7 +229,8 @@ static esp_err_t devices_delete_handler(httpd_req_t *request)
         httpd_query_key_value(query, "device_id", device_id,
                               sizeof(device_id)) != ESP_OK ||
         device_id[0] == '\0') {
-        return web_send_api_error(request, "400 Bad Request", "Missing device_id");
+        return web_send_api_error_code(request, "400 Bad Request", "Missing device_id",
+                                        "invalid_request");
     }
 
     gw_message_t message = {
@@ -218,31 +241,58 @@ static esp_err_t devices_delete_handler(httpd_req_t *request)
     strlcpy(message.command, "delete_device", sizeof(message.command));
     strlcpy(message.device_id, device_id, sizeof(message.device_id));
 
-    dispatch_result_t result;
-    command_dispatcher_handle(&message, &result);
-    return send_dispatch_result(request, &result);
+    return dispatch_message_async(request, &message);
 }
 
-static void command_http_worker(void *arg)
+static void command_completion(const dispatch_result_t *result, void *arg)
 {
     command_async_context_t *context = arg;
-    dispatch_result_t result;
-    command_dispatcher_handle(&context->message, &result);
-    send_dispatch_result(context->request, &result);
+    send_dispatch_result(context->request, result);
     if (httpd_req_async_handler_complete(context->request) != ESP_OK) {
         ESP_LOGW(TAG, "Could not complete asynchronous command request");
     }
     free(context);
-    xSemaphoreGive(s_command_slots);
-    vTaskDelete(NULL);
+}
+
+// Shared async dispatch path for every mutating endpoint (Plan v2 §43):
+// the HTTPD task only parses and enqueues; executor workers run the
+// dispatcher so BLE ACK waits never block HTTP.
+static esp_err_t dispatch_message_async(httpd_req_t *request,
+                                        const gw_message_t *message)
+{
+    command_async_context_t *context = malloc(sizeof(*context));
+    if (context == NULL) {
+        return web_send_api_error(request, "503 Service Unavailable",
+                                  "Could not allocate command context");
+    }
+
+    esp_err_t error = httpd_req_async_handler_begin(request, &context->request);
+    if (error != ESP_OK) {
+        free(context);
+        return web_send_api_error(request, "503 Service Unavailable",
+                                  "Could not start asynchronous dispatch");
+    }
+
+    // Queue admission failure answers 503 inline; device-level BUSY still
+    // comes back later as 409 via completion.
+    if (command_executor_submit(message, command_completion, context) !=
+        ESP_OK) {
+        web_send_api_error(context->request, "503 Service Unavailable",
+                           "Command executor is full");
+        httpd_req_async_handler_complete(context->request);
+        free(context);
+    }
+    return ESP_OK;
 }
 
 static esp_err_t command_post_handler(httpd_req_t *request)
 {
-    char body[WEB_REQUEST_BODY_MAX_LEN];
-    cJSON *json = web_parse_request_json(request, body, sizeof(body));
+    char body[WEB_COMMAND_BODY_MAX_LEN];
+    web_body_status_t body_status;
+    cJSON *json = web_parse_request_json(request, body, sizeof(body),
+                                         &body_status);
     if (json == NULL) {
-        return web_send_api_error(request, "400 Bad Request", "Invalid JSON body");
+        return web_send_body_error(request, body_status);
     }
 
     const char *device_id = web_get_json_string(
@@ -251,8 +301,9 @@ static esp_err_t command_post_handler(httpd_req_t *request)
         json, "command", GW_MSG_COMMAND_LEN, true);
     if (device_id == NULL || command == NULL) {
         cJSON_Delete(json);
-        return web_send_api_error(request, "400 Bad Request",
-                                  "device_id and command are required");
+        return web_send_api_error_code(request, "400 Bad Request",
+                                  "device_id and command are required",
+                                  "invalid_request");
     }
 
     gw_message_t message = {
@@ -268,8 +319,9 @@ static esp_err_t command_post_handler(httpd_req_t *request)
         if (!cJSON_IsNumber(int_value) ||
             int_value->valuedouble != (double)int_value->valueint) {
             cJSON_Delete(json);
-            return web_send_api_error(request, "400 Bad Request",
-                                      "int_value must be an integer");
+            return web_send_api_error_code(request, "400 Bad Request",
+                                      "int_value must be an integer",
+                                      "invalid_request");
         }
         message.int_value = int_value->valueint;
     }
@@ -278,52 +330,20 @@ static esp_err_t command_post_handler(httpd_req_t *request)
     if (bool_value != NULL) {
         if (!cJSON_IsBool(bool_value)) {
             cJSON_Delete(json);
-            return web_send_api_error(request, "400 Bad Request",
-                                      "bool_value must be boolean");
+            return web_send_api_error_code(request, "400 Bad Request",
+                                      "bool_value must be boolean",
+                                      "invalid_request");
         }
         message.bool_value = cJSON_IsTrue(bool_value);
     }
     cJSON_Delete(json);
 
-    if (s_command_slots == NULL || xSemaphoreTake(s_command_slots, 0) != pdTRUE) {
-        return web_send_api_error(request, "503 Service Unavailable",
-                                  "All command workers are busy");
-    }
-
-    command_async_context_t *context = calloc(1, sizeof(*context));
-    if (context == NULL) {
-        xSemaphoreGive(s_command_slots);
-        return web_send_api_error(request, "503 Service Unavailable",
-                                  "Could not allocate command worker");
-    }
-    context->message = message;
-
-    esp_err_t error = httpd_req_async_handler_begin(request, &context->request);
-    if (error != ESP_OK) {
-        free(context);
-        xSemaphoreGive(s_command_slots);
-        return web_send_api_error(request, "503 Service Unavailable",
-                                  "Could not start asynchronous command");
-    }
-
-    if (xTaskCreate(command_http_worker, "http_command", COMMAND_WORKER_STACK,
-                    context, 5, NULL) != pdPASS) {
-        web_send_api_error(context->request, "503 Service Unavailable",
-                           "Could not start command worker");
-        httpd_req_async_handler_complete(context->request);
-        free(context);
-        xSemaphoreGive(s_command_slots);
-    }
-    return ESP_OK;
+    return dispatch_message_async(request, &message);
 }
 
 esp_err_t web_gateway_api_init(void)
 {
-    if (s_command_slots == NULL) {
-        s_command_slots = xSemaphoreCreateCounting(COMMAND_WORKER_COUNT,
-                                                   COMMAND_WORKER_COUNT);
-    }
-    return s_command_slots != NULL ? ESP_OK : ESP_ERR_NO_MEM;
+    return ESP_OK;
 }
 
 esp_err_t web_gateway_api_register(httpd_handle_t server)

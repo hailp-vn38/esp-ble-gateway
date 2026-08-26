@@ -4,6 +4,7 @@
 
 #include "ble_central.h"
 #include "command_dispatcher.h"
+#include "command_executor.h"
 #include "device_store.h"
 #include "log_buffer.h"
 #include "mcp_endpoint.h"
@@ -65,6 +66,10 @@ void app_main(void)
     }
     if (ble_central_start_reconnect_supervisor() != 0) {
         ESP_LOGE(TAG, "BLE reconnect supervisor could not be started");
+        return;
+    }
+    if (command_executor_init() != ESP_OK) {
+        ESP_LOGE(TAG, "Command executor initialization failed");
         return;
     }
 

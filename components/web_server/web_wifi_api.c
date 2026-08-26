@@ -244,10 +244,12 @@ static esp_err_t wifi_status_get_handler(httpd_req_t *request)
 
 static esp_err_t wifi_post_handler(httpd_req_t *request)
 {
-    char body[WEB_REQUEST_BODY_MAX_LEN];
-    cJSON *json = web_parse_request_json(request, body, sizeof(body));
+    char body[WEB_WIFI_BODY_MAX_LEN];
+    web_body_status_t body_status;
+    cJSON *json = web_parse_request_json(request, body, sizeof(body),
+                                         &body_status);
     if (json == NULL) {
-        return web_send_api_error(request, "400 Bad Request", "Invalid JSON body");
+        return web_send_body_error(request, body_status);
     }
 
     const char *ssid = web_get_json_string(json, "ssid", 33, true);

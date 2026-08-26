@@ -1,5 +1,6 @@
 #include "web_modules.h"
 
+#include <stdbool.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <string.h>
@@ -8,13 +9,13 @@
 #include "esp_timer.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/semphr.h"
-#include "freertos/task.h"
 
 #include "ble_central.h"
 #include "web_http.h"
 
 #define BLE_SCAN_CACHE_SIZE  20
 #define BLE_SCAN_DURATION_MS 6000
+#define SCAN_STATE_LOCK_TIMEOUT_MS 1000
 
 typedef struct {
     ble_scan_result_t result;
@@ -24,7 +25,9 @@ typedef struct {
 static scan_cache_entry_t s_scan_cache[BLE_SCAN_CACHE_SIZE];
 static int s_scan_cache_count;
 static SemaphoreHandle_t s_scan_mutex;
-static TaskHandle_t s_scan_stop_task;
+static esp_timer_handle_t s_scan_timer;
+static bool s_scan_active;
+static int64_t s_scan_deadline_us;
 
 static void format_ble_addr(const uint8_t address[6], char output[18])
 {
@@ -59,76 +62,72 @@ static void on_ble_scan_result(const ble_scan_result_t *result)
     xSemaphoreGive(s_scan_mutex);
 }
 
-static void ble_scan_stop_worker(void *arg)
+static void ble_scan_timeout_callback(void *arg)
 {
     (void)arg;
-    vTaskDelay(pdMS_TO_TICKS(BLE_SCAN_DURATION_MS));
-    ble_central_scan_stop();
-
-    if (xSemaphoreTake(s_scan_mutex, portMAX_DELAY) == pdTRUE) {
-        if (s_scan_stop_task == xTaskGetCurrentTaskHandle()) {
-            s_scan_stop_task = NULL;
+    bool expired = false;
+    if (xSemaphoreTake(s_scan_mutex, pdMS_TO_TICKS(100)) == pdTRUE) {
+        if (s_scan_active && esp_timer_get_time() >= s_scan_deadline_us) {
+            s_scan_active = false;
+            expired = true;
         }
         xSemaphoreGive(s_scan_mutex);
     }
-    vTaskDelete(NULL);
+    if (expired) ble_central_scan_stop();
 }
 
-static TaskHandle_t detach_stop_task(void)
+static cJSON *scan_state_response(bool success, bool scanning)
 {
-    TaskHandle_t task = s_scan_stop_task;
-    s_scan_stop_task = NULL;
-    return task;
+    cJSON *json = cJSON_CreateObject();
+    if (json != NULL) {
+        cJSON_AddBoolToObject(json, "success", success);
+        cJSON_AddBoolToObject(json, "scanning", scanning);
+    }
+    return json;
 }
 
 static esp_err_t ble_scan_post_handler(httpd_req_t *request)
 {
     if (ble_central_is_scanning()) {
-        cJSON *json = cJSON_CreateObject();
-        if (json != NULL) {
-            cJSON_AddBoolToObject(json, "success", true);
-            cJSON_AddBoolToObject(json, "scanning", true);
-        }
-        return web_send_json(request, json);
+        return web_send_json(request, scan_state_response(true, true));
     }
 
-    if (xSemaphoreTake(s_scan_mutex, pdMS_TO_TICKS(1000)) != pdTRUE) {
+    if (xSemaphoreTake(s_scan_mutex, pdMS_TO_TICKS(SCAN_STATE_LOCK_TIMEOUT_MS)) !=
+        pdTRUE) {
         return web_send_api_error(request, "503 Service Unavailable",
                                   "BLE scan state is temporarily unavailable");
     }
-    TaskHandle_t stale_stop_task = detach_stop_task();
     memset(s_scan_cache, 0, sizeof(s_scan_cache));
     s_scan_cache_count = 0;
+    s_scan_active = true;
+    s_scan_deadline_us =
+        esp_timer_get_time() + BLE_SCAN_DURATION_MS * 1000LL;
     xSemaphoreGive(s_scan_mutex);
-    if (stale_stop_task != NULL) vTaskDelete(stale_stop_task);
 
     if (ble_central_scan_start(on_ble_scan_result) != 0) {
+        if (xSemaphoreTake(s_scan_mutex,
+                           pdMS_TO_TICKS(SCAN_STATE_LOCK_TIMEOUT_MS)) == pdTRUE) {
+            s_scan_active = false;
+            xSemaphoreGive(s_scan_mutex);
+        }
         return web_send_api_error(request, "409 Conflict",
                                   "BLE host is not ready or busy");
     }
 
-    TaskHandle_t stop_task = NULL;
-    if (xTaskCreate(ble_scan_stop_worker, "ble_scan_stop", 2048, NULL, 4,
-                    &stop_task) != pdPASS) {
+    esp_timer_stop(s_scan_timer);
+    if (esp_timer_start_once(s_scan_timer,
+                             BLE_SCAN_DURATION_MS * 1000ULL) != ESP_OK) {
         ble_central_scan_stop();
+        if (xSemaphoreTake(s_scan_mutex,
+                           pdMS_TO_TICKS(SCAN_STATE_LOCK_TIMEOUT_MS)) == pdTRUE) {
+            s_scan_active = false;
+            xSemaphoreGive(s_scan_mutex);
+        }
         return web_send_api_error(request, "503 Service Unavailable",
                                   "Could not schedule BLE scan timeout");
     }
-    if (xSemaphoreTake(s_scan_mutex, pdMS_TO_TICKS(1000)) != pdTRUE) {
-        vTaskDelete(stop_task);
-        ble_central_scan_stop();
-        return web_send_api_error(request, "503 Service Unavailable",
-                                  "BLE scan state is temporarily unavailable");
-    }
-    s_scan_stop_task = stop_task;
-    xSemaphoreGive(s_scan_mutex);
 
-    cJSON *json = cJSON_CreateObject();
-    if (json != NULL) {
-        cJSON_AddBoolToObject(json, "success", true);
-        cJSON_AddBoolToObject(json, "scanning", true);
-    }
-    return web_send_json(request, json);
+    return web_send_json(request, scan_state_response(true, true));
 }
 
 static esp_err_t ble_scan_get_handler(httpd_req_t *request)
@@ -139,7 +138,8 @@ static esp_err_t ble_scan_get_handler(httpd_req_t *request)
     cJSON_AddBoolToObject(json, "scanning", ble_central_is_scanning());
     cJSON *devices = cJSON_AddArrayToObject(json, "devices");
 
-    if (xSemaphoreTake(s_scan_mutex, pdMS_TO_TICKS(1000)) == pdTRUE) {
+    if (xSemaphoreTake(s_scan_mutex, pdMS_TO_TICKS(SCAN_STATE_LOCK_TIMEOUT_MS)) ==
+        pdTRUE) {
         for (int i = 0; devices != NULL && i < s_scan_cache_count; i++) {
             char address[18];
             format_ble_addr(s_scan_cache[i].result.addr, address);
@@ -148,7 +148,7 @@ static esp_err_t ble_scan_get_handler(httpd_req_t *request)
             cJSON_AddStringToObject(item, "name", s_scan_cache[i].result.name);
             cJSON_AddStringToObject(item, "ble_addr", address);
             cJSON_AddNumberToObject(item, "addr_type",
-                                   s_scan_cache[i].result.addr_type);
+                                    s_scan_cache[i].result.addr_type);
             cJSON_AddNumberToObject(item, "rssi", s_scan_cache[i].result.rssi);
             cJSON_AddItemToArray(devices, item);
         }
@@ -159,29 +159,39 @@ static esp_err_t ble_scan_get_handler(httpd_req_t *request)
 
 static esp_err_t ble_scan_delete_handler(httpd_req_t *request)
 {
+    if (xSemaphoreTake(s_scan_mutex, pdMS_TO_TICKS(SCAN_STATE_LOCK_TIMEOUT_MS)) ==
+        pdTRUE) {
+        s_scan_active = false;
+        xSemaphoreGive(s_scan_mutex);
+    }
+    esp_timer_stop(s_scan_timer);
+
     if (ble_central_scan_stop() != 0) {
         return web_send_api_error(request, "409 Conflict",
                                   "BLE scan could not be stopped");
     }
 
-    if (xSemaphoreTake(s_scan_mutex, pdMS_TO_TICKS(1000)) == pdTRUE) {
-        TaskHandle_t stop_task = detach_stop_task();
-        xSemaphoreGive(s_scan_mutex);
-        if (stop_task != NULL) vTaskDelete(stop_task);
-    }
-
-    cJSON *json = cJSON_CreateObject();
-    if (json != NULL) {
-        cJSON_AddBoolToObject(json, "success", true);
-        cJSON_AddBoolToObject(json, "scanning", false);
-    }
-    return web_send_json(request, json);
+    return web_send_json(request, scan_state_response(true, false));
 }
 
 esp_err_t web_ble_api_init(void)
 {
     if (s_scan_mutex == NULL) s_scan_mutex = xSemaphoreCreateMutex();
-    return s_scan_mutex != NULL ? ESP_OK : ESP_ERR_NO_MEM;
+    if (s_scan_mutex == NULL) return ESP_ERR_NO_MEM;
+
+    if (s_scan_timer == NULL) {
+        const esp_timer_create_args_t timer_args = {
+            .callback = ble_scan_timeout_callback,
+            .arg = NULL,
+            .dispatch_method = ESP_TIMER_TASK,
+            .name = "ble_scan_timeout",
+            .skip_unhandled_events = true,
+        };
+        if (esp_timer_create(&timer_args, &s_scan_timer) != ESP_OK) {
+            return ESP_ERR_NO_MEM;
+        }
+    }
+    return ESP_OK;
 }
 
 esp_err_t web_ble_api_register(httpd_handle_t server)

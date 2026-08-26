@@ -19,5 +19,8 @@ CONFIG_MCP_AUTH_TOKEN=""
 CONFIG_MCP_HOST_ALLOWLIST="gateway.local"
 CONFIG_MCP_DEVICE_COMMAND_ALLOWLIST="toggle,set_power"
 CONFIG_MCP_LEGACY_MODE=y
-CONFIG_MCP_ASYNC_STACK=8192
+
+# ==== Command executor under test ====
+# Short deadline so the expiry test finishes quickly on target.
+CONFIG_CMD_EXEC_JOB_TIMEOUT_MS=1000
 

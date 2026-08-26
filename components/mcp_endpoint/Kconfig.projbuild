@@ -42,9 +42,4 @@ menu "MCP Endpoint"
         help
             Token bucket refill rate; bucket capacity is fixed at 10 requests.
 
-    config MCP_ASYNC_STACK
-        int "Async worker task stack size (bytes)"
-        range 4096 16384
-        default 8192
-
 endmenu

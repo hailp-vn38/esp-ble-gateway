@@ -10,6 +10,15 @@
 
 static const char *TAG = "web_server";
 
+// Route budget (Plan v2 §36-§40): current routes vs configured slots.
+// Gateway: assets 5 + gateway API 5 + system API 3 + BLE API 3 + MCP 1 = 17.
+#define WEB_GATEWAY_MAX_URI_HANDLERS 21
+#define WEB_GATEWAY_STACK_SIZE       12288
+
+// Provisioning: assets 6 + system API 2 + Wi-Fi API 4 = 12.
+#define WEB_PROVISIONING_MAX_URI_HANDLERS 14
+#define WEB_PROVISIONING_STACK_SIZE       8192
+
 typedef esp_err_t (*route_registrar_t)(httpd_handle_t server);
 
 static httpd_handle_t start_server(const route_registrar_t *registrars,
@@ -63,7 +72,8 @@ httpd_handle_t web_server_start(void)
         web_ble_api_register,
     };
     return start_server(registrars, sizeof(registrars) / sizeof(registrars[0]),
-                        18, 12288, "Gateway");
+                        WEB_GATEWAY_MAX_URI_HANDLERS, WEB_GATEWAY_STACK_SIZE,
+                        "Gateway");
 }
 
 httpd_handle_t web_server_start_provisioning(void)
@@ -79,5 +89,6 @@ httpd_handle_t web_server_start_provisioning(void)
         web_wifi_api_register,
     };
     return start_server(registrars, sizeof(registrars) / sizeof(registrars[0]),
-                        12, 8192, "Provisioning");
+                        WEB_PROVISIONING_MAX_URI_HANDLERS,
+                        WEB_PROVISIONING_STACK_SIZE, "Provisioning");
 }

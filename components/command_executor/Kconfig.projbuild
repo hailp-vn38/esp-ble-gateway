@@ -1,0 +1,35 @@
+menu "Command Executor"
+
+    config CMD_EXEC_WORKER_COUNT
+        int "Persistent command worker count"
+        range 1 4
+        default 2
+        help
+            Persistent workers that run command_dispatcher_handle() off the
+            HTTP server task (Plan v2 §13). Benchmark before tuning; each
+            worker costs one task plus one dispatch_result_t (~4.1 KB BSS).
+
+    config CMD_EXEC_QUEUE_LEN
+        int "Command job queue length"
+        range 1 8
+        default 2
+        help
+            Bounded admission queue sized against the HTTP socket budget
+            (Plan v2 §14-§15). Queue-full submissions fail with
+            ESP_ERR_NO_MEM so transports can answer 503.
+
+    config CMD_EXEC_WORKER_STACK
+        int "Command worker stack size (bytes)"
+        range 2048 16384
+        default 4096
+
+    config CMD_EXEC_JOB_TIMEOUT_MS
+        int "End-to-end command deadline (ms)"
+        range 500 60000
+        default 3000
+        help
+            Jobs older than this when dequeued are completed with
+            DISPATCH_STATUS_TIMEOUT without being dispatched to BLE
+            (Plan v2 §16).
+
+endmenu
