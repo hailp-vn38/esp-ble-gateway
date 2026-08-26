@@ -1,20 +1,11 @@
 # Web Server
 
-> **⚠️ Cập nhật Plan v2 (đã merge vào main):** tài liệu bên dưới mô tả kiến trúc
-> trước refactor. Những thay đổi lớn đã áp dụng — xem `docs/refactor-execution-plan.md`:
->
-> * `/api/command`, POST/PUT/DELETE `/api/devices` và MCP device_command chạy qua
->   component **`command_executor`** chung — không còn task-per-request, HTTPD
->   không chờ BLE ACK. Các mục mô tả `command_http_worker`,
->   `COMMAND_WORKER_COUNT`, `s_command_slots` đã lỗi thời.
-> * BLE scan timeout dùng **esp_timer one-shot + deadline guard** — không còn
->   `ble_scan_stop_worker` / `vTaskDelete`.
-> * Body handling có deadline tuyệt đối + typed errors (400/408/413 +
->   `Connection: close`) + limit theo endpoint (§34).
-> * Trạng thái gateway đọc từ component **`gateway_status`** (single source),
->   `/api/status` có thêm block `"executor"` metrics.
-> * REST error có thêm `error.code` machine-readable; CSP/nosniff/
->   Referrer-Policy trên mọi response.
+> **⚠️ Stale sau Plan v2** (xem `docs/refactor-execution-plan.md`): mọi command
+> (REST + MCP + device mutations) chạy qua `command_executor`; BLE scan timeout
+> là esp_timer + deadline guard; body có deadline/typed errors/limit theo
+> endpoint; status đọc từ component `gateway_status`. Các mục mô tả
+> `command_http_worker`, `COMMAND_WORKER_COUNT`, `s_command_slots`,
+> `ble_scan_stop_worker` bên dưới đã lỗi thời.
 
 ## 1. Tổng quan
 
