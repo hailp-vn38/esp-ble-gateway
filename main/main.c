@@ -1,8 +1,11 @@
 #include "esp_http_server.h"
 #include "esp_log.h"
+#include "esp_system.h"
 #include "nvs_flash.h"
 
 #include "ble_central.h"
+#include "board_io.h"
+#include "board_status_sync.h"
 #include "command_dispatcher.h"
 #include "command_executor.h"
 #include "device_store.h"
@@ -18,11 +21,49 @@ static void on_device_notify(const char *device_id, const gw_message_t *msg)
     command_dispatcher_on_device_notify(device_id, msg);
 }
 
+static void on_board_io_event(board_io_event_t event, void *context)
+{
+    (void)context;
+
+    switch (event) {
+    case BOARD_IO_EVENT_BUTTON_SHORT_PRESS:
+        ESP_LOGI(TAG, "Button short press (no action assigned yet)");
+        break;
+    case BOARD_IO_EVENT_RESTART_REQUEST:
+        ESP_LOGW(TAG, "Restart requested via button");
+        esp_restart();
+        break;
+    case BOARD_IO_EVENT_FACTORY_RESET_REQUEST:
+        ESP_LOGW(TAG, "Factory reset requested via button: clearing Wi-Fi credentials");
+        if (wifi_prov_clear_credentials() != ESP_OK) {
+            ESP_LOGE(TAG, "Clearing Wi-Fi credentials failed");
+        }
+        esp_restart();
+        break;
+    default:
+        break;
+    }
+}
+
 void app_main(void)
 {
     esp_err_t log_error = log_buffer_init();
     if (log_error != ESP_OK) {
         ESP_LOGW(TAG, "RAM log buffer unavailable: %s", esp_err_to_name(log_error));
+    }
+
+    esp_err_t io_rc = board_io_init();
+    if (io_rc == ESP_OK) {
+        if (board_io_register_event_handler(on_board_io_event, NULL) != ESP_OK) {
+            ESP_LOGW(TAG, "Board I/O event handler registration failed");
+        }
+        board_io_set_status(BOARD_STATUS_BOOTING);
+    } else {
+        ESP_LOGE(TAG, "Board I/O init failed: %s", esp_err_to_name(io_rc));
+    }
+
+    if (board_status_sync_start() != ESP_OK) {
+        ESP_LOGW(TAG, "Board status synchronizer could not start");
     }
 
     esp_err_t ret = nvs_flash_init();

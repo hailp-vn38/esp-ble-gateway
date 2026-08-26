@@ -1,0 +1,109 @@
+menu "Board I/O"
+
+config BOARD_IO_BUTTON_ENABLE
+    bool "Enable board button"
+    default n
+
+if BOARD_IO_BUTTON_ENABLE
+
+config BOARD_IO_BUTTON_GPIO
+    int "Button GPIO (-1 = unset, init fails until configured)"
+    range -1 48
+    default -1
+
+config BOARD_IO_BUTTON_ACTIVE_LOW
+    bool "Button is active-low"
+    default y
+
+choice BOARD_IO_BUTTON_PULL_MODE
+    prompt "Button internal pull mode"
+    default BOARD_IO_BUTTON_PULL_UP
+
+config BOARD_IO_BUTTON_PULL_NONE
+    bool "No internal pull (external resistor required)"
+
+config BOARD_IO_BUTTON_PULL_UP
+    bool "Internal pull-up"
+
+config BOARD_IO_BUTTON_PULL_DOWN
+    bool "Internal pull-down"
+
+endchoice
+
+config BOARD_IO_BUTTON_DEBOUNCE_MS
+    int "Button debounce time (ms)"
+    range 5 500
+    default 40
+
+config BOARD_IO_BUTTON_RESTART_MS
+    int "Restart hold threshold (ms)"
+    range 500 30000
+    default 2000
+
+config BOARD_IO_BUTTON_FACTORY_RESET_MS
+    int "Factory reset hold threshold (ms)"
+    range 1000 60000
+    default 8000
+
+endif
+
+config BOARD_IO_LED_ENABLE
+    bool "Enable status LED"
+    default n
+
+if BOARD_IO_LED_ENABLE
+
+config BOARD_IO_LED_GPIO
+    int "Status LED GPIO (-1 = unset, init fails until configured)"
+    range -1 48
+    default -1
+
+config BOARD_IO_LED_ACTIVE_LOW
+    bool "Status LED is active-low"
+    default n
+
+endif
+
+config BOARD_IO_DISPLAY_ENABLE
+    bool "Enable local display"
+    default n
+
+if BOARD_IO_DISPLAY_ENABLE
+
+choice BOARD_IO_DISPLAY_BACKEND
+    prompt "Display backend"
+    default BOARD_IO_DISPLAY_BACKEND_NONE
+
+config BOARD_IO_DISPLAY_BACKEND_NONE
+    bool "No hardware backend"
+
+# Add only when implementation exists.
+# config BOARD_IO_DISPLAY_BACKEND_SSD1306_I2C
+#     bool "SSD1306 over I2C"
+
+endchoice
+
+config BOARD_IO_DISPLAY_REQUIRED
+    bool "Display failure is fatal to board_io init"
+    default n
+
+config BOARD_IO_DISPLAY_MAX_REFRESH_HZ
+    int "Maximum display refresh rate"
+    range 1 30
+    default 5
+
+# Backend-specific Kconfig is added together with the concrete backend.
+
+endif
+
+config BOARD_IO_TASK_STACK_SIZE
+    int "Board I/O task stack size"
+    range 2048 8192
+    default 3072
+
+config BOARD_IO_TASK_PRIORITY
+    int "Board I/O task priority"
+    range 1 10
+    default 3
+
+endmenu

@@ -29,3 +29,15 @@ CONFIG_CMD_EXEC_JOB_TIMEOUT_MS=1000
 # needs the test-only counter helper.
 CONFIG_LOG_BUFFER_TEST_HELPERS=y
 
+# ==== Board I/O under test ====
+# Button on a safe input pin exercises debounce/FSM through the module;
+# display capability is compiled in with the "none" backend so disabled
+# semantics and fake-backend rendering are unit-testable.
+CONFIG_BOARD_IO_BUTTON_ENABLE=y
+CONFIG_BOARD_IO_BUTTON_GPIO=4
+CONFIG_BOARD_IO_BUTTON_ACTIVE_LOW=y
+CONFIG_BOARD_IO_DISPLAY_ENABLE=y
+CONFIG_BOARD_IO_DISPLAY_BACKEND_NONE=y
+CONFIG_BOARD_IO_DISPLAY_REQUIRED=n
+
+

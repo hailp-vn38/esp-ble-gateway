@@ -1,0 +1,15 @@
+idf_component_register(
+    SRCS
+        "test_board_io.c"
+        "test_board_pin_map.c"
+        "test_board_button_fsm.c"
+        "test_board_button_debounce.c"
+        "test_board_led_pattern.c"
+        "test_board_display.c"
+    PRIV_INCLUDE_DIRS
+        ".."
+        "../display_backends"
+    REQUIRES
+        unity
+        board_io
+)
