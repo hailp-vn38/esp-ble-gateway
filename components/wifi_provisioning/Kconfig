@@ -1,0 +1,31 @@
+menu "Wi-Fi Provisioning"
+
+config WIFI_PROV_AP_PREFIX
+    string "Provisioning SoftAP SSID prefix"
+    default "ESP-GW"
+
+config WIFI_PROV_AP_PASSWORD
+    string "Provisioning SoftAP password"
+    default "gateway123"
+
+config WIFI_PROV_AP_MAX_CONNECTIONS
+    int "Maximum SoftAP clients"
+    range 1 8
+    default 4
+
+config WIFI_PROV_STA_BOOT_RETRY_COUNT
+    int "Saved credential boot retry count"
+    range 0 20
+    default 5
+
+config WIFI_PROV_STA_BOOT_TIMEOUT_MS
+    int "Saved credential boot timeout (ms)"
+    range 1000 120000
+    default 30000
+
+config WIFI_PROV_STA_TEST_TIMEOUT_MS
+    int "Credential test timeout (ms)"
+    range 1000 120000
+    default 20000
+
+endmenu

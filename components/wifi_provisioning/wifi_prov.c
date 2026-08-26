@@ -5,6 +5,7 @@
 
 #include "esp_event.h"
 #include "esp_log.h"
+#include "esp_mac.h"
 #include "esp_netif.h"
 #include "esp_system.h"
 #include "esp_wifi.h"
@@ -20,88 +21,128 @@
 static const char *TAG = "wifi_prov";
 static const char *NVS_NAMESPACE = "wifi_cfg";
 
-#define SOFTAP_SSID          "ESP32-Gateway-Setup"
-#define SOFTAP_PASS          "gateway123"
-#define SOFTAP_MAX_CONN       4
-#define STA_CONNECT_RETRY     5
-#define STA_BOOT_TIMEOUT_MS  30000
-#define STA_TEST_TIMEOUT_MS  20000
+#define PROV_EVT_STA_GOT_IP BIT0
+#define PROV_EVT_STA_FAILED BIT1
+#define PROV_EVT_AP_STARTED BIT2
 
-#define WIFI_CONNECTED_BIT BIT0
-#define WIFI_FAILED_BIT    BIT1
+#define AP_READY_TIMEOUT_MS 5000
+#define OPERATION_LOCK_TIMEOUT_MS 1000
+#define RUNTIME_RECONNECT_LIMIT CONFIG_WIFI_PROV_STA_BOOT_RETRY_COUNT
 
-static volatile wifi_prov_state_t s_state = WIFI_PROV_STATE_SOFTAP;
-static volatile bool s_sta_connected;
-static volatile bool s_provisioning_active;
-static volatile bool s_connect_requested;
-static volatile bool s_testing_credentials;
-static volatile bool s_fallback_scheduled;
-static volatile bool s_restart_scheduled;
+/* Legacy result codes (compatibility contract with web_wifi_api.c):
+ * 0 success | -1 invalid arg / generic init | -2 invalid state
+ * -3 busy | -4 Wi-Fi operation could not start
+ * -5 connect timeout / verification failed | -6 NVS persistence failed */
+
+static portMUX_TYPE s_state_lock = portMUX_INITIALIZER_UNLOCKED;
+
+/* Workflow state (§5.4: workflow state and physical link state are distinct). */
+static wifi_prov_state_t s_state = WIFI_PROV_STATE_UNINITIALIZED;
+
+/* Physical fact: STA currently holds an IPv4 lease. */
+static bool s_sta_has_ip;
+
+/* Semantic flag: disconnect events are allowed to trigger a reconnect. */
+static bool s_sta_retry_enabled;
+
 static int s_retry_count;
+static bool s_restart_scheduled;
+
+/* Resources owned directly by this component. */
+static bool s_wifi_initialized;
+static bool s_wifi_started;
+static bool s_wifi_handler_registered;
+static bool s_ip_handler_registered;
 static esp_netif_t *s_sta_netif;
 static esp_netif_t *s_ap_netif;
 static EventGroupHandle_t s_wifi_events;
 static SemaphoreHandle_t s_operation_mutex;
 
-static esp_err_t start_softap(void);
+static char s_ap_ssid[33];
 
-static void fallback_task(void *arg)
+/* ------------------------------------------------------------------ */
+/* State helpers                                                       */
+/* ------------------------------------------------------------------ */
+
+static void set_state(wifi_prov_state_t new_state)
 {
-    if (xSemaphoreTake(s_operation_mutex, pdMS_TO_TICKS(5000)) == pdTRUE) {
-        start_softap();
-        xSemaphoreGive(s_operation_mutex);
+    wifi_prov_state_t old_state;
+    portENTER_CRITICAL(&s_state_lock);
+    old_state = s_state;
+    s_state = new_state;
+    portEXIT_CRITICAL(&s_state_lock);
+
+    if (old_state != new_state) {
+        ESP_LOGI(TAG, "state: %s -> %s", wifi_prov_state_name(old_state),
+                 wifi_prov_state_name(new_state));
     }
-    s_fallback_scheduled = false;
-    vTaskDelete(NULL);
 }
 
-static void schedule_softap_fallback(void)
+static wifi_prov_state_t get_state(void)
 {
-    if (s_fallback_scheduled) return;
-    s_fallback_scheduled = true;
-    if (xTaskCreate(fallback_task, "wifi_fallback", 3072, NULL, 5, NULL) != pdPASS) {
-        s_fallback_scheduled = false;
-        ESP_LOGE(TAG, "Could not schedule SoftAP fallback");
+    portENTER_CRITICAL(&s_state_lock);
+    wifi_prov_state_t state = s_state;
+    portEXIT_CRITICAL(&s_state_lock);
+    return state;
+}
+
+static void set_sta_has_ip(bool value)
+{
+    portENTER_CRITICAL(&s_state_lock);
+    s_sta_has_ip = value;
+    portEXIT_CRITICAL(&s_state_lock);
+}
+
+static void set_sta_retry_enabled(bool value)
+{
+    portENTER_CRITICAL(&s_state_lock);
+    s_sta_retry_enabled = value;
+    portEXIT_CRITICAL(&s_state_lock);
+}
+
+static bool get_sta_retry_enabled(void)
+{
+    portENTER_CRITICAL(&s_state_lock);
+    bool value = s_sta_retry_enabled;
+    portEXIT_CRITICAL(&s_state_lock);
+    return value;
+}
+
+static int increment_retry(int limit, bool *exhausted)
+{
+    portENTER_CRITICAL(&s_state_lock);
+    s_retry_count++;
+    *exhausted = s_retry_count > limit;
+    int count = s_retry_count;
+    portEXIT_CRITICAL(&s_state_lock);
+    return count;
+}
+
+static void reset_retry(void)
+{
+    portENTER_CRITICAL(&s_state_lock);
+    s_retry_count = 0;
+    portEXIT_CRITICAL(&s_state_lock);
+}
+
+const char *wifi_prov_state_name(wifi_prov_state_t state)
+{
+    switch (state) {
+    case WIFI_PROV_STATE_UNINITIALIZED: return "uninitialized";
+    case WIFI_PROV_STATE_BOOT_CONNECTING: return "boot_connecting";
+    case WIFI_PROV_STATE_PROVISIONING: return "provisioning";
+    case WIFI_PROV_STATE_TESTING: return "testing";
+    case WIFI_PROV_STATE_RESTART_PENDING: return "restart_pending";
+    case WIFI_PROV_STATE_CONNECTED: return "connected";
+    case WIFI_PROV_STATE_RECONNECTING: return "reconnecting";
+    case WIFI_PROV_STATE_FAILED: return "failed";
+    default: return "unknown";
     }
 }
 
-static void wifi_event_handler(void *arg, esp_event_base_t event_base,
-                               int32_t event_id, void *event_data)
-{
-    if (event_base == WIFI_EVENT && event_id == WIFI_EVENT_STA_START) {
-        if (s_connect_requested) esp_wifi_connect();
-        return;
-    }
-
-    if (event_base == WIFI_EVENT && event_id == WIFI_EVENT_STA_DISCONNECTED) {
-        s_sta_connected = false;
-        xEventGroupClearBits(s_wifi_events, WIFI_CONNECTED_BIT);
-        if (!s_connect_requested) return;
-
-        s_state = WIFI_PROV_STATE_CONNECTING;
-        if (++s_retry_count <= STA_CONNECT_RETRY) {
-            esp_wifi_connect();
-            ESP_LOGW(TAG, "STA disconnected, retry %d/%d", s_retry_count,
-                     STA_CONNECT_RETRY);
-        } else {
-            s_connect_requested = false;
-            s_state = WIFI_PROV_STATE_FAILED;
-            xEventGroupSetBits(s_wifi_events, WIFI_FAILED_BIT);
-            ESP_LOGE(TAG, "STA connection failed after %d retries", STA_CONNECT_RETRY);
-            if (!s_testing_credentials) schedule_softap_fallback();
-        }
-        return;
-    }
-
-    if (event_base == IP_EVENT && event_id == IP_EVENT_STA_GOT_IP) {
-        ip_event_got_ip_t *event = event_data;
-        ESP_LOGI(TAG, "Got IP: " IPSTR, IP2STR(&event->ip_info.ip));
-        s_sta_connected = true;
-        s_state = WIFI_PROV_STATE_CONNECTED;
-        s_retry_count = 0;
-        xEventGroupSetBits(s_wifi_events, WIFI_CONNECTED_BIT);
-    }
-}
+/* ------------------------------------------------------------------ */
+/* NVS helpers                                                         */
+/* ------------------------------------------------------------------ */
 
 static esp_err_t load_wifi_credentials(char *ssid, size_t ssid_len,
                                        char *password, size_t password_len)
@@ -127,18 +168,70 @@ static esp_err_t save_wifi_credentials(const char *ssid, const char *password)
     return error;
 }
 
+esp_err_t wifi_prov_clear_credentials(void)
+{
+    nvs_handle_t handle;
+    esp_err_t error = nvs_open(NVS_NAMESPACE, NVS_READWRITE, &handle);
+    if (error != ESP_OK) return error;
+    error = nvs_erase_key(handle, "ssid");
+    if (error == ESP_ERR_NVS_NOT_FOUND) error = ESP_OK;
+    if (error == ESP_OK) {
+        error = nvs_erase_key(handle, "pass");
+        if (error == ESP_ERR_NVS_NOT_FOUND) error = ESP_OK;
+    }
+    if (error == ESP_OK) error = nvs_commit(handle);
+    nvs_close(handle);
+    /* Caller decides whether to reboot; no runtime HTTP mode hot-switch. */
+    return error;
+}
+
+/* ------------------------------------------------------------------ */
+/* Config helpers                                                      */
+/* ------------------------------------------------------------------ */
+
+static void generate_ap_ssid(void)
+{
+    uint8_t mac[6] = {0};
+    esp_wifi_get_mac(WIFI_IF_STA, mac);
+
+    const char *prefix = CONFIG_WIFI_PROV_AP_PREFIX;
+    /* Keep room for "-A1B2C3" suffix within the 32-byte SSID limit. */
+    size_t max_prefix = sizeof(s_ap_ssid) - 1 - 7;
+    size_t prefix_len = strlen(prefix);
+    if (prefix_len > max_prefix) prefix_len = max_prefix;
+
+    snprintf(s_ap_ssid, sizeof(s_ap_ssid), "%.*s-%02X%02X%02X",
+             (int)prefix_len, prefix, mac[3], mac[4], mac[5]);
+    ESP_LOGI(TAG, "Generated SoftAP SSID: %s", s_ap_ssid);
+}
+
+static esp_err_t validate_config(void)
+{
+    const char *password = CONFIG_WIFI_PROV_AP_PASSWORD;
+    size_t length = strlen(password);
+    if (length > 0 && (length < 8 || length > 63)) {
+        ESP_LOGE(TAG,
+                 "CONFIG_WIFI_PROV_AP_PASSWORD must be empty (open AP) "
+                 "or 8..63 characters for WPA2");
+        return ESP_ERR_INVALID_ARG;
+    }
+    return ESP_OK;
+}
+
 static esp_err_t configure_softap(void)
 {
     wifi_config_t config = {
         .ap = {
-            .ssid_len = sizeof(SOFTAP_SSID) - 1,
-            .max_connection = SOFTAP_MAX_CONN,
+            .max_connection = CONFIG_WIFI_PROV_AP_MAX_CONNECTIONS,
             .authmode = WIFI_AUTH_WPA2_PSK,
         },
     };
-    strlcpy((char *)config.ap.ssid, SOFTAP_SSID, sizeof(config.ap.ssid));
-    strlcpy((char *)config.ap.password, SOFTAP_PASS, sizeof(config.ap.password));
-    if (SOFTAP_PASS[0] == '\0') config.ap.authmode = WIFI_AUTH_OPEN;
+    const char *password = CONFIG_WIFI_PROV_AP_PASSWORD;
+    if (password[0] == '\0') config.ap.authmode = WIFI_AUTH_OPEN;
+
+    strlcpy((char *)config.ap.ssid, s_ap_ssid, sizeof(config.ap.ssid));
+    config.ap.ssid_len = (uint8_t)strnlen(s_ap_ssid, sizeof(config.ap.ssid));
+    strlcpy((char *)config.ap.password, password, sizeof(config.ap.password));
     return esp_wifi_set_config(WIFI_IF_AP, &config);
 }
 
@@ -151,11 +244,16 @@ static esp_err_t configure_sta(const char *ssid, const char *password)
     return esp_wifi_set_config(WIFI_IF_STA, &config);
 }
 
-static void stop_sta_connection(void)
+static void apply_power_save_policy(void)
 {
-    bool should_disconnect = s_connect_requested || s_sta_connected;
-    s_connect_requested = false;
-    if (should_disconnect) esp_wifi_disconnect();
+    esp_err_t error = esp_wifi_set_ps(WIFI_PS_NONE);
+    if (error != ESP_OK) {
+        ESP_LOGW(TAG, "Could not disable Wi-Fi power save: %s",
+                 esp_err_to_name(error));
+    } else {
+        ESP_LOGI(TAG,
+                 "Wi-Fi power save disabled for low-latency gateway operation");
+    }
 }
 
 static esp_err_t ensure_apsta_mode(void)
@@ -166,138 +264,197 @@ static esp_err_t ensure_apsta_mode(void)
     return mode == WIFI_MODE_APSTA ? ESP_OK : esp_wifi_set_mode(WIFI_MODE_APSTA);
 }
 
-static esp_err_t start_softap(void)
-{
-    stop_sta_connection();
-    s_sta_connected = false;
-    s_provisioning_active = true;
-    s_state = WIFI_PROV_STATE_SOFTAP;
-    s_retry_count = 0;
+/* ------------------------------------------------------------------ */
+/* Connect attempt helpers                                             */
+/* ------------------------------------------------------------------ */
 
+static esp_err_t start_sta_attempt(const char *ssid, const char *password)
+{
+    xEventGroupClearBits(s_wifi_events, PROV_EVT_STA_GOT_IP | PROV_EVT_STA_FAILED);
+    reset_retry();
+    set_sta_retry_enabled(true);
+
+    esp_err_t error = configure_sta(ssid, password);
+    if (error == ESP_OK) error = esp_wifi_connect();
+    if (error != ESP_OK) set_sta_retry_enabled(false);
+    return error;
+}
+
+static void stop_sta_attempt(void)
+{
+    set_sta_retry_enabled(false);
+    esp_wifi_disconnect();
+}
+
+static EventBits_t wait_sta_result(TickType_t timeout_ticks)
+{
+    return xEventGroupWaitBits(s_wifi_events,
+                               PROV_EVT_STA_GOT_IP | PROV_EVT_STA_FAILED,
+                               pdFALSE, pdFALSE, timeout_ticks);
+}
+
+/* ------------------------------------------------------------------ */
+/* Wi-Fi event handler                                                 */
+/* ------------------------------------------------------------------ */
+
+static void wifi_event_handler(void *arg, esp_event_base_t event_base,
+                               int32_t event_id, void *event_data)
+{
+    if (event_base == WIFI_EVENT && event_id == WIFI_EVENT_STA_START) {
+        if (get_sta_retry_enabled()) esp_wifi_connect();
+        return;
+    }
+
+    if (event_base == WIFI_EVENT && event_id == WIFI_EVENT_AP_START) {
+        xEventGroupSetBits(s_wifi_events, PROV_EVT_AP_STARTED);
+        return;
+    }
+
+    if (event_base == WIFI_EVENT && event_id == WIFI_EVENT_STA_DISCONNECTED) {
+        set_sta_has_ip(false);
+        bool retry_enabled = get_sta_retry_enabled();
+        wifi_prov_state_t state = get_state();
+
+        switch (state) {
+        case WIFI_PROV_STATE_BOOT_CONNECTING:
+        case WIFI_PROV_STATE_TESTING:
+            /* Credential worker owns fallback; never touch AP/DNS here. */
+            if (!retry_enabled) return;
+            {
+                bool exhausted = false;
+                int count =
+                    increment_retry(CONFIG_WIFI_PROV_STA_BOOT_RETRY_COUNT,
+                                    &exhausted);
+                if (!exhausted) {
+                    ESP_LOGW(TAG, "STA disconnected, retry %d/%d", count,
+                             CONFIG_WIFI_PROV_STA_BOOT_RETRY_COUNT);
+                    esp_wifi_connect();
+                } else {
+                    set_sta_retry_enabled(false);
+                    xEventGroupSetBits(s_wifi_events, PROV_EVT_STA_FAILED);
+                    ESP_LOGE(TAG, "Credential connect failed after %d retries",
+                             CONFIG_WIFI_PROV_STA_BOOT_RETRY_COUNT);
+                }
+            }
+            return;
+
+        case WIFI_PROV_STATE_CONNECTED:
+        case WIFI_PROV_STATE_RECONNECTING:
+            /* Runtime disconnect never opens the provisioning portal. */
+            if (!retry_enabled) return;
+            {
+                bool exhausted = false;
+                increment_retry(RUNTIME_RECONNECT_LIMIT, &exhausted);
+                set_state(WIFI_PROV_STATE_RECONNECTING);
+                if (!exhausted) {
+                    esp_wifi_connect();
+                } else {
+                    set_sta_retry_enabled(false);
+                    set_state(WIFI_PROV_STATE_FAILED);
+                    ESP_LOGE(TAG,
+                             "Runtime reconnect exhausted; external action required");
+                }
+            }
+            return;
+
+        case WIFI_PROV_STATE_PROVISIONING:
+        case WIFI_PROV_STATE_RESTART_PENDING:
+        default:
+            /* AP/DNS stay untouched. */
+            return;
+        }
+    }
+
+    if (event_base == IP_EVENT && event_id == IP_EVENT_STA_GOT_IP) {
+        ip_event_got_ip_t *event = event_data;
+        ESP_LOGI(TAG, "Got IP: " IPSTR, IP2STR(&event->ip_info.ip));
+        set_sta_has_ip(true);
+        reset_retry();
+        xEventGroupSetBits(s_wifi_events, PROV_EVT_STA_GOT_IP);
+        if (get_state() == WIFI_PROV_STATE_RECONNECTING)
+            set_state(WIFI_PROV_STATE_CONNECTED);
+    }
+}
+
+/* ------------------------------------------------------------------ */
+/* Provisioning entry                                                  */
+/* ------------------------------------------------------------------ */
+
+static esp_err_t wait_for_ap_ready(TickType_t timeout)
+{
+    TickType_t deadline = xTaskGetTickCount() + timeout;
+    for (;;) {
+        if (s_ap_netif != NULL && esp_netif_is_netif_up(s_ap_netif))
+            return ESP_OK;
+
+        xEventGroupClearBits(s_wifi_events, PROV_EVT_AP_STARTED);
+        /* Re-check after clear to close the missed-event window. */
+        if (s_ap_netif != NULL && esp_netif_is_netif_up(s_ap_netif))
+            return ESP_OK;
+
+        TickType_t now = xTaskGetTickCount();
+        if (now >= deadline) break;
+        EventBits_t bits = xEventGroupWaitBits(
+            s_wifi_events, PROV_EVT_AP_STARTED, pdFALSE, pdFALSE,
+            deadline - now);
+        if ((bits & PROV_EVT_AP_STARTED) != 0 &&
+            s_ap_netif != NULL && esp_netif_is_netif_up(s_ap_netif)) {
+            return ESP_OK;
+        }
+    }
+    return ESP_ERR_TIMEOUT;
+}
+
+static esp_err_t enter_provisioning(void)
+{
     esp_err_t error = ensure_apsta_mode();
     if (error == ESP_OK) error = configure_softap();
     if (error != ESP_OK) {
-        ESP_LOGE(TAG, "Could not start SoftAP: %s", esp_err_to_name(error));
-        s_state = WIFI_PROV_STATE_FAILED;
+        ESP_LOGE(TAG, "Could not configure SoftAP: %s",
+                 esp_err_to_name(error));
+        set_state(WIFI_PROV_STATE_FAILED);
         return error;
     }
-    if (dns_hijack_start() != 0) {
-        ESP_LOGW(TAG, "Captive DNS did not start; provisioning is still available by IP");
+
+    if (wait_for_ap_ready(pdMS_TO_TICKS(AP_READY_TIMEOUT_MS)) != ESP_OK) {
+        ESP_LOGW(TAG, "SoftAP did not confirm readiness in %d ms",
+                 AP_READY_TIMEOUT_MS);
     }
-    ESP_LOGI(TAG, "SoftAP ready: SSID=%s, URL=http://192.168.4.1", SOFTAP_SSID);
+
+    esp_netif_ip_info_t ap_ip_info;
+    error = esp_netif_get_ip_info(s_ap_netif, &ap_ip_info);
+    if (error == ESP_OK) {
+        ESP_LOGI(TAG, "SoftAP IPv4 for captive DNS: " IPSTR,
+                 IP2STR(&ap_ip_info.ip));
+        error = dns_hijack_start(&ap_ip_info.ip);
+        if (error != ESP_OK) {
+            ESP_LOGW(TAG, "Captive DNS did not start (%s); provisioning is "
+                          "still available by IP",
+                     esp_err_to_name(error));
+        }
+    } else {
+        ESP_LOGW(TAG, "Could not read SoftAP IPv4 (%s); captive DNS skipped",
+                 esp_err_to_name(error));
+    }
+
+    set_state(WIFI_PROV_STATE_PROVISIONING);
+    ESP_LOGI(TAG, "Provisioning portal ready: SSID=%s", s_ap_ssid);
     return ESP_OK;
 }
 
-int wifi_prov_init(void)
-{
-    esp_err_t error = esp_netif_init();
-    if (error != ESP_OK && error != ESP_ERR_INVALID_STATE) return -1;
-    error = esp_event_loop_create_default();
-    if (error != ESP_OK && error != ESP_ERR_INVALID_STATE) return -1;
-
-    s_wifi_events = xEventGroupCreate();
-    s_operation_mutex = xSemaphoreCreateMutex();
-    if (s_wifi_events == NULL || s_operation_mutex == NULL) return -1;
-
-    s_sta_netif = esp_netif_create_default_wifi_sta();
-    s_ap_netif = esp_netif_create_default_wifi_ap();
-    if (s_sta_netif == NULL || s_ap_netif == NULL) return -1;
-
-    wifi_init_config_t init_config = WIFI_INIT_CONFIG_DEFAULT();
-    error = esp_wifi_init(&init_config);
-    if (error != ESP_OK) return -1;
-    if (esp_wifi_set_storage(WIFI_STORAGE_RAM) != ESP_OK) return -1;
-    if (esp_event_handler_register(WIFI_EVENT, ESP_EVENT_ANY_ID,
-                                   wifi_event_handler, NULL) != ESP_OK ||
-        esp_event_handler_register(IP_EVENT, IP_EVENT_STA_GOT_IP,
-                                   wifi_event_handler, NULL) != ESP_OK) {
-        return -1;
-    }
-
-    char ssid[33] = {0};
-    char password[65] = {0};
-    bool has_credentials = load_wifi_credentials(ssid, sizeof(ssid), password,
-                                                 sizeof(password)) == ESP_OK &&
-                           ssid[0] != '\0';
-
-    if (has_credentials) {
-        ESP_LOGI(TAG, "Trying saved Wi-Fi credentials");
-        if (esp_wifi_set_mode(WIFI_MODE_STA) != ESP_OK ||
-            configure_sta(ssid, password) != ESP_OK) {
-            return -1;
-        }
-        s_connect_requested = true;
-        s_testing_credentials = true;
-        s_state = WIFI_PROV_STATE_CONNECTING;
-    } else {
-        ESP_LOGI(TAG, "No saved Wi-Fi; entering provisioning mode");
-        if (esp_wifi_set_mode(WIFI_MODE_APSTA) != ESP_OK || configure_softap() != ESP_OK) {
-            return -1;
-        }
-        s_provisioning_active = true;
-        s_state = WIFI_PROV_STATE_SOFTAP;
-    }
-
-    if (esp_wifi_start() != ESP_OK) return -1;
-    error = esp_wifi_set_ps(WIFI_PS_NONE);
-    if (error != ESP_OK) {
-        ESP_LOGW(TAG, "Could not disable Wi-Fi power save: %s", esp_err_to_name(error));
-    } else {
-        ESP_LOGI(TAG, "Wi-Fi power save disabled for low-latency gateway operation");
-    }
-
-    if (has_credentials) {
-        EventBits_t bits = xEventGroupWaitBits(
-            s_wifi_events, WIFI_CONNECTED_BIT | WIFI_FAILED_BIT,
-            pdFALSE, pdFALSE, pdMS_TO_TICKS(STA_BOOT_TIMEOUT_MS));
-        s_testing_credentials = false;
-        if ((bits & WIFI_CONNECTED_BIT) != 0) {
-            s_provisioning_active = false;
-            s_state = WIFI_PROV_STATE_CONNECTED;
-            ESP_LOGI(TAG, "Saved Wi-Fi verified; running in STA mode");
-        } else if (start_softap() != ESP_OK) {
-            return -1;
-        }
-    } else {
-        dns_hijack_start();
-        ESP_LOGI(TAG, "SoftAP ready: SSID=%s, URL=http://192.168.4.1", SOFTAP_SSID);
-    }
-    return 0;
-}
-
-bool wifi_prov_is_connected(void)
-{
-    return s_sta_connected;
-}
-
-bool wifi_prov_is_provisioning(void)
-{
-    return s_provisioning_active;
-}
-
-wifi_prov_state_t wifi_prov_get_state(void)
-{
-    return s_state;
-}
-
-const char *wifi_prov_state_name(wifi_prov_state_t state)
-{
-    switch (state) {
-    case WIFI_PROV_STATE_SOFTAP: return "softap";
-    case WIFI_PROV_STATE_CONNECTING: return "connecting";
-    case WIFI_PROV_STATE_CONNECTED: return "connected";
-    case WIFI_PROV_STATE_FAILED: return "failed";
-    default: return "unknown";
-    }
-}
+/* ------------------------------------------------------------------ */
+/* Scan                                                                */
+/* ------------------------------------------------------------------ */
 
 int wifi_prov_scan(wifi_prov_ap_record_t *records, size_t max_records,
                    size_t *out_count)
 {
     if (records == NULL || out_count == NULL || max_records == 0) return -1;
     *out_count = 0;
-    if (!s_provisioning_active) return -2;
-    if (xSemaphoreTake(s_operation_mutex, pdMS_TO_TICKS(1000)) != pdTRUE) return -3;
+    if (get_state() != WIFI_PROV_STATE_PROVISIONING) return -2;
+    if (xSemaphoreTake(s_operation_mutex,
+                       pdMS_TO_TICKS(OPERATION_LOCK_TIMEOUT_MS)) != pdTRUE)
+        return -3;
 
     wifi_scan_config_t scan_config = {
         .show_hidden = false,
@@ -325,7 +482,8 @@ int wifi_prov_scan(wifi_prov_ap_record_t *records, size_t max_records,
             if (raw_records[i].ssid[0] == '\0') continue;
             bool duplicate = false;
             for (size_t j = 0; j < *out_count; j++) {
-                if (strcmp(records[j].ssid, (const char *)raw_records[i].ssid) == 0) {
+                if (strcmp(records[j].ssid,
+                           (const char *)raw_records[i].ssid) == 0) {
                     duplicate = true;
                     break;
                 }
@@ -344,56 +502,62 @@ int wifi_prov_scan(wifi_prov_ap_record_t *records, size_t max_records,
     return error == ESP_OK ? 0 : -4;
 }
 
+/* ------------------------------------------------------------------ */
+/* Credential test-and-save                                            */
+/* ------------------------------------------------------------------ */
+
 int wifi_prov_test_and_save(const char *ssid, const char *password)
 {
     if (ssid == NULL || ssid[0] == '\0' || strnlen(ssid, 33) >= 33 ||
         (password != NULL && strnlen(password, 65) >= 65)) {
         return -1;
     }
-    if (!s_provisioning_active) return -2;
-    if (xSemaphoreTake(s_operation_mutex, pdMS_TO_TICKS(1000)) != pdTRUE) return -3;
+    if (!wifi_prov_is_provisioning()) return -2;
+    if (xSemaphoreTake(s_operation_mutex,
+                       pdMS_TO_TICKS(OPERATION_LOCK_TIMEOUT_MS)) != pdTRUE)
+        return -3;
 
     const char *safe_password = password != NULL ? password : "";
-    stop_sta_connection();
-    xEventGroupClearBits(s_wifi_events, WIFI_CONNECTED_BIT | WIFI_FAILED_BIT);
-    s_retry_count = 0;
-    s_testing_credentials = true;
-    s_state = WIFI_PROV_STATE_CONNECTING;
+    /* Clear any stale attempt before testing new credentials. */
+    stop_sta_attempt();
+    set_state(WIFI_PROV_STATE_TESTING);
+    ESP_LOGI(TAG, "Testing Wi-Fi SSID: %s", ssid);
 
     esp_err_t error = ensure_apsta_mode();
-    if (error == ESP_OK) error = configure_sta(ssid, safe_password);
-    if (error == ESP_OK) {
-        s_connect_requested = true;
-        error = esp_wifi_connect();
-    }
+    if (error == ESP_OK) error = start_sta_attempt(ssid, safe_password);
     if (error != ESP_OK) {
-        s_testing_credentials = false;
-        s_connect_requested = false;
-        start_softap();
+        set_state(WIFI_PROV_STATE_PROVISIONING);
         xSemaphoreGive(s_operation_mutex);
         return -4;
     }
 
-    ESP_LOGI(TAG, "Testing Wi-Fi SSID: %s", ssid);
-    EventBits_t bits = xEventGroupWaitBits(
-        s_wifi_events, WIFI_CONNECTED_BIT | WIFI_FAILED_BIT,
-        pdFALSE, pdFALSE, pdMS_TO_TICKS(STA_TEST_TIMEOUT_MS));
-    s_testing_credentials = false;
+    EventBits_t bits = wait_sta_result(
+        pdMS_TO_TICKS(CONFIG_WIFI_PROV_STA_TEST_TIMEOUT_MS));
 
-    if ((bits & WIFI_CONNECTED_BIT) == 0) {
-        start_softap();
+    if ((bits & PROV_EVT_STA_GOT_IP) == 0) {
+        ESP_LOGE(TAG, "Credential test failed for SSID: %s", ssid);
+        stop_sta_attempt();
+        set_state(WIFI_PROV_STATE_PROVISIONING);
         xSemaphoreGive(s_operation_mutex);
         return -5;
     }
 
+    /* Persist only after GOT_IP (Invariant B). */
     error = save_wifi_credentials(ssid, safe_password);
     if (error != ESP_OK) {
-        start_softap();
+        ESP_LOGE(TAG, "NVS save failed (%s); keeping provisioning active",
+                 esp_err_to_name(error));
+        stop_sta_attempt();
+        set_state(WIFI_PROV_STATE_PROVISIONING);
         xSemaphoreGive(s_operation_mutex);
         return -6;
     }
 
-    s_state = WIFI_PROV_STATE_CONNECTED;
+    /* No intentional disconnect and no DNS/AP teardown here: the
+     * provisioning client polls /api/wifi over SoftAP before the
+     * delayed restart. */
+    set_sta_retry_enabled(false);
+    set_state(WIFI_PROV_STATE_RESTART_PENDING);
     xSemaphoreGive(s_operation_mutex);
     ESP_LOGI(TAG, "Wi-Fi verified and saved: %s", ssid);
     return 0;
@@ -401,8 +565,12 @@ int wifi_prov_test_and_save(const char *ssid, const char *password)
 
 int wifi_prov_save_and_connect(const char *ssid, const char *password)
 {
-    return wifi_prov_test_and_save(ssid, password);
+    return wifi_prov_test_and_save(ssid, password); // legacy alias
 }
+
+/* ------------------------------------------------------------------ */
+/* Restart scheduling                                                  */
+/* ------------------------------------------------------------------ */
 
 static void restart_task(void *arg)
 {
@@ -415,10 +583,16 @@ static void restart_task(void *arg)
 int wifi_prov_schedule_restart(unsigned delay_ms)
 {
     if (s_operation_mutex == NULL ||
-        xSemaphoreTake(s_operation_mutex, pdMS_TO_TICKS(1000)) != pdTRUE) {
+        xSemaphoreTake(s_operation_mutex,
+                       pdMS_TO_TICKS(OPERATION_LOCK_TIMEOUT_MS)) != pdTRUE) {
         return -1;
     }
+    if (get_state() != WIFI_PROV_STATE_RESTART_PENDING) {
+        ESP_LOGW(TAG, "Restart requested outside RESTART_PENDING (state=%s)",
+                 wifi_prov_state_name(get_state()));
+    }
     if (s_restart_scheduled) {
+        ESP_LOGI(TAG, "Restart already scheduled");
         xSemaphoreGive(s_operation_mutex);
         return 0;
     }
@@ -427,24 +601,193 @@ int wifi_prov_schedule_restart(unsigned delay_ms)
 
     if (xTaskCreate(restart_task, "wifi_restart", 2048,
                     (void *)(uintptr_t)delay_ms, 5, NULL) != pdPASS) {
-        if (xSemaphoreTake(s_operation_mutex, pdMS_TO_TICKS(1000)) == pdTRUE) {
+        if (xSemaphoreTake(s_operation_mutex,
+                           pdMS_TO_TICKS(OPERATION_LOCK_TIMEOUT_MS)) == pdTRUE) {
             s_restart_scheduled = false;
             xSemaphoreGive(s_operation_mutex);
         }
+        ESP_LOGE(TAG, "Could not create restart task");
         return -1;
     }
+    ESP_LOGI(TAG, "Restart scheduled in %u ms", delay_ms);
     return 0;
+}
+
+/* ------------------------------------------------------------------ */
+/* Status queries                                                      */
+/* ------------------------------------------------------------------ */
+
+bool wifi_prov_is_connected(void)
+{
+    portENTER_CRITICAL(&s_state_lock);
+    bool has_ip = s_sta_has_ip;
+    portEXIT_CRITICAL(&s_state_lock);
+    return has_ip;
+}
+
+bool wifi_prov_is_provisioning(void)
+{
+    wifi_prov_state_t state = get_state();
+    return state == WIFI_PROV_STATE_PROVISIONING ||
+           state == WIFI_PROV_STATE_TESTING ||
+           state == WIFI_PROV_STATE_RESTART_PENDING;
+}
+
+wifi_prov_state_t wifi_prov_get_state(void)
+{
+    return get_state();
 }
 
 void wifi_prov_get_ip(char *out_ip, size_t out_ip_len)
 {
     if (out_ip == NULL || out_ip_len == 0) return;
-    esp_netif_t *netif = s_sta_connected ? s_sta_netif
-                                         : (s_provisioning_active ? s_ap_netif : NULL);
+    portENTER_CRITICAL(&s_state_lock);
+    bool has_ip = s_sta_has_ip;
+    portEXIT_CRITICAL(&s_state_lock);
+
+    esp_netif_t *netif =
+        has_ip ? s_sta_netif
+               : (wifi_prov_is_provisioning() ? s_ap_netif : NULL);
     esp_netif_ip_info_t ip_info;
-    if (netif != NULL && esp_netif_get_ip_info(netif, &ip_info) == ESP_OK) {
+    if (netif != NULL && esp_netif_get_ip_info(netif, &ip_info) == ESP_OK &&
+        ip_info.ip.addr != 0) {
         snprintf(out_ip, out_ip_len, IPSTR, IP2STR(&ip_info.ip));
     } else {
         strlcpy(out_ip, "0.0.0.0", out_ip_len);
     }
+}
+
+/* ------------------------------------------------------------------ */
+/* Init + cleanup                                                      */
+/* ------------------------------------------------------------------ */
+
+static void cleanup_owned_resources(void)
+{
+    if (dns_hijack_is_running()) dns_hijack_stop();
+    if (s_wifi_started) {
+        esp_wifi_stop();
+        s_wifi_started = false;
+    }
+    if (s_ip_handler_registered) {
+        esp_event_handler_unregister(IP_EVENT, IP_EVENT_STA_GOT_IP,
+                                     wifi_event_handler);
+        s_ip_handler_registered = false;
+    }
+    if (s_wifi_handler_registered) {
+        esp_event_handler_unregister(WIFI_EVENT, ESP_EVENT_ANY_ID,
+                                     wifi_event_handler);
+        s_wifi_handler_registered = false;
+    }
+    if (s_wifi_initialized) {
+        esp_wifi_deinit();
+        s_wifi_initialized = false;
+    }
+    if (s_sta_netif != NULL) {
+        esp_netif_destroy_default_wifi(s_sta_netif);
+        s_sta_netif = NULL;
+    }
+    if (s_ap_netif != NULL) {
+        esp_netif_destroy_default_wifi(s_ap_netif);
+        s_ap_netif = NULL;
+    }
+    if (s_wifi_events != NULL) {
+        vEventGroupDelete(s_wifi_events);
+        s_wifi_events = NULL;
+    }
+    if (s_operation_mutex != NULL) {
+        vSemaphoreDelete(s_operation_mutex);
+        s_operation_mutex = NULL;
+    }
+    set_sta_retry_enabled(false);
+    set_sta_has_ip(false);
+    s_restart_scheduled = false;
+    set_state(WIFI_PROV_STATE_UNINITIALIZED);
+}
+
+int wifi_prov_init(void)
+{
+    if (s_wifi_initialized) {
+        ESP_LOGE(TAG, "wifi_prov_init called twice in the same boot");
+        return -1;
+    }
+    if (validate_config() != ESP_OK) return -1;
+
+    esp_err_t error = esp_netif_init();
+    if (error != ESP_OK && error != ESP_ERR_INVALID_STATE) return -1;
+    error = esp_event_loop_create_default();
+    if (error != ESP_OK && error != ESP_ERR_INVALID_STATE) return -1;
+
+    s_wifi_events = xEventGroupCreate();
+    s_operation_mutex = xSemaphoreCreateMutex();
+    if (s_wifi_events == NULL || s_operation_mutex == NULL) goto fail;
+
+    s_sta_netif = esp_netif_create_default_wifi_sta();
+    s_ap_netif = esp_netif_create_default_wifi_ap();
+    if (s_sta_netif == NULL || s_ap_netif == NULL) goto fail;
+
+    wifi_init_config_t init_config = WIFI_INIT_CONFIG_DEFAULT();
+    if (esp_wifi_init(&init_config) != ESP_OK) goto fail;
+    s_wifi_initialized = true;
+
+    if (esp_wifi_set_storage(WIFI_STORAGE_RAM) != ESP_OK) goto fail;
+    if (esp_event_handler_register(WIFI_EVENT, ESP_EVENT_ANY_ID,
+                                   wifi_event_handler, NULL) == ESP_OK)
+        s_wifi_handler_registered = true;
+    if (esp_event_handler_register(IP_EVENT, IP_EVENT_STA_GOT_IP,
+                                   wifi_event_handler, NULL) == ESP_OK)
+        s_ip_handler_registered = true;
+    if (!s_wifi_handler_registered || !s_ip_handler_registered) goto fail;
+
+    generate_ap_ssid();
+
+    char ssid[33] = {0};
+    char saved_password[65] = {0};
+    bool has_credentials =
+        load_wifi_credentials(ssid, sizeof(ssid), saved_password,
+                              sizeof(saved_password)) == ESP_OK &&
+        ssid[0] != '\0';
+
+    if (has_credentials) {
+        ESP_LOGI(TAG, "Trying saved Wi-Fi credentials (SSID=%s)", ssid);
+        if (esp_wifi_set_mode(WIFI_MODE_STA) != ESP_OK) goto fail;
+        if (esp_wifi_start() != ESP_OK) goto fail;
+        s_wifi_started = true;
+        apply_power_save_policy();
+        set_state(WIFI_PROV_STATE_BOOT_CONNECTING);
+
+        if (start_sta_attempt(ssid, saved_password) != ESP_OK) {
+            stop_sta_attempt();
+            if (enter_provisioning() != ESP_OK) goto fail;
+            return 0;
+        }
+
+        EventBits_t bits = wait_sta_result(
+            pdMS_TO_TICKS(CONFIG_WIFI_PROV_STA_BOOT_TIMEOUT_MS));
+        if ((bits & PROV_EVT_STA_GOT_IP) != 0) {
+            /* Keep retry enabled: runtime disconnects must trigger bounded
+             * reconnect, never the provisioning portal. */
+            reset_retry();
+            set_state(WIFI_PROV_STATE_CONNECTED);
+            ESP_LOGI(TAG, "Saved Wi-Fi verified; running in STA mode");
+        } else {
+            ESP_LOGW(TAG, "Saved credential boot connect failed; entering "
+                          "provisioning");
+            stop_sta_attempt();
+            if (enter_provisioning() != ESP_OK) goto fail;
+        }
+    } else {
+        ESP_LOGI(TAG, "No saved Wi-Fi; entering provisioning mode");
+        if (ensure_apsta_mode() != ESP_OK || configure_softap() != ESP_OK)
+            goto fail;
+        if (esp_wifi_start() != ESP_OK) goto fail;
+        s_wifi_started = true;
+        apply_power_save_policy();
+        if (enter_provisioning() != ESP_OK) goto fail;
+    }
+
+    return 0;
+
+fail:
+    cleanup_owned_resources();
+    return -1;
 }

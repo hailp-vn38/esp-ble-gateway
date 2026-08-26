@@ -3,183 +3,258 @@
 
 #include "esp_log.h"
 #include "freertos/FreeRTOS.h"
+#include "freertos/event_groups.h"
+#include "freertos/semphr.h"
 #include "freertos/task.h"
-#include "lwip/inet.h"
 #include "lwip/sockets.h"
 
 #include "dns_hijack.h"
+#include "dns_packet.h"
+
+#define DNS_PORT 53
+#define DNS_TASK_STACK_SIZE 3072
+#define DNS_TASK_PRIORITY 5
+#define DNS_START_TIMEOUT_MS 2000
+#define DNS_STOP_TIMEOUT_MS 2000
 
 static const char *TAG = "dns_hijack";
 
-#define DNS_PORT 53
-#define DNS_MAX_PACKET_LEN 512
-#define DNS_HEADER_LEN 12
-#define DNS_ANSWER_LEN 16
-#define DNS_TASK_STACK_SIZE 4096
-#define SOFTAP_IP "192.168.4.1"
+typedef enum {
+    DNS_STATE_STOPPED = 0,
+    DNS_STATE_STARTING,
+    DNS_STATE_RUNNING,
+    DNS_STATE_STOPPING,
+} dns_state_t;
 
+#define DNS_EVT_RUNNING BIT0
+#define DNS_EVT_STOPPED BIT1
+#define DNS_EVT_START_FAILED BIT2
+
+static portMUX_TYPE s_dns_init_lock = portMUX_INITIALIZER_UNLOCKED;
+static SemaphoreHandle_t s_dns_mutex;
+static EventGroupHandle_t s_dns_events;
+static bool s_dns_sync_ready;
+
+/* Protected by s_dns_mutex. */
+static dns_state_t s_dns_state = DNS_STATE_STOPPED;
 static TaskHandle_t s_dns_task;
-static volatile bool s_running;
-static volatile int s_dns_socket = -1;
+static int s_dns_socket = -1;
+static esp_ip4_addr_t s_redirect_ip;
 
-static int question_end_offset(const uint8_t *query, int query_len)
+static esp_err_t dns_ensure_sync_primitives(void)
 {
-    if (query_len < DNS_HEADER_LEN || query[4] == 0 || query[5] == 0) return -1;
-    int offset = DNS_HEADER_LEN;
-    while (offset < query_len) {
-        uint8_t label_length = query[offset++];
-        if (label_length == 0) break;
-        if ((label_length & 0xc0) != 0 || label_length > 63 ||
-            offset + label_length > query_len) {
-            return -1;
-        }
-        offset += label_length;
+    bool ready;
+
+    portENTER_CRITICAL(&s_dns_init_lock);
+    ready = s_dns_sync_ready;
+    portEXIT_CRITICAL(&s_dns_init_lock);
+    if (ready) return ESP_OK;
+
+    SemaphoreHandle_t mutex = xSemaphoreCreateMutex();
+    EventGroupHandle_t events = xEventGroupCreate();
+    if (mutex == NULL || events == NULL) {
+        if (mutex != NULL) vSemaphoreDelete(mutex);
+        if (events != NULL) vEventGroupDelete(events);
+        return ESP_ERR_NO_MEM;
     }
-    return offset + 4 <= query_len ? offset + 4 : -1;
-}
 
-static uint8_t ascii_lower(uint8_t character)
-{
-    return character >= 'A' && character <= 'Z' ? character + ('a' - 'A')
-                                                 : character;
-}
-
-static bool question_name_equals(const uint8_t *query, int query_len,
-                                 const char *expected_name)
-{
-    int offset = DNS_HEADER_LEN;
-    const char *expected = expected_name;
-    while (offset < query_len) {
-        uint8_t label_length = query[offset++];
-        if (label_length == 0) return *expected == '\0';
-        if ((label_length & 0xc0) != 0 || label_length > 63 ||
-            offset + label_length > query_len) {
-            return false;
-        }
-        for (uint8_t i = 0; i < label_length; i++) {
-            if (expected[i] == '\0' || expected[i] == '.' ||
-                ascii_lower(query[offset + i]) !=
-                    ascii_lower((uint8_t)expected[i])) {
-                return false;
-            }
-        }
-        expected += label_length;
-        if (*expected == '.') {
-            expected++;
-        } else if (*expected != '\0') {
-            return false;
-        }
-        offset += label_length;
+    bool adopted = false;
+    portENTER_CRITICAL(&s_dns_init_lock);
+    if (!s_dns_sync_ready) {
+        s_dns_mutex = mutex;
+        s_dns_events = events;
+        s_dns_sync_ready = true;
+        adopted = true;
     }
-    return false;
-}
+    portEXIT_CRITICAL(&s_dns_init_lock);
 
-static bool is_adguard_injection_domain(const uint8_t *query, int query_len)
-{
-    return question_name_equals(query, query_len, "local.adguard.org") ||
-           question_name_equals(query, query_len, "local.adguard.com");
-}
-
-static int build_dns_response(uint8_t packet[DNS_MAX_PACKET_LEN], int query_len)
-{
-    int question_end = question_end_offset(packet, query_len);
-    if (question_end < 0) return -1;
-
-    packet[2] = 0x81; /* response, recursion desired */
-    packet[3] = 0x80; /* recursion available, no error */
-    packet[4] = 0;
-    packet[5] = 1;    /* one question */
-    packet[6] = 0;
-    packet[7] = 0;
-    packet[8] = packet[9] = packet[10] = packet[11] = 0;
-
-    if (is_adguard_injection_domain(packet, query_len)) {
-        packet[3] = 0x83; /* recursion available, NXDOMAIN */
-        ESP_LOGI(TAG, "Rejected AdGuard local content-script DNS query");
-        return question_end;
+    if (!adopted) {
+        vSemaphoreDelete(mutex);
+        vEventGroupDelete(events);
     }
-    if (question_end + DNS_ANSWER_LEN > DNS_MAX_PACKET_LEN) return -1;
-    packet[7] = 1; /* one answer */
+    return ESP_OK;
+}
 
-    int offset = question_end;
-    packet[offset++] = 0xc0;
-    packet[offset++] = 0x0c; /* compressed name points to QNAME */
-    packet[offset++] = 0;
-    packet[offset++] = 1;    /* A */
-    packet[offset++] = 0;
-    packet[offset++] = 1;    /* IN */
-    packet[offset++] = 0;
-    packet[offset++] = 0;
-    packet[offset++] = 0;
-    packet[offset++] = 30;   /* TTL */
-    packet[offset++] = 0;
-    packet[offset++] = 4;
-    const uint8_t ip[] = {192, 168, 4, 1};
-    memcpy(packet + offset, ip, sizeof(ip));
-    return offset + sizeof(ip);
+/* Single cleanup path for the DNS task. */
+static void dns_task_cleanup(int sock, bool set_start_failed)
+{
+    if (sock >= 0) close(sock);
+
+    xSemaphoreTake(s_dns_mutex, portMAX_DELAY);
+    s_dns_socket = -1;
+    s_dns_task = NULL;
+    s_dns_state = DNS_STATE_STOPPED;
+    xSemaphoreGive(s_dns_mutex);
+
+    EventBits_t bits = DNS_EVT_STOPPED;
+    if (set_start_failed) bits |= DNS_EVT_START_FAILED;
+    xEventGroupSetBits(s_dns_events, bits);
+    vTaskDelete(NULL);
 }
 
 static void dns_task(void *arg)
 {
+    (void)arg;
     uint8_t packet[DNS_MAX_PACKET_LEN];
     struct sockaddr_in server = {
         .sin_family = AF_INET,
         .sin_port = htons(DNS_PORT),
-        .sin_addr.s_addr = inet_addr(SOFTAP_IP),
+        .sin_addr.s_addr = s_redirect_ip.addr,
     };
 
     int sock = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
-    s_dns_socket = sock;
-    if (sock < 0 || bind(sock, (struct sockaddr *)&server, sizeof(server)) < 0) {
-        ESP_LOGE(TAG, "Could not bind DNS server to %s:%d", SOFTAP_IP, DNS_PORT);
-        if (sock >= 0) close(sock);
-        s_dns_socket = -1;
-        s_running = false;
-        s_dns_task = NULL;
-        vTaskDelete(NULL);
+    bool bound = false;
+    if (sock >= 0) {
+        struct timeval timeout = {.tv_sec = 1, .tv_usec = 0};
+        setsockopt(sock, SOL_SOCKET, SO_RCVTIMEO, &timeout, sizeof(timeout));
+        bound = bind(sock, (struct sockaddr *)&server, sizeof(server)) == 0;
+    }
+
+    if (!bound) {
+        ESP_LOGE(TAG, "Could not bind DNS server to " IPSTR ":%d",
+                 IP2STR(&s_redirect_ip), DNS_PORT);
+        dns_task_cleanup(sock, true);
         return;
     }
 
-    struct timeval timeout = {.tv_sec = 1, .tv_usec = 0};
-    setsockopt(sock, SOL_SOCKET, SO_RCVTIMEO, &timeout, sizeof(timeout));
-    ESP_LOGI(TAG, "Captive DNS listening on %s:%d", SOFTAP_IP, DNS_PORT);
+    xEventGroupSetBits(s_dns_events, DNS_EVT_RUNNING);
+    ESP_LOGI(TAG, "Captive DNS listening on " IPSTR ":%d",
+             IP2STR(&s_redirect_ip), DNS_PORT);
 
-    while (s_running) {
+    for (;;) {
         struct sockaddr_in client;
         socklen_t client_len = sizeof(client);
         int query_len = recvfrom(sock, packet, sizeof(packet), 0,
                                  (struct sockaddr *)&client, &client_len);
-        if (query_len <= 0) continue;
-        int response_len = build_dns_response(packet, query_len);
+        if (query_len <= 0) {
+            xSemaphoreTake(s_dns_mutex, portMAX_DELAY);
+            bool stopping = s_dns_state == DNS_STATE_STOPPING;
+            xSemaphoreGive(s_dns_mutex);
+            if (stopping) break;
+            continue; /* receive timeout */
+        }
+
+        int response_len = dns_build_response(packet, query_len, &s_redirect_ip);
         if (response_len > 0) {
             sendto(sock, packet, response_len, 0,
                    (struct sockaddr *)&client, client_len);
         }
     }
 
-    close(sock);
-    s_dns_socket = -1;
-    s_dns_task = NULL;
     ESP_LOGI(TAG, "Captive DNS stopped");
-    vTaskDelete(NULL);
+    dns_task_cleanup(sock, false);
 }
 
-int dns_hijack_start(void)
+esp_err_t dns_hijack_start(const esp_ip4_addr_t *redirect_ip)
 {
-    if (s_running) return 0;
-    s_running = true;
-    if (xTaskCreate(dns_task, "dns_hijack", DNS_TASK_STACK_SIZE,
-                    NULL, 5, &s_dns_task) != pdPASS) {
-        s_running = false;
-        s_dns_task = NULL;
-        return -1;
+    if (redirect_ip == NULL || redirect_ip->addr == 0)
+        return ESP_ERR_INVALID_ARG;
+
+    esp_err_t error = dns_ensure_sync_primitives();
+    if (error != ESP_OK) return error;
+
+    for (int attempt = 0; attempt < 10; attempt++) {
+        xSemaphoreTake(s_dns_mutex, portMAX_DELAY);
+        switch (s_dns_state) {
+        case DNS_STATE_RUNNING: {
+            if (s_redirect_ip.addr == redirect_ip->addr) {
+                xSemaphoreGive(s_dns_mutex);
+                return ESP_OK;
+            }
+            /* Different IP requested: restart with the new address. */
+            s_dns_state = DNS_STATE_STOPPING;
+            int sock = s_dns_socket;
+            xSemaphoreGive(s_dns_mutex);
+            if (sock >= 0) shutdown(sock, SHUT_RDWR);
+            xEventGroupWaitBits(s_dns_events, DNS_EVT_STOPPED, pdFALSE,
+                                pdFALSE, pdMS_TO_TICKS(DNS_STOP_TIMEOUT_MS));
+            break;
+        }
+
+        case DNS_STATE_STARTING:
+            xSemaphoreGive(s_dns_mutex);
+            xEventGroupWaitBits(
+                s_dns_events,
+                DNS_EVT_RUNNING | DNS_EVT_START_FAILED | DNS_EVT_STOPPED,
+                pdFALSE, pdFALSE, pdMS_TO_TICKS(DNS_START_TIMEOUT_MS));
+            break;
+
+        case DNS_STATE_STOPPING:
+            xSemaphoreGive(s_dns_mutex);
+            {
+                EventBits_t stopped = xEventGroupWaitBits(
+                    s_dns_events, DNS_EVT_STOPPED, pdFALSE, pdFALSE,
+                    pdMS_TO_TICKS(DNS_STOP_TIMEOUT_MS));
+                if ((stopped & DNS_EVT_STOPPED) == 0)
+                    return ESP_ERR_INVALID_STATE;
+            }
+            break;
+
+        case DNS_STATE_STOPPED:
+        default:
+            s_redirect_ip = *redirect_ip;
+            s_dns_state = DNS_STATE_STARTING;
+            xEventGroupClearBits(s_dns_events,
+                                 DNS_EVT_RUNNING | DNS_EVT_STOPPED |
+                                     DNS_EVT_START_FAILED);
+            if (xTaskCreate(dns_task, "dns_hijack", DNS_TASK_STACK_SIZE, NULL,
+                            DNS_TASK_PRIORITY, &s_dns_task) != pdPASS) {
+                s_dns_task = NULL;
+                s_dns_state = DNS_STATE_STOPPED;
+                xSemaphoreGive(s_dns_mutex);
+                ESP_LOGE(TAG, "Could not create captive DNS task");
+                return ESP_ERR_NO_MEM;
+            }
+            xSemaphoreGive(s_dns_mutex);
+
+            EventBits_t bits = xEventGroupWaitBits(
+                s_dns_events, DNS_EVT_RUNNING | DNS_EVT_START_FAILED, pdFALSE,
+                pdFALSE, pdMS_TO_TICKS(DNS_START_TIMEOUT_MS));
+            if ((bits & DNS_EVT_RUNNING) != 0) return ESP_OK;
+            if ((bits & DNS_EVT_START_FAILED) != 0)
+                return ESP_ERR_INVALID_STATE;
+            ESP_LOGE(TAG, "Timed out waiting for captive DNS start");
+            return ESP_ERR_TIMEOUT;
+        }
     }
-    return 0;
+
+    ESP_LOGE(TAG, "Captive DNS did not reach RUNNING state");
+    return ESP_ERR_INVALID_STATE;
 }
 
-void dns_hijack_stop(void)
+esp_err_t dns_hijack_stop(void)
 {
-    s_running = false;
+    if (!s_dns_sync_ready) return ESP_OK;
+
+    xSemaphoreTake(s_dns_mutex, portMAX_DELAY);
+    if (s_dns_state == DNS_STATE_STOPPED) {
+        xSemaphoreGive(s_dns_mutex);
+        return ESP_OK;
+    }
+    s_dns_state = DNS_STATE_STOPPING;
     int sock = s_dns_socket;
+    xSemaphoreGive(s_dns_mutex);
+
     if (sock >= 0) shutdown(sock, SHUT_RDWR);
+
+    EventBits_t bits =
+        xEventGroupWaitBits(s_dns_events, DNS_EVT_STOPPED, pdFALSE, pdFALSE,
+                            pdMS_TO_TICKS(DNS_STOP_TIMEOUT_MS));
+    if ((bits & DNS_EVT_STOPPED) == 0) {
+        /* Lifecycle stays STOPPING; new starts stay rejected until the old
+         * task signals DNS_EVT_STOPPED. */
+        ESP_LOGE(TAG, "Timed out stopping captive DNS");
+        return ESP_ERR_TIMEOUT;
+    }
+    return ESP_OK;
+}
+
+bool dns_hijack_is_running(void)
+{
+    if (!s_dns_sync_ready) return false;
+
+    xSemaphoreTake(s_dns_mutex, portMAX_DELAY);
+    bool running = s_dns_state == DNS_STATE_RUNNING;
+    xSemaphoreGive(s_dns_mutex);
+    return running;
 }
