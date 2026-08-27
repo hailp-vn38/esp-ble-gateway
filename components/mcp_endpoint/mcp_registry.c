@@ -10,6 +10,10 @@
 // Strict tool registry: the only tools exposed over MCP. tools/list is built
 // exclusively from this table, closing the hidden command surface that the
 // old unknown-tool fallback allowed.
+//
+// Admin tools (add_device, edit_device, delete_device) are NOT exposed
+// through the MCP control/voice profile per spec §12. They remain
+// available through Web UI / REST admin only.
 
 #define MAX_LEN_OF(field) ((int)(sizeof(((gw_message_t *)0)->field) - 1))
 
@@ -38,6 +42,7 @@ static cJSON *new_object_schema(void)
     }
     cJSON_AddStringToObject(schema, "type", "object");
     cJSON_AddItemToObject(schema, "properties", properties);
+    cJSON_AddBoolToObject(schema, "additionalProperties", false);
     return schema;
 }
 
@@ -49,95 +54,9 @@ static cJSON *new_object_schema(void)
         return NULL;              \
     } while (0)
 
-static cJSON *schema_add_device(void)
+static cJSON *schema_empty(void)
 {
-    cJSON *schema = new_object_schema();
-    if (schema == NULL) return NULL;
-    cJSON *properties = cJSON_GetObjectItemCaseSensitive(schema, "properties");
-    if (!add_string_field(properties, "device_id", MAX_LEN_OF(device_id),
-                          "Unique device identifier") ||
-        !add_string_field(properties, "name", MAX_LEN_OF(name), NULL) ||
-        !add_string_field(properties, "device_type",
-                          MAX_LEN_OF(device_type), NULL)) {
-        SCHEMA_FAIL(schema);
-    }
-    cJSON *required = cJSON_CreateArray();
-    if (required == NULL) SCHEMA_FAIL(schema);
-    cJSON_AddItemToArray(required, cJSON_CreateString("device_id"));
-    cJSON_AddItemToObject(schema, "required", required);
-
-    cJSON *addr = cJSON_CreateObject();
-    if (addr == NULL) SCHEMA_FAIL(schema);
-    cJSON_AddStringToObject(addr, "type", "string");
-    cJSON_AddStringToObject(addr, "pattern",
-                            "^([0-9A-Fa-f]{2}:){5}[0-9A-Fa-f]{2}$");
-    cJSON_AddStringToObject(addr, "description", "BLE address (AA:BB:CC:DD:EE:FF)");
-    cJSON_AddItemToObject(properties, "ble_addr", addr);
-
-    cJSON *addr_type = cJSON_CreateObject();
-    if (addr_type == NULL) SCHEMA_FAIL(schema);
-    cJSON_AddStringToObject(addr_type, "type", "integer");
-    cJSON_AddNumberToObject(addr_type, "minimum", 0);
-    cJSON_AddNumberToObject(addr_type, "maximum", 1);
-    cJSON_AddStringToObject(addr_type, "description",
-                            "0 = public address, 1 = random address");
-    cJSON_AddItemToObject(properties, "ble_addr_type", addr_type);
-    return schema;
-}
-
-static cJSON *schema_edit_device(void)
-{
-    cJSON *schema = new_object_schema();
-    if (schema == NULL) return NULL;
-    cJSON *properties = cJSON_GetObjectItemCaseSensitive(schema, "properties");
-    if (!add_string_field(properties, "device_id", MAX_LEN_OF(device_id),
-                          "Device to edit") ||
-        !add_string_field(properties, "name", MAX_LEN_OF(name), NULL) ||
-        !add_string_field(properties, "device_type",
-                          MAX_LEN_OF(device_type), NULL)) {
-        SCHEMA_FAIL(schema);
-    }
-    // At least one editable field must be present.
-    cJSON *any_of = cJSON_CreateArray();
-    cJSON *branch_name = cJSON_CreateObject();
-    cJSON *branch_type = cJSON_CreateObject();
-    if (any_of == NULL || branch_name == NULL || branch_type == NULL) {
-        cJSON_Delete(any_of);
-        cJSON_Delete(branch_name);
-        cJSON_Delete(branch_type);
-        SCHEMA_FAIL(schema);
-    }
-    cJSON *req_name = cJSON_CreateArray();
-    cJSON *req_type = cJSON_CreateArray();
-    if (req_name == NULL || req_type == NULL) {
-        cJSON_Delete(req_name);
-        cJSON_Delete(req_type);
-        SCHEMA_FAIL(schema);
-    }
-    cJSON_AddItemToArray(req_name, cJSON_CreateString("name"));
-    cJSON_AddItemToArray(req_type, cJSON_CreateString("device_type"));
-    cJSON_AddItemToObject(branch_name, "required", req_name);
-    cJSON_AddItemToObject(branch_type, "required", req_type);
-    cJSON_AddItemToArray(any_of, branch_name);
-    cJSON_AddItemToArray(any_of, branch_type);
-    cJSON_AddItemToObject(schema, "anyOf", any_of);
-    return schema;
-}
-
-static cJSON *schema_delete_device(void)
-{
-    cJSON *schema = new_object_schema();
-    if (schema == NULL) return NULL;
-    cJSON *properties = cJSON_GetObjectItemCaseSensitive(schema, "properties");
-    if (!add_string_field(properties, "device_id", MAX_LEN_OF(device_id),
-                          "Device to delete and disconnect")) {
-        SCHEMA_FAIL(schema);
-    }
-    cJSON *required = cJSON_CreateArray();
-    if (required == NULL) SCHEMA_FAIL(schema);
-    cJSON_AddItemToArray(required, cJSON_CreateString("device_id"));
-    cJSON_AddItemToObject(schema, "required", required);
-    return schema;
+    return new_object_schema();
 }
 
 static cJSON *schema_device_id(void)
@@ -154,11 +73,6 @@ static cJSON *schema_device_id(void)
     cJSON_AddItemToArray(required, cJSON_CreateString("device_id"));
     cJSON_AddItemToObject(schema, "required", required);
     return schema;
-}
-
-static cJSON *schema_empty(void)
-{
-    return new_object_schema();
 }
 
 static cJSON *schema_device_command(void)
@@ -196,17 +110,29 @@ static cJSON *schema_device_command(void)
     cJSON_AddItemToArray(required, cJSON_CreateString("device_id"));
     cJSON_AddItemToArray(required, cJSON_CreateString("command"));
     cJSON_AddItemToObject(schema, "required", required);
+
+    // Add minLength constraints per spec §13.4
+    cJSON *device_id_schema =
+        cJSON_GetObjectItemCaseSensitive(properties, "device_id");
+    if (device_id_schema != NULL) {
+        cJSON_AddNumberToObject(device_id_schema, "minLength", 1);
+    }
+    cJSON *command_schema =
+        cJSON_GetObjectItemCaseSensitive(properties, "command");
+    if (command_schema != NULL) {
+        cJSON_AddNumberToObject(command_schema, "minLength", 1);
+    }
+
     return schema;
 }
 
 #undef SCHEMA_FAIL
 
+// MCP control profile tools only — admin CRUD is excluded per spec §12.
+// Deterministic order for stable caching and prompt behavior (spec §37).
 static const mcp_tool_desc_t MCP_TOOL_TABLE[] = {
-    {"add_device", "Add a BLE device to the gateway", schema_add_device, false, false},
-    {"edit_device", "Edit a stored device", schema_edit_device, false, false},
-    {"delete_device", "Delete and disconnect a device", schema_delete_device, false, true},
-    {"list_devices", "List devices known by the gateway", schema_empty, true, false},
     {"get_status", "Get gateway and BLE status", schema_empty, true, false},
+    {"list_devices", "List devices known by the gateway", schema_empty, true, false},
     {"list_device_capabilities", "List commands advertised by a BLE device",
      schema_device_id, true, false},
     {"device_command", "Send an allowlisted command to a device",
@@ -239,7 +165,12 @@ int mcp_registry_build_tools_list(cJSON *tools_array, cJSON *names_array)
         cJSON_AddItemToObject(tool, "inputSchema", schema);
         cJSON_AddBoolToObject(annotations, "readOnlyHint", desc->read_only);
         cJSON_AddBoolToObject(annotations, "destructiveHint", desc->destructive);
-        cJSON_AddBoolToObject(annotations, "idempotentHint", desc->read_only);
+        // idempotentHint: only true for read-only tools; device_command
+        // is a generic tool and cannot guarantee idempotency for all
+        // dynamic commands, so omit it for non-read-only tools (spec §26).
+        if (desc->read_only) {
+            cJSON_AddBoolToObject(annotations, "idempotentHint", true);
+        }
         cJSON_AddItemToObject(tool, "annotations", annotations);
         cJSON_AddItemToArray(tools_array, tool);
 

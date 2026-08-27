@@ -24,18 +24,31 @@
 // Bounded retries when httpd_req_recv reports HTTPD_SOCK_ERR_TIMEOUT.
 #define MCP_MAX_RECV_RETRIES 3
 
-// Extended JSON-RPC error codes (wire contract, see README §7).
-// -32020: transport/header mismatch (bad or unsupported headers)
-// -32021: auth/capability denial (token, host, origin, rate limit)
-// -32022: protocol version not supported
-#define MCP_ERR_HEADER   -32020
-#define MCP_ERR_AUTH     -32021
-#define MCP_ERR_VERSION  -32022
+// JSON-RPC extended error codes.
+// -32020..-32022: MCP protocol-defined (must NOT be reused for other purposes).
+//   -32020: HeaderMismatch (Mcp-Method/Mcp-Name mismatch)
+//   -32021: MissingRequiredClientCapability
+//   -32022: UnsupportedProtocolVersion
+// -32000..-32019: project-local gateway errors.
+//   -32000: Gateway busy (queue full)
+//   -32001: Device unavailable
+//   -32002: Command denied
+//   -32003: Capability unavailable
+// Auth/security failures use HTTP 401/403, NOT JSON-RPC error codes.
+#define MCP_ERR_HEADER               -32020
+#define MCP_ERR_MISSING_CAPABILITY   -32021
+#define MCP_ERR_UNSUPPORTED_VERSION  -32022
+#define MCP_ERR_GATEWAY_BUSY         -32000
+#define MCP_ERR_DEVICE_UNAVAILABLE   -32001
+#define MCP_ERR_COMMAND_DENIED       -32002
+#define MCP_ERR_CAPABILITY_UNKNOWN   -32003
 
 #define MCP_META_KEY_PROTOCOL_VERSION "io.modelcontextprotocol/protocolVersion"
-#define MCP_META_KEY_SERVER           "io.modelcontextprotocol/server"
+#define MCP_META_KEY_CLIENT_INFO      "io.modelcontextprotocol/clientInfo"
+#define MCP_META_KEY_CLIENT_CAPS      "io.modelcontextprotocol/clientCapabilities"
+#define MCP_META_KEY_SERVER_INFO      "io.modelcontextprotocol/serverInfo"
 #define MCP_TOOLS_CACHE_TTL_MS        60000
-#define MCP_TOOLS_CACHE_SCOPE         "mcp-endpoint"
+#define MCP_TOOLS_CACHE_SCOPE         "private"
 
 typedef struct {
     int code;
@@ -43,10 +56,12 @@ typedef struct {
 } mcp_rpc_error_t;
 
 // Per-request wire metadata extracted from HTTP headers by mcp_codec.
+// Only stores routing-relevant data; full _meta tree is NOT kept.
 typedef struct {
-    bool mcp_2026;    // request opted into the 2026-07-28 wire format
-    char mcp_method[24];
-    char mcp_name[64];
+    bool mcp_2026;          // request opted into the 2026-07-28 wire format
+    char mcp_method[32];    // from Mcp-Method header
+    char mcp_name[64];      // from Mcp-Name header (may be Base64-encoded)
+    bool has_name;          // true when Mcp-Name header was present
 } mcp_request_meta_t;
 
 // ---------------------------------------------------------------------------
@@ -117,6 +132,15 @@ typedef enum {
     MCP_RESOLVE_INVALID,
 } mcp_resolve_status_t;
 
+// Policy evaluation result per spec §16.
+typedef enum {
+    MCP_POLICY_ALLOW = 0,
+    MCP_POLICY_DENY_COMMAND,        // command not in allowlist
+    MCP_POLICY_DENY_DESTRUCTIVE,    // destructive command denied in control profile
+    MCP_POLICY_DEVICE_UNAVAILABLE,  // device not in store
+    MCP_POLICY_CAPABILITY_UNKNOWN,  // capabilities not ready / command not advertised
+} mcp_policy_result_t;
+
 // Validates params and normalizes them into a gw_message_t without touching
 // the dispatcher. On MCP_RESOLVE_ALLOWLIST_DENIED, denial_text receives a
 // short human-readable reason.
@@ -147,6 +171,16 @@ typedef struct {
 
 const mcp_tool_desc_t *mcp_registry_find(const char *name);
 int mcp_registry_build_tools_list(cJSON *tools_array, cJSON *names_array);
+
+// ---------------------------------------------------------------------------
+// MCP policy (mcp_policy.c)
+// ---------------------------------------------------------------------------
+
+// Evaluate whether a device command is allowed through MCP control profile.
+// Sequence: device exists -> capabilities ready -> command advertised ->
+// allowlist check -> destructive guard.
+mcp_policy_result_t mcp_policy_check_device_command(const char *device_id,
+                                                     const char *command);
 
 // ---------------------------------------------------------------------------
 // Auth / request gating (mcp_auth.c)
@@ -193,7 +227,33 @@ int mcp_codec_set_legacy_override(int value);
 //   MCP_ERR_VERSION  header missing while legacy disabled, or unsupported value
 int mcp_codec_parse_meta(httpd_req_t *req, mcp_request_meta_t *meta);
 
-// Builds the server/discover result payload (server identity + capabilities).
+// Builds the server/discover result payload (target MCP 2026-07-28 shape).
 cJSON *mcp_codec_build_discovery(void);
+
+// ---------------------------------------------------------------------------
+// Protocol validation (mcp_codec.c)
+// ---------------------------------------------------------------------------
+
+// Validate required _meta fields in the parsed JSON body.
+// Returns 0 on success, JSON-RPC error code on failure.
+int mcp_protocol_validate_meta(const cJSON *root);
+
+// Validate header/body consistency:
+//   - Mcp-Method must exist and match body "method"
+//   - Mcp-Name must exist for tools/call and match params.name
+// Returns 0 on success, -32020 (HeaderMismatch) on failure.
+int mcp_protocol_validate_headers(const cJSON *root,
+                                  const mcp_request_meta_t *meta);
+
+// Decode a potentially Base64-encoded Mcp-Name value.
+// If the value is plain header-safe text, returns it directly.
+// If it starts with the Base64 sentinel prefix, decodes and returns
+// the decoded name. Returns NULL on decode error or buffer overflow.
+// Caller must free() the returned string.
+char *mcp_protocol_decode_name(const char *raw_name);
+
+// Add result._meta["io.modelcontextprotocol/serverInfo"] to a cJSON object.
+// Returns false on OOM.
+bool mcp_result_add_server_info(cJSON *result);
 
 #endif /* MCP_ENDPOINT_INTERNAL_H */

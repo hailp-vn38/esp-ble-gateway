@@ -47,23 +47,11 @@ static cJSON *build_envelope(cJSON *response_id)
     return response;
 }
 
-// Attaches the 2026-07-28 _meta block (protocol version + server identity).
+// Attaches server identity to result._meta per MCP 2026-07-28.
+// Uses mcp_result_add_server_info() from mcp_codec.c.
 static bool add_meta(cJSON *response)
 {
-    cJSON *meta = cJSON_CreateObject();
-    cJSON *server = cJSON_CreateObject();
-    if (meta == NULL || server == NULL) {
-        cJSON_Delete(meta);
-        cJSON_Delete(server);
-        return false;
-    }
-    cJSON_AddStringToObject(meta, MCP_META_KEY_PROTOCOL_VERSION,
-                            MCP_PROTOCOL_VERSION_2026);
-    cJSON_AddStringToObject(server, "name", MCP_SERVER_NAME);
-    cJSON_AddStringToObject(server, "version", MCP_SERVER_VERSION);
-    cJSON_AddItemToObject(meta, MCP_META_KEY_SERVER, server);
-    cJSON_AddItemToObject(response, "_meta", meta);
-    return true;
+    return mcp_result_add_server_info(response);
 }
 
 static esp_err_t finish_error(httpd_req_t *request, cJSON *envelope,

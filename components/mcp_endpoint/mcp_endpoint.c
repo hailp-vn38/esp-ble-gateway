@@ -138,6 +138,7 @@ static esp_err_t send_gate_error(httpd_req_t *request, mcp_gate_status_t gate)
 {
     // The request body was never read: keep-alive would desync on the next
     // pipelined request, so every gate rejection closes the connection.
+    const mcp_transport_t *io = mcp_transport_get();
     const char *status = "400 Bad Request";
     switch (gate) {
     case MCP_GATE_RATE_LIMITED:
@@ -156,17 +157,18 @@ static esp_err_t send_gate_error(httpd_req_t *request, mcp_gate_status_t gate)
         return ESP_OK;
     }
 
-    int code = (gate == MCP_GATE_BAD_CONTENT_TYPE) ? -32600 : MCP_ERR_AUTH;
+    // Auth/security failures use plain HTTP error, no JSON-RPC envelope.
+    io->set_status(request, status);
+    io->set_hdr(request, "Connection", "close");
     if (gate == MCP_GATE_UNAUTHORIZED) {
-        s_transport.set_hdr(request, "WWW-Authenticate", "Bearer");
+        io->set_hdr(request, "WWW-Authenticate", "Bearer");
     }
-    return mcp_rpc_send_error_ex(request, code, status, NULL, NULL, status,
-                                 true);
+    return io->send_err(request, HTTPD_500_INTERNAL_SERVER_ERROR, status);
 }
 
 // Transport-specific completion context for device commands dispatched
-// through the shared command executor (Plan v2 §67): no MCP-owned worker or
-// queue, only formatting and socket release.
+// through the shared command executor: no MCP-owned worker or queue,
+// only formatting and socket release.
 typedef struct {
     httpd_req_t *request;
     cJSON *id; // NULL for notifications; ownership moves to the callback
@@ -194,8 +196,8 @@ static void mcp_device_command_completion(const dispatch_result_t *result,
                 context->id, &context->meta, NULL, false);
         }
     }
-    // Notifications answer without a response body (parity with the previous
-    // async worker); the socket is released either way.
+    // Notifications answer without a response body; the socket is
+    // released either way.
 
     if (context->id != NULL) cJSON_Delete(context->id);
     if (mcp_transport_get()->async_complete(context->request) != ESP_OK) {
@@ -252,19 +254,37 @@ static esp_err_t handle_tools_call(httpd_req_t *request, cJSON *root,
                 free(context);
                 if (submitted == ESP_ERR_NO_MEM) {
                     return mcp_rpc_send_error_ex(
-                        request, -32000, "Busy: command queue full", id, meta,
+                        request, MCP_ERR_GATEWAY_BUSY,
+                        "Busy: command queue full", id, meta,
                         "503 Service Unavailable", false);
                 }
-                // Executor unavailable entirely: degrade to synchronous
-                // execution rather than lying with a 503.
+                // Executor unavailable entirely -> 503, no sync fallback.
+                if (id != NULL) {
+                    return mcp_rpc_send_error_ex(
+                        request, -32603, "Executor unavailable", id, meta,
+                        "503 Service Unavailable", false);
+                }
+                return ESP_OK;  // notification, no response needed
             } else {
                 s_transport.async_complete(request);
                 cJSON_Delete(id_copy);
-                // Out of memory for the context: degrade to synchronous.
+                // OOM for context -> 503, no sync fallback.
+                if (id != NULL) {
+                    return mcp_rpc_send_error_ex(
+                        request, -32603, "Out of memory", id, meta,
+                        "503 Service Unavailable", false);
+                }
+                return ESP_OK;
             }
         } else {
             cJSON_Delete(id_copy);
-            // Async handoff unavailable: fall through to synchronous execution.
+            // Async handoff unavailable -> 503, no sync fallback.
+            if (id != NULL) {
+                return mcp_rpc_send_error_ex(
+                    request, -32603, "Async unavailable", id, meta,
+                    "503 Service Unavailable", false);
+            }
+            return ESP_OK;
         }
     }
 
@@ -306,8 +326,9 @@ esp_err_t mcp_handle_request(httpd_req_t *request)
     int version_check = mcp_codec_parse_meta(request, &meta);
     if (version_check != 0) {
         return mcp_rpc_send_error_ex(
-            request, MCP_ERR_VERSION, "Unsupported MCP-Protocol-Version", NULL,
-            NULL, "400 Bad Request", true);
+            request, MCP_ERR_UNSUPPORTED_VERSION,
+            "Unsupported MCP-Protocol-Version", NULL, NULL,
+            "400 Bad Request", true);
     }
 
     char *body = NULL;
@@ -336,7 +357,6 @@ esp_err_t mcp_handle_request(httpd_req_t *request)
         return mcp_rpc_send_error(request, -32700, "Parse error", NULL);
     }
     if (!cJSON_IsObject(root)) {
-        // Valid JSON but wrong shape is an Invalid Request, not a parse error.
         cJSON_Delete(root);
         return mcp_rpc_send_error(request, -32600, "Invalid Request", NULL);
     }
@@ -357,9 +377,43 @@ esp_err_t mcp_handle_request(httpd_req_t *request)
     }
 
     bool notification = id == NULL;
+
+    // --- MCP 2026-07-28 protocol validation ---
+    if (meta.mcp_2026) {
+        // Validate required _meta in body
+        int meta_rc = mcp_protocol_validate_meta(root);
+        if (meta_rc != 0) {
+            const char *errmsg = "Invalid params";
+            const char *http_status = NULL;
+            if (meta_rc == MCP_ERR_UNSUPPORTED_VERSION) {
+                errmsg = "Unsupported protocol version";
+                http_status = "400 Bad Request";
+            }
+            esp_err_t outcome = mcp_rpc_send_error_ex(
+                request, meta_rc, errmsg, id, &meta, http_status, false);
+            cJSON_Delete(root);
+            return outcome;
+        }
+
+        // Validate header/body consistency (Mcp-Method match, Mcp-Name match)
+        int header_rc = mcp_protocol_validate_headers(root, &meta);
+        if (header_rc != 0) {
+            esp_err_t outcome = mcp_rpc_send_error_ex(
+                request, header_rc, "Header mismatch", id, &meta,
+                "400 Bad Request", false);
+            cJSON_Delete(root);
+            return outcome;
+        }
+    }
+
+    // --- Route to operation ---
     esp_err_t outcome;
-    if (strcmp(method->valuestring, "list_tools") == 0 ||
-        strcmp(method->valuestring, "tools/list") == 0) {
+    if (strcmp(method->valuestring, "tools/list") == 0) {
+        // Legacy alias "list_tools" only accepted in legacy mode
+        if (!meta.mcp_2026 &&
+            strcmp(method->valuestring, "list_tools") != 0) {
+            // Shouldn't reach here, but safety check
+        }
         cJSON *rpc_result = mcp_tools_list(&meta);
         if (rpc_result == NULL) {
             outcome = mcp_rpc_send_error(request, -32603, "Internal error", id);
@@ -369,8 +423,7 @@ esp_err_t mcp_handle_request(httpd_req_t *request)
         } else {
             outcome = mcp_rpc_send_result_ex(request, rpc_result, id, &meta);
         }
-    } else if (strcmp(method->valuestring, "call_tool") == 0 ||
-               strcmp(method->valuestring, "tools/call") == 0) {
+    } else if (strcmp(method->valuestring, "tools/call") == 0) {
         outcome = handle_tools_call(request, root, id, notification, &meta);
     } else if (strcmp(method->valuestring, "server/discover") == 0) {
         cJSON *rpc_result = mcp_codec_build_discovery();
@@ -382,8 +435,30 @@ esp_err_t mcp_handle_request(httpd_req_t *request)
         } else {
             outcome = mcp_rpc_send_result_ex(request, rpc_result, id, &meta);
         }
+    } else if (meta.mcp_2026) {
+        // Unknown method in MCP 2026 mode -> HTTP 404 + JSON-RPC -32601
+        outcome = mcp_rpc_send_error_ex(request, -32601, "Method not found",
+                                        id, &meta, "404 Not Found", false);
     } else {
-        outcome = mcp_rpc_send_error(request, -32601, "Method not found", id);
+        // Legacy aliases: list_tools, call_tool
+        if (strcmp(method->valuestring, "list_tools") == 0) {
+            cJSON *rpc_result = mcp_tools_list(&meta);
+            if (rpc_result == NULL) {
+                outcome =
+                    mcp_rpc_send_error(request, -32603, "Internal error", id);
+            } else if (notification) {
+                cJSON_Delete(rpc_result);
+                outcome = mcp_rpc_send_no_content(request);
+            } else {
+                outcome =
+                    mcp_rpc_send_result_ex(request, rpc_result, id, &meta);
+            }
+        } else if (strcmp(method->valuestring, "call_tool") == 0) {
+            outcome = handle_tools_call(request, root, id, notification, &meta);
+        } else {
+            outcome = mcp_rpc_send_error(request, -32601, "Method not found",
+                                         id);
+        }
     }
 
     cJSON_Delete(root);

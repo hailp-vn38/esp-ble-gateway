@@ -83,7 +83,10 @@ cJSON *mcp_tools_list(const mcp_request_meta_t *meta)
         cJSON_Delete(tool_names);
         return NULL;
     }
+
+    // MCP 2026-07-28 ListToolsResult requires resultType
     if (meta->mcp_2026) {
+        cJSON_AddStringToObject(result, "resultType", "complete");
         // Cache hints required by the 2026-07-28 ListToolsResult.
         cJSON_AddNumberToObject(result, "ttlMs", MCP_TOOLS_CACHE_TTL_MS);
         cJSON_AddStringToObject(result, "cacheScope", MCP_TOOLS_CACHE_SCOPE);
@@ -97,6 +100,15 @@ cJSON *mcp_tools_list(const mcp_request_meta_t *meta)
     }
     cJSON_AddItemToObject(result, "tools", tools);
     cJSON_AddItemToObject(result, "tool_names", tool_names);
+
+    // Add serverInfo to result._meta per MCP 2026-07-28
+    if (meta->mcp_2026) {
+        if (!mcp_result_add_server_info(result)) {
+            cJSON_Delete(result);
+            return NULL;
+        }
+    }
+
     return result;
 }
 
@@ -237,8 +249,36 @@ mcp_resolve_status_t mcp_tools_resolve(const cJSON *params, gw_message_t *msg,
             snprintf(denial_text, denial_len,
                      "command '%s' is not in the device command allowlist",
                      device_command);
-            *error = (mcp_rpc_error_t){0};
+            *error = (mcp_rpc_error_t){MCP_ERR_COMMAND_DENIED, "command denied"};
             return MCP_RESOLVE_ALLOWLIST_DENIED;
+        }
+
+        // Full policy check: device exists + capabilities + destructive guard
+        mcp_policy_result_t policy = mcp_policy_check_device_command(
+            device_id->valuestring, device_command);
+        if (policy == MCP_POLICY_DENY_COMMAND) {
+            snprintf(denial_text, denial_len,
+                     "command '%s' is not allowed by policy",
+                     device_command);
+            *error = (mcp_rpc_error_t){MCP_ERR_COMMAND_DENIED, "command denied"};
+            return MCP_RESOLVE_ALLOWLIST_DENIED;
+        }
+        if (policy == MCP_POLICY_DENY_DESTRUCTIVE) {
+            snprintf(denial_text, denial_len,
+                     "destructive command '%s' denied in control profile",
+                     device_command);
+            *error = (mcp_rpc_error_t){MCP_ERR_COMMAND_DENIED, "command denied"};
+            return MCP_RESOLVE_ALLOWLIST_DENIED;
+        }
+        if (policy == MCP_POLICY_DEVICE_UNAVAILABLE) {
+            *error = (mcp_rpc_error_t){MCP_ERR_DEVICE_UNAVAILABLE,
+                                       "device not found"};
+            return MCP_RESOLVE_INVALID;
+        }
+        if (policy == MCP_POLICY_CAPABILITY_UNKNOWN) {
+            *error = (mcp_rpc_error_t){MCP_ERR_CAPABILITY_UNKNOWN,
+                                       "device capabilities not ready"};
+            return MCP_RESOLVE_INVALID;
         }
         *is_device_command = true;
         return normalize_arguments(source, "device_command", device_command,
@@ -284,6 +324,13 @@ cJSON *mcp_tools_format_dispatch(const dispatch_result_t *result,
         cJSON_AddItemToArray(content, item);
         cJSON_AddItemToObject(out, "content", content);
         cJSON_AddBoolToObject(out, "isError", !ok);
+
+        // Add serverInfo to result._meta
+        if (!mcp_result_add_server_info(out)) {
+            cJSON_Delete(out);
+            *err = (mcp_rpc_error_t){-32603, "out of memory"};
+            return NULL;
+        }
     } else {
         cJSON_AddBoolToObject(out, "success", ok);
         cJSON_AddNumberToObject(out, "status", (int)result->status);

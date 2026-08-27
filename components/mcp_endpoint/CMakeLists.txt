@@ -5,7 +5,9 @@ idf_component_register(
          "mcp_registry.c"
          "mcp_auth.c"
          "mcp_codec.c"
+         "mcp_policy.c"
     INCLUDE_DIRS "include"
     REQUIRES esp_http_server cbor_codec command_dispatcher command_executor
+             device_capabilities device_store
              espressif__cjson nvs_flash esp_timer freertos
 )
