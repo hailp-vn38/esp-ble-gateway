@@ -1,0 +1,9 @@
+# Name,     Type, SubType, Offset,  Size,     Flags
+nvs,        data, nvs,     ,       128K,
+otadata,    data, ota,     ,       8K,
+phy_init,   data, phy,     ,       4K,
+nvs_keys,   data, nvs_keys,,       4K,
+ota_0,      app,  ota_0,   ,       5M,
+ota_1,      app,  ota_1,   ,       5M,
+storage,    data, spiffs,  ,       0x580000,
+coredump,   data, coredump,,       256K,

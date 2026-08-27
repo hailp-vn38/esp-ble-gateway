@@ -4,6 +4,8 @@
 #include <string.h>
 
 #include "esp_app_desc.h"
+#include "esp_heap_caps.h"
+#include "esp_psram.h"
 #include "esp_system.h"
 #include "esp_timer.h"
 #include "esp_wifi.h"
@@ -24,12 +26,10 @@ esp_err_t gateway_status_get(gateway_status_t *status)
         count = 0;
     }
     status->device_count = count;
-    // Connection state comes from the BLE runtime; the persistent store no
-    // longer mirrors it.
     for (size_t i = 0; i < count; i++) {
         ble_central_device_status_t device_status;
         if (ble_central_get_device_status(devices[i].device_id,
-                                          &device_status) == BLE_CENTRAL_OK &&
+                                           &device_status) == BLE_CENTRAL_OK &&
             device_status.connected) {
             status->connected_count++;
         }
@@ -67,5 +67,29 @@ esp_err_t gateway_status_get(gateway_status_t *status)
     } else {
         strlcpy(status->wifi_mac, "00:00:00:00:00:00", sizeof(status->wifi_mac));
     }
+
+    // Internal SRAM telemetry
+    status->internal_free = (uint32_t)heap_caps_get_free_size(
+        MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
+    status->internal_min_free =
+        (uint32_t)heap_caps_get_minimum_free_size(
+            MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
+    status->internal_largest_free_block =
+        (uint32_t)heap_caps_get_largest_free_block(
+            MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
+
+    // PSRAM telemetry
+    status->psram_ready = esp_psram_is_initialized();
+    if (status->psram_ready) {
+        status->psram_free = (uint32_t)heap_caps_get_free_size(
+            MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+        status->psram_min_free =
+            (uint32_t)heap_caps_get_minimum_free_size(
+                MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+        status->psram_largest_free_block =
+            (uint32_t)heap_caps_get_largest_free_block(
+                MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+    }
+
     return ESP_OK;
 }

@@ -212,10 +212,10 @@ void command_executor_get_stats(command_executor_stats_t *stats,
         for (size_t i = 0; i < CONFIG_CMD_EXEC_WORKER_COUNT; i++) {
             TaskHandle_t task = s_workers[i].task;
             if (task == NULL) continue;
-            UBaseType_t words = uxTaskGetStackHighWaterMark(task);
-            uint32_t bytes = (uint32_t)(words * sizeof(StackType_t));
+            UBaseType_t free_bytes = uxTaskGetStackHighWaterMark(task);
+            uint32_t bytes = (uint32_t)free_bytes;
             if (min_bytes == 0 || bytes < min_bytes) min_bytes = bytes;
         }
-        *worker_stack_min_bytes = min_bytes; // Plan v2 §55/§86
+        *worker_stack_min_bytes = min_bytes;
     }
 }

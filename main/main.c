@@ -11,6 +11,7 @@
 #include "command_executor.h"
 #include "device_store.h"
 #include "device_capabilities.h"
+#include "gateway_ota_validate.h"
 #include "mcp_endpoint.h"
 #include "web_server.h"
 #include "wifi_prov.h"
@@ -131,6 +132,12 @@ void app_main(void)
         ret = nvs_flash_init();
     }
     ESP_ERROR_CHECK(ret);
+
+    // OTA rollback validation — must run before any gateway services start.
+    if (gateway_ota_validate() != ESP_OK) {
+        ESP_LOGE(TAG, "OTA validation failed; gateway services not started");
+        return;
+    }
 
     if (wifi_prov_init() != 0) {
         ESP_LOGE(TAG, "Wi-Fi initialization failed; gateway services were not started");

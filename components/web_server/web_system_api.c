@@ -42,7 +42,32 @@ static esp_err_t status_get_handler(httpd_req_t *request)
             cJSON_AddNullToObject(json, "wifi_rssi");
         }
 
-        // Executor runtime metrics + worker stack headroom (Plan v2 §53-§55).
+        // Internal SRAM telemetry
+        cJSON *internal = cJSON_AddObjectToObject(json, "internal");
+        if (internal != NULL) {
+            cJSON_AddNumberToObject(internal, "free",
+                                    (double)status.internal_free);
+            cJSON_AddNumberToObject(internal, "min_free",
+                                    (double)status.internal_min_free);
+            cJSON_AddNumberToObject(internal, "largest_free_block",
+                                    (double)status.internal_largest_free_block);
+        }
+
+        // PSRAM telemetry
+        cJSON *psram = cJSON_AddObjectToObject(json, "psram");
+        if (psram != NULL) {
+            cJSON_AddBoolToObject(psram, "ready", status.psram_ready);
+            if (status.psram_ready) {
+                cJSON_AddNumberToObject(psram, "free",
+                                        (double)status.psram_free);
+                cJSON_AddNumberToObject(psram, "min_free",
+                                        (double)status.psram_min_free);
+                cJSON_AddNumberToObject(psram, "largest_free_block",
+                                        (double)status.psram_largest_free_block);
+            }
+        }
+
+        // Executor runtime metrics + worker stack headroom.
         command_executor_stats_t executor;
         uint32_t worker_stack_min = 0;
         command_executor_get_stats(&executor, &worker_stack_min);

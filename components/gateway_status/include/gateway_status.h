@@ -6,7 +6,7 @@
 
 #include "esp_err.h"
 
-// Aggregated gateway snapshot (Plan v2 §46). Single source of truth for
+// Aggregated gateway snapshot. Single source of truth for
 // REST /api/status, the dispatcher get_status command, and MCP.
 typedef struct {
     int device_count;
@@ -28,6 +28,17 @@ typedef struct {
     char wifi_mac[18];
     bool has_wifi_rssi;
     int wifi_rssi;
+
+    // Internal SRAM telemetry (Phase P4)
+    uint32_t internal_free;
+    uint32_t internal_min_free;
+    uint32_t internal_largest_free_block;
+
+    // PSRAM telemetry (Phase P4)
+    bool psram_ready;
+    uint32_t psram_free;
+    uint32_t psram_min_free;
+    uint32_t psram_largest_free_block;
 } gateway_status_t;
 
 // Fills status with a consistent point-in-time snapshot. Never blocks on

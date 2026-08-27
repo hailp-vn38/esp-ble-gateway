@@ -1,4 +1,5 @@
 #include <stdbool.h>
+#include <inttypes.h>
 #include <stdio.h>
 #include <string.h>
 
@@ -252,12 +253,21 @@ static void cmd_get_status(const gw_message_t *msg, dispatch_result_t *result)
         return;
     }
 
-    char payload[160];
+    char payload[512];
     snprintf(payload, sizeof(payload),
              "{\"status\":\"ok\",\"device_count\":%d,"
-             "\"connected_count\":%d,\"ble_link_count\":%d}",
+             "\"connected_count\":%d,\"ble_link_count\":%d,"
+             "\"internal\":{\"free\":%" PRIu32 ",\"min_free\":%" PRIu32 ","
+             "\"largest_free_block\":%" PRIu32 "},"
+             "\"psram\":{\"ready\":%s,\"free\":%" PRIu32 ",\"min_free\":%" PRIu32 ","
+             "\"largest_free_block\":%" PRIu32 "}}",
              status.device_count, status.connected_count,
-             status.ble_link_count);
+             status.ble_link_count,
+             status.internal_free, status.internal_min_free,
+             status.internal_largest_free_block,
+             status.psram_ready ? "true" : "false",
+             status.psram_free, status.psram_min_free,
+             status.psram_largest_free_block);
     command_dispatcher_set_json_result(result, DISPATCH_STATUS_OK, payload);
 }
 

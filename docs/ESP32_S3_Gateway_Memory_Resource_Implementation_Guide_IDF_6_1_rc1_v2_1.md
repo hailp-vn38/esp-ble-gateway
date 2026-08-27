@@ -2049,3 +2049,5 @@ Baseline code và target toolchain được đối chiếu với:
 
 **Trạng thái tài liệu:** Ready for implementation on pinned ESP-IDF v6.1-rc1 after completing Phase P-1 migration gate.  
 **Ưu tiên triển khai:** P-1 IDF migration → P0 stack metric → P1 PSRAM → P2 memory policy → P3 NimBLE lock → P4 telemetry → P5 HTTP audit → P6/P7 stack tuning → P8/P9 OTA → full stress.
+
+**v2.1.1 changelog:** Removed stale section-number references (§55/§86) from code comments; verified `SPIRAM_TYPE_AUTO` and `SPIRAM_BOOT_HW_INIT` exist in IDF v6.1-rc1 Kconfig.

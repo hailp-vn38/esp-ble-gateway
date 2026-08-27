@@ -1,1 +1,3 @@
+# ESP32-S3 specific overrides
+# BLE controller: 9 connections + 1 scan/reconnect = activity budget 10
 CONFIG_BT_CTRL_BLE_MAX_ACT=10

@@ -3,5 +3,5 @@ idf_component_register(
     INCLUDE_DIRS "include"
     REQUIRES device_store wifi_provisioning ble_central esp_wifi
              esp_app_format esp_timer esp_common
-    PRIV_REQUIRES esp_system
+    PRIV_REQUIRES esp_system esp_psram
 )

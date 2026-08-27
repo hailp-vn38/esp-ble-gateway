@@ -1,0 +1,25 @@
+menu "Memory Policy"
+
+    config GW_MEM_FALLBACK_MAX_BYTES
+        int "Max allocation size for EXTERNAL_PREFERRED fallback to internal (bytes)"
+        default 2048
+        help
+            Allocations larger than this via EXTERNAL_PREFERRED will never
+            fall back to internal SRAM.
+
+    config GW_MEM_INTERNAL_FLOOR_BYTES
+        int "Internal free floor before allowing fallback (bytes)"
+        default 65536
+        help
+            Minimum internal free heap required after a fallback allocation.
+            Fallback is denied if the post-allocation free would drop below
+            this threshold.
+
+    config GW_MEM_INTERNAL_LARGEST_FLOOR_BYTES
+        int "Internal largest-block floor before allowing fallback (bytes)"
+        default 32768
+        help
+            Minimum largest contiguous internal block required after a
+            fallback allocation.
+
+endmenu
