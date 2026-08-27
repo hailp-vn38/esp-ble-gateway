@@ -38,7 +38,6 @@ void ble_central_identity_submit(const char *device_id, const ble_addr_t *addr)
     if (device_id == NULL || addr == NULL || s_task == NULL) return;
 
     bool accepted = false;
-    bool overflow = false;
     uint32_t generation = 0;
 
     portENTER_CRITICAL(&s_lock);
@@ -63,8 +62,6 @@ void ble_central_identity_submit(const char *device_id, const ble_addr_t *addr)
         slot->dirty = true;
         generation = slot->generation;
         accepted = true;
-    } else {
-        overflow = true;
     }
     portEXIT_CRITICAL(&s_lock);
 

@@ -396,7 +396,6 @@ static void discovery_done(device_cap_submit_result_t result, void *context)
 static void start_next_pending(void)
 {
     char device_id[GW_MSG_DEVICE_ID_LEN] = {0};
-    uint32_t op_id = 0;
     device_cap_operation_kind_t kind = DEVICE_CAP_OP_NONE;
     uint32_t gen = 0;
 
@@ -410,7 +409,6 @@ static void start_next_pending(void)
             }
             strlcpy(device_id, s_records[i].committed.device_id,
                     sizeof(device_id));
-            op_id = s_records[i].operation_id;
             kind = s_records[i].operation_kind;
             gen = s_records[i].refresh_active.generation;
             break;
