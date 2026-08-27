@@ -14,9 +14,40 @@
 #include "unity.h"
 
 #include "web_modules.h"
+#include "web_http.h"
 
 #define TEST_PORT     8391
 #define RAW_BUF_LEN   2048
+
+TEST_CASE("query values are URL-decoded before device lookup", "[web_server]")
+{
+    char value[32];
+    TEST_ASSERT_EQUAL(
+        ESP_OK,
+        web_get_query_value(
+            "device_id=AA%3ABB%3ACC%3ADD%3AEE%3AFF", "device_id", value,
+            sizeof(value)));
+    TEST_ASSERT_EQUAL_STRING("AA:BB:CC:DD:EE:FF", value);
+
+    TEST_ASSERT_EQUAL(
+        ESP_OK,
+        web_get_query_value("device_id=sensor%26room%3D1", "device_id", value,
+                            sizeof(value)));
+    TEST_ASSERT_EQUAL_STRING("sensor&room=1", value);
+}
+
+TEST_CASE("query decoder rejects malformed and unsafe values", "[web_server]")
+{
+    char value[32];
+    TEST_ASSERT_NOT_EQUAL(
+        ESP_OK,
+        web_get_query_value("device_id=bad%3", "device_id", value,
+                            sizeof(value)));
+    TEST_ASSERT_NOT_EQUAL(
+        ESP_OK,
+        web_get_query_value("device_id=bad%00id", "device_id", value,
+                            sizeof(value)));
+}
 
 typedef struct {
     bool is_303;

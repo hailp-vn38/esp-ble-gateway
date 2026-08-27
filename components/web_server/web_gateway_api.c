@@ -238,8 +238,8 @@ static esp_err_t devices_delete_handler(httpd_req_t *request)
     char query[128];
     char device_id[GW_MSG_DEVICE_ID_LEN] = {0};
     if (httpd_req_get_url_query_str(request, query, sizeof(query)) != ESP_OK ||
-        httpd_query_key_value(query, "device_id", device_id,
-                              sizeof(device_id)) != ESP_OK ||
+        web_get_query_value(query, "device_id", device_id,
+                            sizeof(device_id)) != ESP_OK ||
         device_id[0] == '\0') {
         return web_send_api_error_code(request, "400 Bad Request", "Missing device_id",
                                         "invalid_request");
@@ -360,8 +360,8 @@ static esp_err_t capabilities_get_handler(httpd_req_t *request)
     char query[128];
     char device_id[GW_MSG_DEVICE_ID_LEN] = {0};
     if (httpd_req_get_url_query_str(request, query, sizeof(query)) != ESP_OK ||
-        httpd_query_key_value(query, "device_id", device_id,
-                              sizeof(device_id)) != ESP_OK ||
+        web_get_query_value(query, "device_id", device_id,
+                            sizeof(device_id)) != ESP_OK ||
         device_id[0] == '\0') {
         return web_send_api_error_code(request, "400 Bad Request",
                                        "Missing device_id", "invalid_request");

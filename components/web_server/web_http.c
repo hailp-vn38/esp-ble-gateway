@@ -168,6 +168,49 @@ const char *web_get_json_string(const cJSON *object, const char *key,
     return item->valuestring;
 }
 
+static int url_hex_value(char value)
+{
+    if (value >= '0' && value <= '9') return value - '0';
+    if (value >= 'a' && value <= 'f') return value - 'a' + 10;
+    if (value >= 'A' && value <= 'F') return value - 'A' + 10;
+    return -1;
+}
+
+esp_err_t web_get_query_value(const char *query, const char *key, char *value,
+                              size_t value_capacity)
+{
+    if (query == NULL || key == NULL || value == NULL || value_capacity == 0) {
+        return ESP_ERR_INVALID_ARG;
+    }
+
+    // Percent-encoding can expand each decoded byte to three characters.
+    char encoded[256];
+    esp_err_t error = httpd_query_key_value(query, key, encoded,
+                                             sizeof(encoded));
+    if (error != ESP_OK) return error;
+
+    size_t output = 0;
+    for (size_t input = 0; encoded[input] != '\0'; input++) {
+        unsigned char decoded;
+        if (encoded[input] == '%') {
+            int high = url_hex_value(encoded[input + 1]);
+            int low = high >= 0 ? url_hex_value(encoded[input + 2]) : -1;
+            if (high < 0 || low < 0) return ESP_ERR_INVALID_ARG;
+            decoded = (unsigned char)((high << 4) | low);
+            input += 2;
+        } else {
+            decoded = encoded[input] == '+' ? ' ' : (unsigned char)encoded[input];
+        }
+
+        if (decoded == '\0' || output + 1 >= value_capacity) {
+            return ESP_ERR_INVALID_ARG;
+        }
+        value[output++] = (char)decoded;
+    }
+    value[output] = '\0';
+    return ESP_OK;
+}
+
 esp_err_t web_register_routes(httpd_handle_t server, const httpd_uri_t *routes,
                               size_t route_count)
 {

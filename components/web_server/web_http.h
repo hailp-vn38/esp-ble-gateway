@@ -43,6 +43,10 @@ cJSON *web_parse_request_json(httpd_req_t *request, char *buffer,
                               size_t capacity, web_body_status_t *status);
 const char *web_get_json_string(const cJSON *object, const char *key,
                                 size_t max_length, bool required);
+// Extracts and URL-decodes one query value. Rejects malformed percent escapes,
+// decoded NUL bytes, and values that do not fit in the destination buffer.
+esp_err_t web_get_query_value(const char *query, const char *key, char *value,
+                              size_t value_capacity);
 esp_err_t web_register_routes(httpd_handle_t server, const httpd_uri_t *routes,
                               size_t route_count);
 
