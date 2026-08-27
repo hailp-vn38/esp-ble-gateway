@@ -688,7 +688,6 @@
 
                 // Trigger specific view logic
                 if(tabId === 'devices') devices.renderGrid();
-                if(tabId === 'settings') settings.load();
                 if(tabId === 'scanner') {
                     if(!state.isScanning && state.scannedDevices.length === 0) {
                         // Optional: auto-start scan on view open
@@ -830,7 +829,7 @@
             container: null,
             init() {
                 this.container = document.getElementById('log-content');
-                this.refresh();
+                if (SHOW_SYSTEM_LOGS) this.refresh();
             },
             levelMeta(text) {
                 const marker = String(text).match(/^(E|W|I|D|V)\s*\(/)?.[1] || 'I';
@@ -876,6 +875,8 @@
                 if (stick) this.container.scrollTop = this.container.scrollHeight;
             },
             async refresh() {
+                if (!SHOW_SYSTEM_LOGS) return;
+
                 try {
                     state.systemLogs = await api.getLogs();
                     this.renderSystemLogs();
@@ -1552,9 +1553,6 @@
         window.addEventListener('DOMContentLoaded', async () => {
             logger.init();
             await Promise.all([devices.load(), settings.load()]);
-            setInterval(() => devices.load(), 5000);
-            setInterval(() => logger.refresh(), 2000);
-            setInterval(() => settings.load(), 10000);
         });
 
     </script>
