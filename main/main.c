@@ -11,7 +11,6 @@
 #include "command_executor.h"
 #include "device_store.h"
 #include "device_capabilities.h"
-#include "log_buffer.h"
 #include "mcp_endpoint.h"
 #include "web_server.h"
 #include "wifi_prov.h"
@@ -112,11 +111,6 @@ static void on_board_io_event(board_io_event_t event, void *context)
 
 void app_main(void)
 {
-    esp_err_t log_error = log_buffer_init();
-    if (log_error != ESP_OK) {
-        ESP_LOGW(TAG, "RAM log buffer unavailable: %s", esp_err_to_name(log_error));
-    }
-
     esp_err_t io_rc = board_io_init();
     if (io_rc == ESP_OK) {
         if (board_io_register_event_handler(on_board_io_event, NULL) != ESP_OK) {

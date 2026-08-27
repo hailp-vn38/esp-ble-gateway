@@ -6,58 +6,11 @@
 
 #include "cJSON.h"
 #include "esp_timer.h"
-#include "freertos/FreeRTOS.h"
-#include "freertos/semphr.h"
 
 #include "command_executor.h"
 #include "gateway_status.h"
-#include "log_buffer.h"
 #include "web_http.h"
 #include "wifi_prov.h"
-
-#define LOG_API_MAX_ENTRIES LOG_BUFFER_CAPACITY
-
-static log_entry_t s_log_snapshot[LOG_API_MAX_ENTRIES];
-static SemaphoreHandle_t s_log_mutex;
-
-static esp_err_t ensure_resources(void)
-{
-    if (s_log_mutex == NULL) s_log_mutex = xSemaphoreCreateMutex();
-    return s_log_mutex != NULL ? ESP_OK : ESP_ERR_NO_MEM;
-}
-
-static esp_err_t logs_get_handler(httpd_req_t *request)
-{
-    if (xSemaphoreTake(s_log_mutex, pdMS_TO_TICKS(1000)) != pdTRUE) {
-        return web_send_api_error(request, "503 Service Unavailable",
-                                  "Log buffer is busy");
-    }
-
-    int count = log_buffer_get_recent(s_log_snapshot, LOG_API_MAX_ENTRIES);
-    cJSON *array = NULL;
-    if (count >= 0) {
-        array = cJSON_CreateArray();
-        for (int i = 0; array != NULL && i < count; i++) {
-            cJSON *item = cJSON_CreateObject();
-            if (item == NULL) {
-                cJSON_Delete(array);
-                array = NULL;
-                break;
-            }
-            cJSON_AddStringToObject(item, "text", s_log_snapshot[i].text);
-            cJSON_AddNumberToObject(item, "timestamp_ms",
-                                    s_log_snapshot[i].uptime_ms);
-            cJSON_AddItemToArray(array, item);
-        }
-    }
-    xSemaphoreGive(s_log_mutex);
-
-    if (count < 0) {
-        return web_send_api_error(request, "500 Internal Server Error",
-                                  "Could not read logs");
-    }
-    return web_send_json(request, array);
-}
 
 static esp_err_t status_get_handler(httpd_req_t *request)
 {
@@ -154,12 +107,7 @@ static esp_err_t provisioning_status_get_handler(httpd_req_t *request)
 
 esp_err_t web_system_api_register_gateway(httpd_handle_t server)
 {
-    esp_err_t init_error = ensure_resources();
-    if (init_error != ESP_OK) return init_error;
-
     static const httpd_uri_t routes[] = {
-        {.uri = "/api/logs", .method = HTTP_GET,
-         .handler = logs_get_handler},
         {.uri = "/api/status", .method = HTTP_GET,
          .handler = status_get_handler},
         {.uri = "/api/restart", .method = HTTP_POST,
@@ -170,14 +118,9 @@ esp_err_t web_system_api_register_gateway(httpd_handle_t server)
 
 esp_err_t web_system_api_register_provisioning(httpd_handle_t server)
 {
-    esp_err_t init_error = ensure_resources();
-    if (init_error != ESP_OK) return init_error;
-
     static const httpd_uri_t routes[] = {
         {.uri = "/api/status", .method = HTTP_GET,
          .handler = provisioning_status_get_handler},
-        {.uri = "/api/logs", .method = HTTP_GET,
-         .handler = logs_get_handler},
     };
     return web_register_routes(server, routes, WEB_ARRAY_SIZE(routes));
 }

@@ -24,11 +24,6 @@ CONFIG_MCP_LEGACY_MODE=y
 # Short deadline so the expiry test finishes quickly on target.
 CONFIG_CMD_EXEC_JOB_TIMEOUT_MS=1000
 
-# ==== Log buffer under test ====
-# Deterministic contention test needs the ring mutex handle; metric reset
-# needs the test-only counter helper.
-CONFIG_LOG_BUFFER_TEST_HELPERS=y
-
 # ==== Board I/O under test ====
 # Button on a safe input pin exercises debounce/FSM through the module;
 # display capability is compiled in with the "none" backend so disabled

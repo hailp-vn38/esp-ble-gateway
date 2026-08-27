@@ -14,7 +14,6 @@
 #include "ble_central.h"
 #include "ble_central_internal.h"
 #include "device_store.h"
-#include "message_trace.h"
 
 /* Provided by NimBLE's store/config component. */
 void ble_store_config_init(void);
@@ -284,15 +283,10 @@ int ble_central_send_command(const char *device_id, const gw_message_t *msg)
     int length = cbor_codec_encode(msg, buffer, sizeof(buffer));
     if (length <= 0) return BLE_CENTRAL_ERR_ENCODE;
 
-    uint32_t frame_id = message_trace_next_frame_id();
-    message_trace_tx_decoded(frame_id, device_id, msg, (size_t)length);
-    message_trace_tx_raw(frame_id, buffer, (size_t)length);
-
     if ((uint16_t)length > max_payload) {
         ble_central_metrics_mtu_reject();
         ESP_LOGE(TAG, "[%s] Payload %d exceeds MTU payload %u", device_id,
                  length, max_payload);
-        message_trace_tx_result(frame_id, -1);
         return BLE_CENTRAL_ERR_MESSAGE_TOO_LARGE;
     }
 
@@ -300,10 +294,8 @@ int ble_central_send_command(const char *device_id, const gw_message_t *msg)
                                          length);
     if (rc != 0) {
         ESP_LOGE(TAG, "[%s] GATT write failed: %d", device_id, rc);
-        message_trace_tx_result(frame_id, rc);
         return BLE_CENTRAL_ERR_STACK;
     }
-    message_trace_tx_result(frame_id, 0);
     return BLE_CENTRAL_OK;
 }
 

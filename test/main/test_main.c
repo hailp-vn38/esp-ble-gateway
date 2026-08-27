@@ -2,7 +2,6 @@
 #include "unity.h"
 
 #include "device_store.h"
-#include "log_buffer.h"
 
 void setUp(void)
 {
@@ -14,7 +13,6 @@ void setUp(void)
             device_store_delete(entries[i].device_id);
         }
     }
-    log_buffer_init();
 }
 
 void tearDown(void)

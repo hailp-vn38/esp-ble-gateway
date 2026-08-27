@@ -9,7 +9,7 @@ web_server.c        # start server 2 chế độ; route capacity constants
 web_http.c/.h       # helper chung: JSON/error/body/route registration
 web_assets.c        # assets nhúng (EMBED_FILES), CSP/security headers, captive redirect + 404 handler
 web_gateway_api.c   # /api/devices, /api/command, /api/capabilities*
-web_system_api.c    # /api/status, /api/logs, /api/restart
+web_system_api.c    # /api/status, /api/restart
 web_ble_api.c       # /api/ble/scan (esp_timer + deadline guard)
 web_wifi_api.c      # /api/wifi*, chỉ đăng ký ở provisioning mode
 www/                # dashboard.html, setup.html (gzip build-time), css, font
@@ -36,7 +36,6 @@ Server config: Gateway = 21 URI slots / stack 12288 · Provisioning = 14 / 8192.
 | `GET /api/capabilities?device_id=` | Đọc capability snapshot |
 | `POST /api/capabilities/refresh` | Enqueue discovery lại capability |
 | `GET /api/status` | Snapshot từ `gateway_status` + block `"executor"` metrics |
-| `GET /api/logs` | Log gần đây từ `log_buffer` |
 | `POST /api/restart` | Schedule restart sau 1s |
 | `GET/POST/DELETE /api/ble/scan` | Quét BLE: kết quả cache 20 thiết bị, auto-stop 6s |
 
@@ -47,7 +46,7 @@ Server config: Gateway = 21 URI slots / stack 12288 · Provisioning = 14 / 8192.
 | `GET /` | `setup.html.gz` (có chặn request inject AdGuard) |
 | `/generate_204`, `/hotspot-detect.html`, `/connecttest.txt`, `/ncsi.txt` | Captive probe → **303 See Other** `Location: /`, `Cache-Control: no-store`, body meta-refresh, nosniff + no-referrer |
 | URI bất kỳ không khớp route | **Captive 404 handler** → cùng 303 `/` (funnel mọi HTTP về portal) |
-| `GET /api/status`, `GET /api/logs` | Bản rút gọn cho setup UI |
+| `GET /api/status` | Bản rút gọn cho setup UI |
 | `POST /api/wifi/scan` · `GET` | Bắt đầu quét Wi-Fi (202) · lấy kết quả |
 | `GET /api/wifi` · `POST` | Trạng thái job connect · test+save credential (202, restart 4s sau khi thành công) |
 

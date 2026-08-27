@@ -10,5 +10,5 @@ idf_component_register(
         "ble_central_state.c"
         "ble_central_supervisor.c"
     INCLUDE_DIRS "include"
-    REQUIRES bt cbor_codec device_store message_trace
+    REQUIRES bt cbor_codec device_store
 )

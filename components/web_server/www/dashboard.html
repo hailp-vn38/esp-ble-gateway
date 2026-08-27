@@ -7,21 +7,6 @@
     <link href="/dashboard.css" rel="stylesheet">
     <link href="/icons.css" rel="stylesheet">
     <style>
-        /* Custom scrollbar for log area */
-        .log-container::-webkit-scrollbar {
-            width: 8px;
-        }
-        .log-container::-webkit-scrollbar-track {
-            background: #1e293b; 
-        }
-        .log-container::-webkit-scrollbar-thumb {
-            background: #475569; 
-            border-radius: 4px;
-        }
-        .log-container::-webkit-scrollbar-thumb:hover {
-            background: #64748b; 
-        }
-        
         /* Modal transition */
         .modal-enter { opacity: 0; transform: scale(0.95); }
         .modal-enter-active { opacity: 1; transform: scale(1); transition: opacity 0.2s, transform 0.2s; }
@@ -55,9 +40,6 @@
             </button>
             <button onclick="nav.switchTab('scanner')" id="nav-scanner" class="w-full flex items-center px-4 py-3 text-sm font-medium rounded-lg transition-colors hover:bg-dark-surface hover:text-white text-gray-300">
                 <i class="ph ph-broadcast text-lg mr-3"></i> Add Device
-            </button>
-            <button onclick="nav.switchTab('logs')" id="nav-logs" class="hidden w-full flex items-center px-4 py-3 text-sm font-medium rounded-lg transition-colors hover:bg-dark-surface hover:text-white text-gray-300">
-                <i class="ph ph-terminal-window text-lg mr-3"></i> System Logs
             </button>
             <button onclick="nav.switchTab('settings')" id="nav-settings" class="w-full flex items-center px-4 py-3 text-sm font-medium rounded-lg transition-colors hover:bg-dark-surface hover:text-white text-gray-300">
                 <i class="ph ph-gear text-lg mr-3"></i> Gateway Settings
@@ -154,9 +136,9 @@
                     </div>
                 </div>
 
-                <div class="grid grid-cols-1 md:grid-cols-3 gap-6 flex-1 min-h-0">
+                <div class="grid grid-cols-1 md:grid-cols-2 gap-6 flex-1 min-h-0">
                     <!-- Info Sidebar -->
-                    <div class="md:col-span-1 space-y-6 overflow-y-auto">
+                    <div class="space-y-6 overflow-y-auto">
                         <div class="bg-white p-5 rounded-xl border border-gray-200 shadow-sm">
                             <h3 class="font-semibold text-gray-900 mb-4 border-b border-gray-100 pb-2">Status</h3>
                             <div class="space-y-3">
@@ -200,23 +182,6 @@
                                     <button onclick="devices.sendCustomCommand()" class="px-4 py-2 bg-white border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 text-sm font-medium">Send</button>
                                 </div>
                             </div>
-                        </div>
-                    </div>
-
-                    <!-- Device Logs -->
-                    <div class="md:col-span-2 bg-dark-bg rounded-xl border border-dark-border shadow-inner flex flex-col h-full min-h-[400px]">
-                        <div class="h-12 bg-gray-900 border-b border-dark-border flex items-center justify-between px-4 flex-shrink-0 rounded-t-xl">
-                            <div class="flex items-center gap-2">
-                                <i class="ph ph-terminal-window text-gray-400"></i>
-                                <span class="text-sm text-gray-300 font-medium">Device Logs</span>
-                            </div>
-                            <button onclick="logger.clearDeviceLogs()" class="text-gray-400 hover:text-white transition-colors p-1" title="Clear Device Logs">
-                                <i class="ph ph-trash"></i>
-                            </button>
-                        </div>
-                        
-                        <div id="device-log-content" class="flex-1 p-4 overflow-y-auto font-mono text-sm space-y-1 log-container">
-                            <div class="text-gray-500 italic text-center py-4">Waiting for device data...</div>
                         </div>
                     </div>
                 </div>
@@ -268,38 +233,6 @@
 
                         <!-- Dynamic results are isolated so loading/empty states stay in the DOM. -->
                         <div id="scan-items" class="divide-y divide-gray-100"></div>
-                    </div>
-                </div>
-            </section>
-
-            <!-- VIEW: LOGS -->
-            <section id="view-logs" class="max-w-6xl mx-auto hidden flex h-full pb-8 flex-col">
-                <div class="flex flex-col sm:flex-row sm:items-center justify-between mb-4 gap-4 flex-shrink-0">
-                    <div>
-                        <h2 class="text-2xl font-bold text-gray-900">System Logs</h2>
-                        <p class="text-gray-500 text-sm mt-1">Live event stream from the ESP32 Gateway.</p>
-                    </div>
-                    <div class="flex gap-2">
-                        <button onclick="logger.clear()" class="px-3 py-1.5 bg-white border border-gray-300 text-gray-600 rounded-md hover:bg-gray-50 transition-colors text-sm font-medium flex items-center">
-                            <i class="ph ph-trash mr-1.5"></i> Clear
-                        </button>
-                        <button onclick="logger.download()" class="px-3 py-1.5 bg-white border border-gray-300 text-gray-600 rounded-md hover:bg-gray-50 transition-colors text-sm font-medium flex items-center">
-                            <i class="ph ph-download-simple mr-1.5"></i> Export
-                        </button>
-                    </div>
-                </div>
-
-                <!-- Terminal-like Log Container -->
-                <div class="flex-1 bg-dark-bg rounded-xl border border-dark-border shadow-inner overflow-hidden flex flex-col min-h-[400px]">
-                    <div class="h-8 bg-gray-900 border-b border-dark-border flex items-center px-4 gap-2 flex-shrink-0">
-                        <div class="w-3 h-3 rounded-full bg-red-500"></div>
-                        <div class="w-3 h-3 rounded-full bg-yellow-500"></div>
-                        <div class="w-3 h-3 rounded-full bg-green-500"></div>
-                        <span class="text-xs text-gray-500 font-mono ml-2">gateway.log</span>
-                    </div>
-                    
-                    <div id="log-content" class="flex-1 p-4 overflow-y-auto font-mono text-sm space-y-1 log-container">
-                        <!-- Logs injected here -->
                     </div>
                 </div>
             </section>
@@ -497,11 +430,8 @@
     <script>
         
         // --- Configuration & State ---
-        const SHOW_SYSTEM_LOGS = false;
         const TAB_STORAGE_KEY = 'esp32-gateway.active-tab';
-        const PERSISTED_TABS = SHOW_SYSTEM_LOGS
-            ? ['devices', 'scanner', 'logs', 'settings']
-            : ['devices', 'scanner', 'settings'];
+        const PERSISTED_TABS = ['devices', 'scanner', 'settings'];
 
         const loadSavedTab = () => {
             try {
@@ -527,10 +457,7 @@
             scannedDevices: [],
             connectedDevices: [],
             selectedDeviceForAdd: null,
-            selectedDeviceDetail: null,
-            systemLogs: [],
-            logCutoff: -1,
-            deviceLogCutoffs: {}
+            selectedDeviceDetail: null
         };
 
         const escapeHtml = value => String(value).replace(/[&<>'"]/g, character => ({
@@ -614,9 +541,6 @@
             getStatus() {
                 return this.request('/api/status');
             },
-            getLogs() {
-                return this.request('/api/logs');
-            },
             getCapabilities(deviceId) {
                 return this.request(`/api/capabilities?device_id=${encodeURIComponent(deviceId)}`);
             },
@@ -646,24 +570,21 @@
         // --- Navigation Controller ---
         const nav = {
             switchTab(tabId) {
-                if (tabId === 'logs' && !SHOW_SYSTEM_LOGS) return;
-
                 // Update state
                 state.activeTab = tabId;
                 saveTab(tabId);
                 
                 // Hide all views
-                ['devices', 'scanner', 'logs', 'device-detail', 'settings'].forEach(id => {
+                ['devices', 'scanner', 'device-detail', 'settings'].forEach(id => {
                     const el = document.getElementById(`view-${id}`);
                     if(el) el.classList.add('hidden');
                 });
                 
                 // Reset nav button styling
-                ['devices', 'scanner', 'logs', 'settings'].forEach(id => {
+                ['devices', 'scanner', 'settings'].forEach(id => {
                     const btn = document.getElementById(`nav-${id}`);
                     if(btn) {
                         btn.className = 'w-full flex items-center px-4 py-3 text-sm font-medium rounded-lg transition-colors hover:bg-dark-surface hover:text-white text-gray-300';
-                        if (id === 'logs' && !SHOW_SYSTEM_LOGS) btn.classList.add('hidden');
                     }
                 });
                 
@@ -824,122 +745,6 @@
         };
 
         
-        // --- Logger System ---
-        const logger = {
-            container: null,
-            init() {
-                this.container = document.getElementById('log-content');
-                if (SHOW_SYSTEM_LOGS) this.refresh();
-            },
-            levelMeta(text) {
-                const marker = String(text).match(/^(E|W|I|D|V)\s*\(/)?.[1] || 'I';
-                return {
-                    E: ['ERR', 'text-red-400'],
-                    W: ['WARN', 'text-yellow-400'],
-                    I: ['INFO', 'text-blue-400'],
-                    D: ['DBG', 'text-purple-400'],
-                    V: ['VRB', 'text-gray-400']
-                }[marker];
-            },
-            formatUptime(milliseconds) {
-                const totalSeconds = Math.max(0, Math.floor(Number(milliseconds || 0) / 1000));
-                const hours = Math.floor(totalSeconds / 3600);
-                const minutes = Math.floor((totalSeconds % 3600) / 60);
-                const seconds = totalSeconds % 60;
-                return `${String(hours).padStart(2, '0')}:${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`;
-            },
-            appendEntry(container, entry, forcedLevel = null) {
-                if (!container) return;
-                const [level, colorClass] = forcedLevel || this.levelMeta(entry.text);
-                const div = document.createElement('div');
-                div.className = 'flex font-mono text-[13px] hover:bg-gray-800/50 py-0.5 px-1 rounded transition-colors';
-                const time = document.createElement('span');
-                time.className = 'text-gray-500 mr-3 shrink-0';
-                time.textContent = `[${this.formatUptime(entry.timestamp_ms)}]`;
-                const badge = document.createElement('span');
-                badge.className = `font-bold ${colorClass} mr-2 shrink-0 w-12`;
-                badge.textContent = `[${level}]`;
-                const message = document.createElement('span');
-                message.className = 'text-gray-300 break-all';
-                message.textContent = entry.text;
-                div.append(time, badge, message);
-                container.appendChild(div);
-            },
-            renderSystemLogs() {
-                if (!this.container) return;
-                const stick = this.container.scrollTop + this.container.clientHeight >= this.container.scrollHeight - 12;
-                this.container.replaceChildren();
-                state.systemLogs
-                    .filter(entry => entry.timestamp_ms > state.logCutoff)
-                    .forEach(entry => this.appendEntry(this.container, entry));
-                if (stick) this.container.scrollTop = this.container.scrollHeight;
-            },
-            async refresh() {
-                if (!SHOW_SYSTEM_LOGS) return;
-
-                try {
-                    state.systemLogs = await api.getLogs();
-                    this.renderSystemLogs();
-                    if (state.activeTab === 'device-detail' && state.selectedDeviceDetail) {
-                        this.renderDeviceLogs(state.selectedDeviceDetail.id);
-                    }
-                } catch (error) {
-                    this._log('ERR', `Log refresh failed: ${error.message}`, 'text-red-400');
-                }
-            },
-            _log(level, msg, colorClass) {
-                this.appendEntry(this.container, {timestamp_ms: 0, text: `[UI] ${msg}`}, [level, colorClass]);
-                if (this.container) this.container.scrollTop = this.container.scrollHeight;
-            },
-            info(msg) { this._log('INFO', msg, 'text-blue-400'); },
-            success(msg) { this._log('OK', msg, 'text-green-400'); },
-            error(msg) { this._log('ERR', msg, 'text-red-400'); },
-            debug(msg) { this._log('DBG', msg, 'text-purple-400'); },
-            clear() {
-                state.logCutoff = state.systemLogs.at(-1)?.timestamp_ms ?? -1;
-                this.renderSystemLogs();
-            },
-            download() {
-                const text = state.systemLogs
-                    .filter(entry => entry.timestamp_ms > state.logCutoff)
-                    .map(entry => `[${this.formatUptime(entry.timestamp_ms)}] ${entry.text}`)
-                    .join('\n');
-                const blob = new Blob([text], { type: 'text/plain' });
-                const url = URL.createObjectURL(blob);
-                const a = document.createElement('a');
-                a.href = url;
-                a.download = `esp32_gateway_${new Date().toISOString().slice(0,10)}.log`;
-                a.click();
-                URL.revokeObjectURL(url);
-                ui.showToast('Log file downloaded', 'success');
-            },
-            renderDeviceLogs(deviceId) {
-                const container = document.getElementById('device-log-content');
-                if(!container) return;
-                container.replaceChildren();
-                const cutoff = state.deviceLogCutoffs[deviceId] ?? -1;
-                const logs = state.systemLogs.filter(entry =>
-                    entry.timestamp_ms > cutoff && entry.text.includes(`device=${deviceId}`));
-                if(logs.length === 0) {
-                    const empty = document.createElement('div');
-                    empty.className = 'text-gray-500 italic text-center py-4';
-                    empty.textContent = 'No recent logs for this device.';
-                    container.appendChild(empty);
-                    return;
-                }
-                logs.forEach(entry => this.appendEntry(container, entry));
-                container.scrollTop = container.scrollHeight;
-            },
-            clearDeviceLogs() {
-                if (!state.selectedDeviceDetail) return;
-                const deviceId = state.selectedDeviceDetail.id;
-                state.deviceLogCutoffs[deviceId] = state.systemLogs.at(-1)?.timestamp_ms ?? -1;
-                this.renderDeviceLogs(deviceId);
-                ui.showToast('Device log view cleared', 'info');
-            }
-        };
-
-        
         // --- Scanner Logic ---
         const scanner = {
             scanInterval: null,
@@ -988,7 +793,6 @@
                             }
                             if (!result.scanning) this.stopScan(true);
                         } catch (error) {
-                            logger.error(`Scan refresh failed: ${error.message}`);
                             this.stopScan(true);
                         }
                     }, 1000);
@@ -1001,7 +805,6 @@
                     }, 8000);
 
                 } catch(e) {
-                    logger.error("Failed to start scan: " + e.message);
                     ui.showToast(`Failed to start scanner: ${e.message}`, "error");
                     this.stopScan(true);
                 }
@@ -1024,7 +827,7 @@
                     try {
                         await api.stopScan();
                     } catch (error) {
-                        logger.error(`Failed to stop scan: ${error.message}`);
+                        // Scan stop failed silently
                     }
                 }
             },
@@ -1051,7 +854,6 @@
                     } else {
                         // Add new
                         state.scannedDevices.push(device);
-                        logger.debug(`Found new device: ${device.mac} [${device.rssi}dBm]`);
                         this.renderDeviceItem(device, container);
                     }
                 });
@@ -1135,7 +937,7 @@
                     state.connectedDevices = await api.getDevices();
                     this.renderGrid();
                 } catch(e) {
-                    logger.error("Failed to load devices: " + e.message);
+                    ui.showToast("Failed to load devices", "error");
                 }
             },
 
@@ -1237,8 +1039,7 @@
                 iconContainer.className = `w-12 h-12 rounded-lg flex items-center justify-center mr-4 text-2xl ${iconClass.split(' ').slice(1).join(' ')}`;
                 iconContainer.innerHTML = `<i class="ph ${iconClass.split(' ')[0]}"></i>`;
 
-                // Load Logs
-                logger.renderDeviceLogs(dev.id);
+                // Load Logs (device log panel removed)
                 this.loadCapabilities(dev);
 
                 // Switch view
@@ -1301,10 +1102,8 @@
                 try {
                     const result = await api.sendCommand(device.id, command, valueType, value);
                     ui.showToast(result.message || `Command ${command} completed`, 'success');
-                    await logger.refresh();
                 } catch (error) {
                     ui.showToast(error.message, 'error');
-                    await logger.refresh();
                 }
             },
 
@@ -1416,7 +1215,7 @@
                 };
 
                 try {
-                    logger.info(`Attempting to bind device ${newDevice.mac} as '${newDevice.customName}'...`);
+                    ui.showToast(`Adding ${newDevice.customName}...`, "info");
                     
                     // Call backend API
                     await api.addDevice(newDevice);
@@ -1424,7 +1223,6 @@
                     // Remove from scanned list
                     state.scannedDevices = state.scannedDevices.filter(d => d.mac !== newDevice.mac);
                     
-                    logger.success(`Successfully bonded to ${newDevice.mac}. Added to gateway.`);
                     ui.showToast(`Added ${newDevice.customName} successfully`, "success");
                     
                     ui.closeModal();
@@ -1441,8 +1239,7 @@
                     await this.load();
 
                 } catch(e) {
-                    logger.error(`Provisioning failed for ${newDevice.mac}: ${e.message}`);
-                    ui.showToast("Failed to add device. See logs.", "error");
+                    ui.showToast(`Failed to add device: ${e.message}`, "error");
                 } finally {
                     // Reset button state
                     btn.innerHTML = originalHtml;
@@ -1455,12 +1252,9 @@
                 if(!confirm("Are you sure you want to remove this device from the gateway?")) return;
                 
                 try {
-                    logger.info(`Removing device ${deviceId}...`);
                     await api.removeDevice(deviceId);
                     state.connectedDevices = state.connectedDevices.filter(d => d.id !== deviceId);
-                    delete state.deviceLogCutoffs[deviceId];
 
-                    logger.success(`Device ${deviceId} removed successfully.`);
                     ui.showToast("Device removed", "info");
                     
                     if(fromDetailView) {
@@ -1470,7 +1264,6 @@
                     }
                     
                 } catch(e) {
-                    logger.error(`Failed to remove device: ${e.message}`);
                     ui.showToast("Failed to remove device", "error");
                 }
             }
@@ -1505,7 +1298,6 @@
                     document.getElementById('sidebar-status-text').innerText = 'Gateway Offline';
                     document.getElementById('sidebar-status-dot').className =
                         'w-2 h-2 rounded-full bg-red-500 mr-2';
-                    logger.error(`Failed to load settings data: ${e.message}`);
                     ui.showToast('Could not load system info', 'error');
                 }
             },
@@ -1514,7 +1306,6 @@
                 if(!confirm("Are you sure you want to restart the ESP32 Gateway?")) return;
                 
                 try {
-                    logger.info("Restart command sent to gateway.");
                     await api.restart();
                     this.triggerRestartUI();
                 } catch(e) {
@@ -1551,7 +1342,6 @@
         nav.switchTab(state.activeTab);
 
         window.addEventListener('DOMContentLoaded', async () => {
-            logger.init();
             await Promise.all([devices.load(), settings.load()]);
         });
 

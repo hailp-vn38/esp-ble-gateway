@@ -105,7 +105,6 @@ curl http://192.168.4.1/api/wifi
 | `POST` | `/api/command` | Gửi lệnh tới thiết bị và chờ ACK |
 | `GET` | `/api/capabilities?device_id=...` | Capability snapshot của thiết bị |
 | `POST` | `/api/capabilities/refresh` | Yêu cầu discovery lại capability |
-| `GET` | `/api/logs` | 64 circular log mới nhất |
 | `POST` | `/api/wifi/scan` | Bắt đầu quét Wi-Fi nền; chỉ provisioning |
 | `GET` | `/api/wifi/scan` | Trạng thái và kết quả Wi-Fi scan đã cache |
 | `POST` | `/api/wifi` | Bắt đầu kiểm tra credentials nền; chỉ provisioning |
@@ -185,7 +184,6 @@ components/cbor_codec/        QCBOR và JSON codec
 components/command_dispatcher/ Command registry, ACK routing
 components/web_server/        Web UI và REST API
 components/mcp_endpoint/      JSON-RPC endpoint
-components/log_buffer/        Circular log thread-safe
 components/qcbor_lib/         QCBOR 1.6.1 submodule wrapper
 test/                         Unity unit-test application
 docs/                         Thiết kế, kế hoạch module và test plan

@@ -290,8 +290,7 @@ hỏng hardware.
 
 Thứ tự trong `app_main()` (đã áp dụng ở `main/main.c`):
 
-1. `log_buffer_init()`;
-2. `board_io_init()` **sớm** — trước NVS/Wi-Fi; worker task sống qua
+1. `board_io_init()` **sớm** — trước NVS/Wi-Fi; worker task sống qua
    provisioning-mode return nên LED/button/display vẫn hoạt động;
 3. register event handler + `set_status(BOOTING)`;
 4. `board_status_sync_start()` — task poll `wifi_prov_get_state()` mỗi

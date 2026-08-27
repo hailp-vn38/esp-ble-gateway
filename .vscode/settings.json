@@ -21,7 +21,7 @@
   },
   "idf.openOcdConfigs": ["board/esp32s3-builtin.cfg"],
   "idf.port": "/dev/tty.usbmodem2101",
-  "idf.currentSetup": "/Users/lamphuchai/.espressif/v5.4.4/esp-idf",
+  "idf.currentSetup": "/Users/lamphuchai/.espressif/v6.1-rc1/esp-idf",
   "idf.customExtraVars": {
     "IDF_TARGET": "esp32s3"
   },

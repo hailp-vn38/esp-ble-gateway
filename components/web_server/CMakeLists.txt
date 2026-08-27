@@ -24,7 +24,7 @@ idf_component_register(
          "web_ble_api.c"
     INCLUDE_DIRS "include"
     REQUIRES esp_http_server cbor_codec command_dispatcher command_executor
-             device_store gateway_status log_buffer wifi_provisioning
+             device_store gateway_status wifi_provisioning
              ble_central device_capabilities espressif__cjson esp_system esp_timer freertos
              esp_wifi esp_app_format
     EMBED_FILES
