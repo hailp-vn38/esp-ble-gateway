@@ -6,12 +6,17 @@
 #include <stdint.h>
 
 #include "esp_err.h"
+#include "sdkconfig.h"
 
 #ifdef __cplusplus
 extern "C" {
 #endif
 
-#define LOG_BUFFER_CAPACITY 64U
+#ifndef CONFIG_LOG_BUFFER_CAPACITY
+#define CONFIG_LOG_BUFFER_CAPACITY 128
+#endif
+
+#define LOG_BUFFER_CAPACITY CONFIG_LOG_BUFFER_CAPACITY
 #define LOG_ENTRY_MAX_LEN   192U
 
 typedef struct {

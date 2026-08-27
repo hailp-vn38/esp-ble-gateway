@@ -393,6 +393,8 @@ static esp_err_t capabilities_refresh_handler(httpd_req_t *request)
         return web_send_api_error_code(request, "400 Bad Request",
                                        "Missing device_id", "invalid_request");
     }
+
+    /* Preflight: device exists? */
     device_capability_snapshot_t snapshot;
     esp_err_t snapshot_error = device_capabilities_get(device_id, &snapshot);
     if (snapshot_error == ESP_ERR_NOT_FOUND) {
@@ -400,35 +402,42 @@ static esp_err_t capabilities_refresh_handler(httpd_req_t *request)
         return web_send_api_error_code(request, "404 Not Found",
                                        "Device not found", "device_not_found");
     }
-    if (snapshot_error == ESP_OK &&
-        snapshot.state == DEVICE_CAP_STATE_DISCOVERING) {
-        cJSON_Delete(json);
-        return web_send_api_error_code(request, "409 Conflict",
-                                       "Capability discovery is already running",
-                                       "device_busy");
-    }
-    if (ble_central_is_connected(device_id) <= 0) {
+
+    /* Preflight: BLE runtime ready? */
+    ble_central_device_status_t ble_status;
+    bool ble_ready =
+        ble_central_get_device_status(device_id, &ble_status) == BLE_CENTRAL_OK &&
+        ble_status.ready;
+    if (!ble_ready) {
         cJSON_Delete(json);
         return web_send_api_error_code(request, "502 Bad Gateway",
-                                       "Device is not connected",
+                                       "Device is not BLE ready",
                                        "device_not_connected");
     }
-    esp_err_t error = device_capabilities_refresh(device_id);
+
+    uint32_t generation = 0;
+    esp_err_t error = device_capabilities_refresh(device_id, &generation);
     cJSON_Delete(json);
     if (error == ESP_ERR_NOT_FOUND) {
         return web_send_api_error_code(request, "404 Not Found",
                                        "Device not found", "device_not_found");
+    }
+    if (error == ESP_ERR_INVALID_STATE) {
+        return web_send_api_error_code(request, "409 Conflict",
+                                       "Capability operation already in progress",
+                                       "device_busy");
     }
     if (error != ESP_OK) {
         return web_send_api_error_code(request, "503 Service Unavailable",
                                        "Capability refresh queue is full",
                                        "queue_full");
     }
+
     httpd_resp_set_status(request, "202 Accepted");
     cJSON *response = cJSON_CreateObject();
-    cJSON_AddBoolToObject(response, "success", true);
-    cJSON_AddStringToObject(response, "message",
-                           "Capability refresh queued");
+    cJSON_AddBoolToObject(response, "accepted", true);
+    cJSON_AddStringToObject(response, "device_id", device_id);
+    cJSON_AddNumberToObject(response, "generation", generation);
     return web_send_json(request, response);
 }
 

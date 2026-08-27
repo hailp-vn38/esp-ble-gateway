@@ -34,11 +34,11 @@ typedef struct {
     uint32_t step;
 } device_capability_t;
 
+/* Cache state — no STALE in target model. */
 typedef enum {
     DEVICE_CAP_STATE_UNKNOWN = 0,
     DEVICE_CAP_STATE_DISCOVERING,
     DEVICE_CAP_STATE_READY,
-    DEVICE_CAP_STATE_STALE,
     DEVICE_CAP_STATE_UNSUPPORTED,
     DEVICE_CAP_STATE_ERROR,
 } device_cap_state_t;
@@ -53,11 +53,49 @@ typedef struct {
     device_capability_t items[DEVICE_CAP_MAX_PER_DEVICE];
 } device_capability_snapshot_t;
 
+/* Refresh result for manual refresh reporting. */
+typedef enum {
+    DEVICE_CAP_REFRESH_RESULT_NONE = 0,
+    DEVICE_CAP_REFRESH_RESULT_SUCCESS,
+    DEVICE_CAP_REFRESH_RESULT_UNCHANGED,
+    DEVICE_CAP_REFRESH_RESULT_NOT_PERSISTED,
+    DEVICE_CAP_REFRESH_RESULT_UNSUPPORTED,
+    DEVICE_CAP_REFRESH_RESULT_BUSY,
+    DEVICE_CAP_REFRESH_RESULT_TIMEOUT,
+    DEVICE_CAP_REFRESH_RESULT_DISCONNECTED,
+    DEVICE_CAP_REFRESH_RESULT_TRANSPORT_ERROR,
+    DEVICE_CAP_REFRESH_RESULT_PROTOCOL_ERROR,
+    DEVICE_CAP_REFRESH_RESULT_INTERNAL_ERROR,
+} device_cap_refresh_result_t;
+
+/* Refresh active state — no COMPLETE; completion goes to last_completed. */
+typedef enum {
+    DEVICE_CAP_REFRESH_IDLE = 0,
+    DEVICE_CAP_REFRESH_QUEUED,
+    DEVICE_CAP_REFRESH_RUNNING,
+} device_cap_refresh_state_t;
+
+typedef struct {
+    uint32_t generation;
+    device_cap_refresh_state_t state;
+} device_cap_refresh_active_t;
+
+typedef struct {
+    uint32_t generation;
+    device_cap_refresh_result_t result;
+    int64_t finished_at_ms;
+} device_cap_refresh_completed_t;
+
+/* Submit results for capability discovery/refresh submission. */
 typedef enum {
     DEVICE_CAP_SUBMIT_OK = 0,
     DEVICE_CAP_SUBMIT_REJECTED,
     DEVICE_CAP_SUBMIT_TIMEOUT,
     DEVICE_CAP_SUBMIT_ERROR,
+    DEVICE_CAP_SUBMIT_BUSY,
+    DEVICE_CAP_SUBMIT_NOT_CONNECTED,
+    DEVICE_CAP_SUBMIT_TRANSPORT_ERROR,
+    DEVICE_CAP_SUBMIT_INTERNAL_ERROR,
 } device_cap_submit_result_t;
 
 typedef void (*device_cap_submit_done_fn)(device_cap_submit_result_t result,
@@ -76,26 +114,41 @@ typedef enum {
 esp_err_t device_capabilities_init(void);
 void device_capabilities_set_submitter(device_cap_submit_fn submitter);
 
-// BLE lifecycle inputs. Both are non-blocking and safe from NimBLE callbacks.
+/* BLE lifecycle inputs. Both are non-blocking and safe from NimBLE callbacks. */
 esp_err_t device_capabilities_on_ready(const char *device_id);
 void device_capabilities_on_disconnect(const char *device_id);
 
-// Returns true when a capability begin/item/end message was recognized and
-// consumed. The function only queues a copy; validation and NVS happen on the
-// component worker.
+/* Returns true when a capability begin/item/end message was recognized and
+ * consumed. The function only queues a copy; validation and NVS happen on the
+ * component worker. */
 bool device_capabilities_on_notify(const char *device_id,
                                    const gw_message_t *message);
 
-esp_err_t device_capabilities_refresh(const char *device_id);
+/* Manual refresh. Caller MUST preflight BLE ready status.
+ * On success, *out_generation is set to the reserved generation. */
+esp_err_t device_capabilities_refresh(const char *device_id,
+                                      uint32_t *out_generation);
+
 esp_err_t device_capabilities_get(const char *device_id,
                                   device_capability_snapshot_t *out_snapshot);
+
+/* Copy out refresh status for a device. */
+esp_err_t device_capabilities_get_refresh_status(
+    const char *device_id,
+    device_cap_refresh_active_t *out_active,
+    device_cap_refresh_completed_t *out_completed);
+
 device_cap_validation_t device_capabilities_validate_command(
     const gw_message_t *message, device_capability_t *out_capability);
+
+/* Failure-safe: persistent erase first, then RAM clear. */
 esp_err_t device_capabilities_forget(const char *device_id);
 
 const char *device_capabilities_state_name(device_cap_state_t state);
+const char *device_capabilities_refresh_result_name(
+    device_cap_refresh_result_t result);
 
-// Test-only reset. It does not erase NVS.
+/* Test-only reset. It does not erase NVS. */
 void device_capabilities_reset_for_test(void);
 
 #endif // DEVICE_CAPABILITIES_H

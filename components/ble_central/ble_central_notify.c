@@ -7,6 +7,7 @@
 
 #include "ble_central_internal.h"
 #include "cbor_codec.h"
+#include "message_trace.h"
 
 static const char *TAG = "ble_central_notify";
 
@@ -52,8 +53,13 @@ void ble_central_notify_worker(void *arg)
         if (cbor_codec_decode(event.cbor_buf, event.cbor_len, &message) != 0) {
             ESP_LOGE(TAG, "[%s] Invalid CBOR notify", event.device_id);
             ble_central_metrics_notify_decode_error();
+            message_trace_rx_decode_error(0, event.device_id, -1);
             continue;
         }
+
+        message_trace_rx_raw(0, event.device_id, event.cbor_buf,
+                             event.cbor_len);
+        message_trace_rx_decoded(0, event.device_id, &message);
 
         ble_central_notify_cb_t cb = s_notify_cb;
         if (cb != NULL) cb(event.device_id, &message);

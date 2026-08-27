@@ -1,6 +1,7 @@
 #include <stdbool.h>
 #include <string.h>
 
+#include "cJSON.h"
 #include "esp_log.h"
 #include "freertos/FreeRTOS.h"
 
@@ -124,17 +125,78 @@ void device_command_handle(const gw_message_t *msg, dispatch_result_t *result)
 
     gw_message_t response = pending->response;
     bool accepted = response.bool_value != 0;
+    uint32_t resp_request_id = response.request_id;
+    bool resp_has_int = response.has_int_value;
+    int32_t resp_int = response.int_value;
+    bool resp_has_bool = response.has_bool_value;
+    bool resp_bool = response.bool_value != 0;
     device_request_release(pending);
 
     ESP_LOGI(TAG, "[CMD_ACK] device=%s request_id=%lu command=%s result=%s",
-             msg->device_id, (unsigned long)response.request_id,
+             msg->device_id, (unsigned long)resp_request_id,
              msg->command, accepted ? "ok" : "rejected");
 
-    command_dispatcher_set_text_result(
-        result,
-        accepted ? DISPATCH_STATUS_OK : DISPATCH_STATUS_DEVICE_ERROR,
-        accepted ? "Device %s acknowledged '%s'" : "Device %s rejected '%s'",
-        msg->device_id, msg->command);
+    if (accepted) {
+        cJSON *json = cJSON_CreateObject();
+        if (json != NULL) {
+            cJSON_AddStringToObject(json, "device_id", msg->device_id);
+            cJSON_AddStringToObject(json, "command", msg->command);
+            cJSON_AddNumberToObject(json, "request_id", resp_request_id);
+            cJSON_AddBoolToObject(json, "success", true);
+            cJSON *resp = cJSON_AddObjectToObject(json, "response");
+            if (resp != NULL) {
+                if (resp_has_int) {
+                    cJSON_AddBoolToObject(resp, "has_int_value", true);
+                    cJSON_AddNumberToObject(resp, "int_value", resp_int);
+                }
+                if (resp_has_bool) {
+                    cJSON_AddBoolToObject(resp, "has_bool_value", true);
+                    cJSON_AddBoolToObject(resp, "bool_value", resp_bool);
+                }
+            }
+            char *printed = cJSON_PrintUnformatted(json);
+            cJSON_Delete(json);
+            if (printed != NULL) {
+                command_dispatcher_set_json_result(result, DISPATCH_STATUS_OK,
+                                                   printed);
+                free(printed);
+                return;
+            }
+        }
+        command_dispatcher_set_text_result(
+            result, DISPATCH_STATUS_OK,
+            "Device %s acknowledged '%s'", msg->device_id, msg->command);
+    } else {
+        cJSON *json = cJSON_CreateObject();
+        if (json != NULL) {
+            cJSON_AddStringToObject(json, "device_id", msg->device_id);
+            cJSON_AddStringToObject(json, "command", msg->command);
+            cJSON_AddNumberToObject(json, "request_id", resp_request_id);
+            cJSON_AddBoolToObject(json, "success", false);
+            cJSON *resp = cJSON_AddObjectToObject(json, "response");
+            if (resp != NULL) {
+                if (resp_has_int) {
+                    cJSON_AddBoolToObject(resp, "has_int_value", true);
+                    cJSON_AddNumberToObject(resp, "int_value", resp_int);
+                }
+                if (resp_has_bool) {
+                    cJSON_AddBoolToObject(resp, "has_bool_value", true);
+                    cJSON_AddBoolToObject(resp, "bool_value", resp_bool);
+                }
+            }
+            char *printed = cJSON_PrintUnformatted(json);
+            cJSON_Delete(json);
+            if (printed != NULL) {
+                command_dispatcher_set_json_result(
+                    result, DISPATCH_STATUS_DEVICE_ERROR, printed);
+                free(printed);
+                return;
+            }
+        }
+        command_dispatcher_set_text_result(
+            result, DISPATCH_STATUS_DEVICE_ERROR,
+            "Device %s rejected '%s'", msg->device_id, msg->command);
+    }
 }
 
 void device_command_on_notify(const char *device_id, const gw_message_t *msg)

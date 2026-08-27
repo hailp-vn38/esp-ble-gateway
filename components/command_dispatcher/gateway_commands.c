@@ -110,8 +110,6 @@ static void cmd_delete_device(const gw_message_t *msg, dispatch_result_t *result
         return;
     }
 
-    // Snapshot peer identity BEFORE removing the store entry so the BLE
-    // layer never has to look up a deleted device (refactor plan §8.1).
     device_entry_t existing;
     device_store_result_t store_rc = device_store_get(msg->device_id, &existing);
     if (store_rc != DEVICE_STORE_OK) {
@@ -121,36 +119,32 @@ static void cmd_delete_device(const gw_message_t *msg, dispatch_result_t *result
         return;
     }
 
+    /* Step 1: capability forget MUST succeed first (failure-safe per spec §14/§16). */
+    esp_err_t capability_rc = device_capabilities_forget(msg->device_id);
+    if (capability_rc != ESP_OK) {
+        ESP_LOGE(TAG, "[DEVICE_DELETE_FAILED] device=%s capability forget failed: %s",
+                 msg->device_id, esp_err_to_name(capability_rc));
+        command_dispatcher_set_text_result(result,
+                                           DISPATCH_STATUS_INTERNAL_ERROR,
+                                           "Could not forget capabilities for %s",
+                                           msg->device_id);
+        return;
+    }
+
+    /* Step 2: BLE peer forget. Failure is acceptable degradation. */
     int forget_rc = ble_central_forget_peer(
         existing.device_id, existing.ble_addr, existing.ble_addr_type,
         existing.has_ble_identity);
     if (forget_rc != 0) {
-        // Store entry is kept intact so the operation can be retried.
-        ESP_LOGE(TAG, "[DEVICE_DELETE_FAILED] device=%s could not forget BLE peer rc=%d",
+        ESP_LOGW(TAG, "[DEVICE_DELETE_DEGRADED] device=%s BLE peer forget failed rc=%d",
                  msg->device_id, forget_rc);
-        command_dispatcher_set_text_result(result,
-                                           DISPATCH_STATUS_TRANSPORT_ERROR,
-                                           "Could not forget BLE peer for %s",
-                                           msg->device_id);
-        return;
     }
 
+    /* Step 3: device store delete. Failure is acceptable degradation. */
     device_store_result_t delete_rc = device_store_delete(msg->device_id);
     if (delete_rc != DEVICE_STORE_OK) {
-        // Rare: bond already removed but config remains. Surface loudly.
-        ESP_LOGE(TAG, "[DEVICE_DELETE_FAILED] device=%s bond removed but store delete failed",
+        ESP_LOGW(TAG, "[DEVICE_DELETE_DEGRADED] device=%s store delete failed",
                  msg->device_id);
-        command_dispatcher_set_text_result(result,
-                                           status_for_store_result(delete_rc),
-                                           "Bond removed but device %s remains configured",
-                                           msg->device_id);
-        return;
-    }
-
-    esp_err_t capability_rc = device_capabilities_forget(msg->device_id);
-    if (capability_rc != ESP_OK) {
-        ESP_LOGW(TAG, "[%s] device deleted but capability cache cleanup failed: %s",
-                 msg->device_id, esp_err_to_name(capability_rc));
     }
 
     command_dispatcher_set_text_result(result, DISPATCH_STATUS_OK,
@@ -292,23 +286,60 @@ static void cmd_list_device_capabilities(const gw_message_t *msg,
         return;
     }
 
+    device_cap_refresh_active_t refresh_active;
+    device_cap_refresh_completed_t refresh_completed;
+    device_capabilities_get_refresh_status(msg->device_id,
+                                           &refresh_active,
+                                           &refresh_completed);
+
     cJSON *root = cJSON_CreateObject();
     cJSON *commands = cJSON_CreateArray();
-    if (root == NULL || commands == NULL) {
+    cJSON *refresh_obj = cJSON_CreateObject();
+    if (root == NULL || commands == NULL || refresh_obj == NULL) {
         cJSON_Delete(root);
         cJSON_Delete(commands);
+        cJSON_Delete(refresh_obj);
         command_dispatcher_set_text_result(result,
                                            DISPATCH_STATUS_INTERNAL_ERROR,
                                            "Out of memory");
         return;
     }
+
     cJSON_AddStringToObject(root, "device_id", snapshot.device_id);
     cJSON_AddStringToObject(root, "state",
                            device_capabilities_state_name(snapshot.state));
     cJSON_AddNumberToObject(root, "revision", snapshot.revision);
-    cJSON_AddBoolToObject(root, "stale",
-                         snapshot.state == DEVICE_CAP_STATE_STALE);
     cJSON_AddItemToObject(root, "commands", commands);
+
+    /* Refresh status. */
+    cJSON *active_obj = cJSON_CreateObject();
+    cJSON *completed_obj = cJSON_CreateObject();
+    if (active_obj != NULL && completed_obj != NULL) {
+        const char *refresh_state_str = "idle";
+        switch (refresh_active.state) {
+        case DEVICE_CAP_REFRESH_QUEUED: refresh_state_str = "queued"; break;
+        case DEVICE_CAP_REFRESH_RUNNING: refresh_state_str = "running"; break;
+        default: refresh_state_str = "idle"; break;
+        }
+        cJSON_AddNumberToObject(active_obj, "generation",
+                               refresh_active.generation);
+        cJSON_AddStringToObject(active_obj, "state", refresh_state_str);
+        cJSON_AddItemToObject(refresh_obj, "active", active_obj);
+
+        cJSON_AddNumberToObject(completed_obj, "generation",
+                               refresh_completed.generation);
+        cJSON_AddStringToObject(
+            completed_obj, "result",
+            device_capabilities_refresh_result_name(
+                refresh_completed.result));
+        cJSON_AddNumberToObject(completed_obj, "finished_at_ms",
+                               refresh_completed.finished_at_ms);
+        cJSON_AddItemToObject(refresh_obj, "last_completed", completed_obj);
+    } else {
+        cJSON_Delete(active_obj);
+        cJSON_Delete(completed_obj);
+    }
+    cJSON_AddItemToObject(root, "refresh", refresh_obj);
 
     for (size_t i = 0; i < snapshot.count; i++) {
         const device_capability_t *capability = &snapshot.items[i];

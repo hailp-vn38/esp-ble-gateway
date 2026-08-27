@@ -97,7 +97,10 @@ TEST_CASE("log_buffer handles exactly full capacity", "[log_buffer]")
     int count = log_buffer_get_recent(entries, LOG_BUFFER_CAPACITY);
     TEST_ASSERT_EQUAL_INT((int)LOG_BUFFER_CAPACITY, count);
     TEST_ASSERT_EQUAL_STRING("e00000", entries[0].text);
-    TEST_ASSERT_EQUAL_STRING("e00063", entries[LOG_BUFFER_CAPACITY - 1U].text);
+
+    char last_name[16];
+    fill_entry_name(last_name, sizeof(last_name), LOG_BUFFER_CAPACITY - 1U);
+    TEST_ASSERT_EQUAL_STRING(last_name, entries[LOG_BUFFER_CAPACITY - 1U].text);
 
     for (size_t i = 1; i < LOG_BUFFER_CAPACITY; i++) {
         TEST_ASSERT_TRUE(strcmp(entries[i - 1U].text, entries[i].text) < 0);
@@ -118,7 +121,10 @@ TEST_CASE("log_buffer overwrites oldest entry past capacity", "[log_buffer]")
     int count = log_buffer_get_recent(entries, LOG_BUFFER_CAPACITY);
     TEST_ASSERT_EQUAL_INT((int)LOG_BUFFER_CAPACITY, count);
     TEST_ASSERT_EQUAL_STRING("e00001", entries[0].text);
-    TEST_ASSERT_EQUAL_STRING("e00064", entries[LOG_BUFFER_CAPACITY - 1U].text);
+
+    char last_name[16];
+    fill_entry_name(last_name, sizeof(last_name), LOG_BUFFER_CAPACITY);
+    TEST_ASSERT_EQUAL_STRING(last_name, entries[LOG_BUFFER_CAPACITY - 1U].text);
 }
 
 TEST_CASE("log_buffer survives multiple wraps in order", "[log_buffer]")
@@ -135,8 +141,15 @@ TEST_CASE("log_buffer survives multiple wraps in order", "[log_buffer]")
     static log_entry_t entries[LOG_BUFFER_CAPACITY];
     int count = log_buffer_get_recent(entries, LOG_BUFFER_CAPACITY);
     TEST_ASSERT_EQUAL_INT((int)LOG_BUFFER_CAPACITY, count);
-    TEST_ASSERT_EQUAL_STRING("e00071", entries[0].text);
-    TEST_ASSERT_EQUAL_STRING("e00134", entries[LOG_BUFFER_CAPACITY - 1U].text);
+
+    unsigned int first_kept = total - LOG_BUFFER_CAPACITY;
+    char first_name[16];
+    fill_entry_name(first_name, sizeof(first_name), first_kept);
+    TEST_ASSERT_EQUAL_STRING(first_name, entries[0].text);
+
+    char last_name[16];
+    fill_entry_name(last_name, sizeof(last_name), total - 1U);
+    TEST_ASSERT_EQUAL_STRING(last_name, entries[LOG_BUFFER_CAPACITY - 1U].text);
 
     for (size_t i = 1; i < LOG_BUFFER_CAPACITY; i++) {
         TEST_ASSERT_TRUE(strcmp(entries[i - 1U].text, entries[i].text) < 0);
@@ -164,8 +177,13 @@ TEST_CASE("log_buffer bounded copy never writes past requested capacity", "[log_
 
     int count = log_buffer_get_recent(frame, 4);
     TEST_ASSERT_EQUAL_INT(4, count);
-    TEST_ASSERT_EQUAL_STRING("e00060", frame[0].text);
-    TEST_ASSERT_EQUAL_STRING("e00063", frame[3].text);
+
+    char first_name[16];
+    fill_entry_name(first_name, sizeof(first_name), LOG_BUFFER_CAPACITY - 4U);
+    char last_name[16];
+    fill_entry_name(last_name, sizeof(last_name), LOG_BUFFER_CAPACITY - 1U);
+    TEST_ASSERT_EQUAL_STRING(first_name, frame[0].text);
+    TEST_ASSERT_EQUAL_STRING(last_name, frame[3].text);
     TEST_ASSERT_EQUAL_MEMORY(&expected_canary, canary, sizeof(expected_canary));
 }
 

@@ -40,15 +40,32 @@ static void capability_executor_completion(const dispatch_result_t *result,
                                            void *context)
 {
     capability_submit_bridge_t *bridge = context;
-    device_cap_submit_result_t outcome = DEVICE_CAP_SUBMIT_ERROR;
+    device_cap_submit_result_t outcome = DEVICE_CAP_SUBMIT_INTERNAL_ERROR;
     if (result != NULL) {
-        if (result->status == DISPATCH_STATUS_OK) {
+        switch (result->status) {
+        case DISPATCH_STATUS_OK:
             outcome = DEVICE_CAP_SUBMIT_OK;
-        } else if (result->status == DISPATCH_STATUS_DEVICE_ERROR ||
-                   result->status == DISPATCH_STATUS_UNSUPPORTED_COMMAND) {
+            break;
+        case DISPATCH_STATUS_DEVICE_ERROR:
+        case DISPATCH_STATUS_UNSUPPORTED_COMMAND:
             outcome = DEVICE_CAP_SUBMIT_REJECTED;
-        } else if (result->status == DISPATCH_STATUS_TIMEOUT) {
+            break;
+        case DISPATCH_STATUS_BUSY:
+        case DISPATCH_STATUS_CONFLICT:
+            outcome = DEVICE_CAP_SUBMIT_BUSY;
+            break;
+        case DISPATCH_STATUS_TIMEOUT:
             outcome = DEVICE_CAP_SUBMIT_TIMEOUT;
+            break;
+        case DISPATCH_STATUS_NOT_CONNECTED:
+            outcome = DEVICE_CAP_SUBMIT_NOT_CONNECTED;
+            break;
+        case DISPATCH_STATUS_TRANSPORT_ERROR:
+            outcome = DEVICE_CAP_SUBMIT_TRANSPORT_ERROR;
+            break;
+        default:
+            outcome = DEVICE_CAP_SUBMIT_INTERNAL_ERROR;
+            break;
         }
     }
     bridge->done(outcome, bridge->context);
