@@ -10,10 +10,6 @@
 // Strict tool registry: the only tools exposed over MCP. tools/list is built
 // exclusively from this table, closing the hidden command surface that the
 // old unknown-tool fallback allowed.
-//
-// Admin tools (add_device, edit_device, delete_device) are NOT exposed
-// through the MCP control/voice profile per spec §12. They remain
-// available through Web UI / REST admin only.
 
 #define MAX_LEN_OF(field) ((int)(sizeof(((gw_message_t *)0)->field) - 1))
 
@@ -46,8 +42,6 @@ static cJSON *new_object_schema(void)
     return schema;
 }
 
-// Every partial-failure path frees the whole tree; cJSON_Delete(NULL) is a
-// no-op so each helper can bail with {cJSON_Delete(root); return NULL;}
 #define SCHEMA_FAIL(schema)       \
     do {                          \
         cJSON_Delete(schema);     \
@@ -111,7 +105,6 @@ static cJSON *schema_device_command(void)
     cJSON_AddItemToArray(required, cJSON_CreateString("command"));
     cJSON_AddItemToObject(schema, "required", required);
 
-    // Add minLength constraints per spec §13.4
     cJSON *device_id_schema =
         cJSON_GetObjectItemCaseSensitive(properties, "device_id");
     if (device_id_schema != NULL) {
@@ -128,8 +121,6 @@ static cJSON *schema_device_command(void)
 
 #undef SCHEMA_FAIL
 
-// MCP control profile tools only — admin CRUD is excluded per spec §12.
-// Deterministic order for stable caching and prompt behavior (spec §37).
 static const mcp_tool_desc_t MCP_TOOL_TABLE[] = {
     {"get_status", "Get gateway and BLE status", schema_empty, true, false},
     {"list_devices", "List devices known by the gateway", schema_empty, true, false},
@@ -147,7 +138,8 @@ const mcp_tool_desc_t *mcp_registry_find(const char *name)
     return NULL;
 }
 
-int mcp_registry_build_tools_list(cJSON *tools_array, cJSON *names_array)
+// Build tools array only — no tool_names (§12.9).
+int mcp_registry_build_tools_list(cJSON *tools_array)
 {
     for (size_t i = 0; i < sizeof(MCP_TOOL_TABLE) / sizeof(MCP_TOOL_TABLE[0]); i++) {
         const mcp_tool_desc_t *desc = &MCP_TOOL_TABLE[i];
@@ -165,18 +157,11 @@ int mcp_registry_build_tools_list(cJSON *tools_array, cJSON *names_array)
         cJSON_AddItemToObject(tool, "inputSchema", schema);
         cJSON_AddBoolToObject(annotations, "readOnlyHint", desc->read_only);
         cJSON_AddBoolToObject(annotations, "destructiveHint", desc->destructive);
-        // idempotentHint: only true for read-only tools; device_command
-        // is a generic tool and cannot guarantee idempotency for all
-        // dynamic commands, so omit it for non-read-only tools (spec §26).
         if (desc->read_only) {
             cJSON_AddBoolToObject(annotations, "idempotentHint", true);
         }
         cJSON_AddItemToObject(tool, "annotations", annotations);
         cJSON_AddItemToArray(tools_array, tool);
-
-        cJSON *name_copy = cJSON_CreateString(desc->name);
-        if (name_copy == NULL) return -1;
-        cJSON_AddItemToArray(names_array, name_copy);
     }
     return 0;
 }

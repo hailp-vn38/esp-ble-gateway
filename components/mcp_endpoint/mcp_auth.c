@@ -43,9 +43,6 @@ void mcp_auth_reset_rate_limit(void)
     s_rate_last_refill_us = esp_timer_get_time();
 }
 
-// Token resolution: NVS override (namespace "mcp", key "token") wins over the
-// Kconfig default so tokens can rotate without a reflash. Empty string keeps
-// dev mode.
 static char *configured_token(void)
 {
     nvs_handle_t handle;
@@ -100,7 +97,6 @@ static bool host_in_allowlist(const char *host)
 {
     char normalized[128];
     size_t out = 0;
-    // Strip port, keeping IPv6 literal brackets intact: [::1]:8080 -> [::1].
     if (host[0] == '[') {
         const char *bracket_end = strchr(host, ']');
         if (bracket_end == NULL) return false;
@@ -140,6 +136,116 @@ static bool host_in_allowlist(const char *host)
     return false;
 }
 
+// ---------------------------------------------------------------------------
+// Strict Content-Type parser (§12.7)
+// ---------------------------------------------------------------------------
+
+// Only accept: application/json or application/json; charset=utf-8
+// Rejects: "application/json-extra", "application/json; charset=utf-8; blah"
+static bool validate_content_type(const char *ct)
+{
+    if (ct == NULL) return false;
+
+    // Skip leading whitespace
+    while (*ct == ' ' || *ct == '\t') ct++;
+
+    // Must start with "application/json" (case-insensitive)
+    if (strncasecmp(ct, "application/json", 16) != 0) return false;
+
+    ct += 16;
+
+    // End of string = valid
+    if (*ct == '\0') return true;
+
+    // Must be semicolon followed by parameters
+    if (*ct != ';') return false;
+    ct++;
+
+    // Skip whitespace after semicolon
+    while (*ct == ' ' || *ct == '\t') ct++;
+
+    // Only accepted parameter: charset=utf-8
+    if (strncasecmp(ct, "charset=utf-8", 13) == 0) {
+        ct += 13;
+        while (*ct == ' ' || *ct == '\t') ct++;
+        return (*ct == '\0');
+    }
+
+    return false;
+}
+
+// ---------------------------------------------------------------------------
+// Accept header parser (§12.6)
+// ---------------------------------------------------------------------------
+
+typedef struct {
+    bool accepts_json;
+    bool accepts_event_stream;
+} mcp_accept_state_t;
+
+static void parse_accept_header(const char *accept, mcp_accept_state_t *state)
+{
+    state->accepts_json = false;
+    state->accepts_event_stream = false;
+
+    if (accept == NULL) return;
+
+    while (*accept != '\0') {
+        // Skip leading comma / whitespace
+        while (*accept == ' ' || *accept == '\t' || *accept == ',') accept++;
+        if (*accept == '\0') break;
+
+        // Read media type (up to ';' or end)
+        const char *start = accept;
+        while (*accept != ';' && *accept != ',' && *accept != '\0' &&
+               *accept != ' ' && *accept != '\t') {
+            accept++;
+        }
+        size_t len = (size_t)(accept - start);
+
+        // Case-insensitive compare
+        if (len == 16 &&
+            strncasecmp(start, "application/json", 16) == 0) {
+            state->accepts_json = true;
+        } else if (len == 24 &&
+                   strncasecmp(start, "text/event-stream", 17) == 0) {
+            state->accepts_event_stream = true;
+        }
+
+        // Skip parameters (q=, charset=, etc.)
+        while (*accept != ',' && *accept != '\0') accept++;
+    }
+}
+
+static mcp_gate_status_t validate_accept(httpd_req_t *req,
+                                         const mcp_transport_t *io)
+{
+    char *accept = io->get_header(req, "Accept");
+    mcp_accept_state_t state;
+    parse_accept_header(accept, &state);
+    free(accept);
+
+    // Default mode: accept if client can receive JSON (or no Accept header)
+    if (!CONFIG_MCP_STRICT_ACCEPT_HEADER) {
+        // Missing Accept or accepts JSON -> OK
+        if (state.accepts_json || (!state.accepts_json && !state.accepts_event_stream)) {
+            return MCP_GATE_OK;
+        }
+        // Accept present but doesn't include JSON -> 406
+        return MCP_GATE_BAD_ACCEPT;
+    }
+
+    // Strict mode: must advertise both JSON and event-stream
+    if (state.accepts_json && state.accepts_event_stream) {
+        return MCP_GATE_OK;
+    }
+    return MCP_GATE_BAD_ACCEPT;
+}
+
+// ---------------------------------------------------------------------------
+// Host / Origin validation
+// ---------------------------------------------------------------------------
+
 static mcp_gate_status_t validate_host_origin(httpd_req_t *req,
                                               const mcp_transport_t *io)
 {
@@ -152,7 +258,6 @@ static mcp_gate_status_t validate_host_origin(httpd_req_t *req,
 
     char *origin = io->get_header(req, "Origin");
     if (origin != NULL) {
-        // Origin is scheme://host[:port]/... — compare only the authority.
         const char *authority = strstr(origin, "://");
         authority = authority != NULL ? authority + 3 : origin;
         bool origin_ok = host_in_allowlist(authority);
@@ -162,14 +267,17 @@ static mcp_gate_status_t validate_host_origin(httpd_req_t *req,
     return MCP_GATE_OK;
 }
 
+// ---------------------------------------------------------------------------
+// Main gate (§13.1)
+// ---------------------------------------------------------------------------
+
 mcp_gate_status_t mcp_auth_gate(httpd_req_t *req)
 {
     const mcp_transport_t *io = mcp_transport_get();
 
+    // Strict Content-Type validation (§12.7)
     char *content_type = io->get_header(req, "Content-Type");
-    bool type_ok =
-        content_type != NULL &&
-        strncasecmp(content_type, "application/json", strlen("application/json")) == 0;
+    bool type_ok = validate_content_type(content_type);
     free(content_type);
     if (!type_ok) return MCP_GATE_BAD_CONTENT_TYPE;
 
@@ -195,5 +303,8 @@ mcp_gate_status_t mcp_auth_gate(httpd_req_t *req)
         if (!authorized) return MCP_GATE_UNAUTHORIZED;
     }
 
-    return validate_host_origin(req, io);
+    mcp_gate_status_t host_result = validate_host_origin(req, io);
+    if (host_result != MCP_GATE_OK) return host_result;
+
+    return validate_accept(req, io);
 }

@@ -69,40 +69,36 @@ bool mcp_device_command_allowed(const char *command)
 }
 
 // ---------------------------------------------------------------------------
-// tools/list
+// tools/list — dual-era (§9, §11)
 // ---------------------------------------------------------------------------
 
-cJSON *mcp_tools_list(const mcp_request_meta_t *meta)
+cJSON *mcp_tools_list(const mcp_request_context_t *ctx)
 {
     cJSON *result = cJSON_CreateObject();
     cJSON *tools = cJSON_CreateArray();
-    cJSON *tool_names = cJSON_CreateArray();
-    if (result == NULL || tools == NULL || tool_names == NULL) {
+    if (result == NULL || tools == NULL) {
         cJSON_Delete(result);
         cJSON_Delete(tools);
-        cJSON_Delete(tool_names);
         return NULL;
     }
 
-    // MCP 2026-07-28 ListToolsResult requires resultType
-    if (meta->mcp_2026) {
+    // MCP 2026-07-28 ListToolsResult (§11)
+    if (ctx->era == MCP_ERA_2026_07_28) {
         cJSON_AddStringToObject(result, "resultType", "complete");
-        // Cache hints required by the 2026-07-28 ListToolsResult.
         cJSON_AddNumberToObject(result, "ttlMs", MCP_TOOLS_CACHE_TTL_MS);
         cJSON_AddStringToObject(result, "cacheScope", MCP_TOOLS_CACHE_SCOPE);
     }
 
-    if (mcp_registry_build_tools_list(tools, tool_names) != 0) {
+    if (mcp_registry_build_tools_list(tools) != 0) {
         cJSON_Delete(result);
         cJSON_Delete(tools);
-        cJSON_Delete(tool_names);
         return NULL;
     }
     cJSON_AddItemToObject(result, "tools", tools);
-    cJSON_AddItemToObject(result, "tool_names", tool_names);
+    // No tool_names on MCP wire (§12.9).
 
-    // Add serverInfo to result._meta per MCP 2026-07-28
-    if (meta->mcp_2026) {
+    // serverInfo in result._meta (§12.4)
+    if (ctx->era == MCP_ERA_2026_07_28) {
         if (!mcp_result_add_server_info(result)) {
             cJSON_Delete(result);
             return NULL;
@@ -149,8 +145,6 @@ static mcp_resolve_status_t normalize_arguments(const cJSON *arguments,
         copied = copied && copy_optional_field(normalized, arguments,
                                                optional_fields[i]);
     }
-    // Preserve the historical integer `value` alias while publishing the
-    // canonical int_value/bool_value fields in the tool schema.
     if (strcmp(message_type, "device_command") == 0 &&
         cJSON_GetObjectItemCaseSensitive(normalized, "int_value") == NULL) {
         const cJSON *legacy_value =
@@ -216,8 +210,6 @@ mcp_resolve_status_t mcp_tools_resolve(const cJSON *params, gw_message_t *msg,
 
     const mcp_tool_desc_t *desc = mcp_registry_find(tool_name);
     if (desc == NULL) {
-        // Strict surface: unknown names are protocol errors. The old
-        // unknown-tool + device_id -> device_command fallback is gone.
         *error = (mcp_rpc_error_t){-32602, "unknown tool"};
         return MCP_RESOLVE_INVALID;
     }
@@ -253,7 +245,6 @@ mcp_resolve_status_t mcp_tools_resolve(const cJSON *params, gw_message_t *msg,
             return MCP_RESOLVE_ALLOWLIST_DENIED;
         }
 
-        // Full policy check: device exists + capabilities + destructive guard
         mcp_policy_result_t policy = mcp_policy_check_device_command(
             device_id->valuestring, device_command);
         if (policy == MCP_POLICY_DENY_COMMAND) {
@@ -285,72 +276,86 @@ mcp_resolve_status_t mcp_tools_resolve(const cJSON *params, gw_message_t *msg,
                                    msg, error);
     }
 
-    // Gateway tools: the MCP tool name IS the gateway command.
     *is_device_command = false;
     return normalize_arguments(source, "gateway_command", tool_name, msg,
                                error);
 }
 
 // ---------------------------------------------------------------------------
-// Execution + wire formatting
+// Execution + wire formatting — dual-era (§10, §11)
 // ---------------------------------------------------------------------------
 
 cJSON *mcp_tools_format_dispatch(const dispatch_result_t *result,
-                                 const mcp_request_meta_t *meta,
+                                 const mcp_request_context_t *ctx,
                                  mcp_rpc_error_t *err)
 {
     bool ok = dispatch_result_is_ok(result);
+
+    // Determine text content: TEXT uses payload directly, JSON serializes
     const char *text = result->format == DISPATCH_RESULT_TEXT
                            ? result->payload
-                           : "";
+                           : NULL;
+
     cJSON *out = cJSON_CreateObject();
     if (out == NULL) {
         *err = (mcp_rpc_error_t){-32603, "out of memory"};
         return NULL;
     }
-    if (meta->mcp_2026) {
-        cJSON_AddStringToObject(out, "resultType", "complete");
-        cJSON *content = cJSON_CreateArray();
-        cJSON *item = cJSON_CreateObject();
-        if (content == NULL || item == NULL) {
-            cJSON_Delete(content);
-            cJSON_Delete(item);
-            cJSON_Delete(out);
-            *err = (mcp_rpc_error_t){-32603, "out of memory"};
-            return NULL;
-        }
-        cJSON_AddStringToObject(item, "type", "text");
-        cJSON_AddStringToObject(item, "text", text);
-        cJSON_AddItemToArray(content, item);
-        cJSON_AddItemToObject(out, "content", content);
-        cJSON_AddBoolToObject(out, "isError", !ok);
 
-        // Add serverInfo to result._meta
+    // Build content array with text fallback (always present, §10.1 / §10.2)
+    cJSON *content = cJSON_CreateArray();
+    cJSON *item = cJSON_CreateObject();
+    if (content == NULL || item == NULL) {
+        cJSON_Delete(content);
+        cJSON_Delete(item);
+        cJSON_Delete(out);
+        *err = (mcp_rpc_error_t){-32603, "out of memory"};
+        return NULL;
+    }
+    cJSON_AddStringToObject(item, "type", "text");
+
+    // For JSON results, serialize to text (§10.1)
+    if (result->format == DISPATCH_RESULT_JSON && result->payload[0] != '\0') {
+        cJSON_AddStringToObject(item, "text", result->payload);
+    } else if (text != NULL) {
+        cJSON_AddStringToObject(item, "text", text);
+    } else {
+        cJSON_AddStringToObject(item, "text", "");
+    }
+    cJSON_AddItemToArray(content, item);
+    cJSON_AddItemToObject(out, "content", content);
+    cJSON_AddBoolToObject(out, "isError", !ok);
+
+    if (ctx->era == MCP_ERA_2026_07_28) {
+        cJSON_AddStringToObject(out, "resultType", "complete");
         if (!mcp_result_add_server_info(out)) {
             cJSON_Delete(out);
             *err = (mcp_rpc_error_t){-32603, "out of memory"};
             return NULL;
         }
-    } else {
-        cJSON_AddBoolToObject(out, "success", ok);
-        cJSON_AddNumberToObject(out, "status", (int)result->status);
-        cJSON_AddStringToObject(out, "message", text);
     }
 
-    if (result->format == DISPATCH_RESULT_JSON) {
-        cJSON *data = cJSON_Parse(result->payload);
-        if (data == NULL) {
-            cJSON_Delete(out);
-            *err = (mcp_rpc_error_t){-32603, "dispatcher returned invalid JSON"};
-            return NULL;
+    // structuredContent: 2025 only when JSON root is object (§10.2)
+    // 2026: add for any JSON result
+    if (result->format == DISPATCH_RESULT_JSON && result->payload[0] != '\0') {
+        cJSON *parsed = cJSON_Parse(result->payload);
+        if (parsed != NULL) {
+            if (ctx->era == MCP_ERA_2026_07_28) {
+                cJSON_AddItemToObject(out, "structuredContent", parsed);
+            } else if (cJSON_IsObject(parsed)) {
+                // 2025: only object roots (§10.2 Policy A)
+                cJSON_AddItemToObject(out, "structuredContent", parsed);
+            } else {
+                // 2025: array/scalar -> text fallback only, omit structuredContent
+                cJSON_Delete(parsed);
+            }
         }
-        const char *field = meta->mcp_2026 ? "structuredContent" : "data";
-        cJSON_AddItemToObject(out, field, data);
     }
+
     return out;
 }
 
-cJSON *mcp_tools_tool_error(const char *text, const mcp_request_meta_t *meta,
+cJSON *mcp_tools_tool_error(const char *text, const mcp_request_context_t *ctx,
                             mcp_rpc_error_t *err)
 {
     dispatch_result_t synthetic = {
@@ -359,11 +364,11 @@ cJSON *mcp_tools_tool_error(const char *text, const mcp_request_meta_t *meta,
         .payload = {0},
     };
     strlcpy(synthetic.payload, text, sizeof(synthetic.payload));
-    return mcp_tools_format_dispatch(&synthetic, meta, err);
+    return mcp_tools_format_dispatch(&synthetic, ctx, err);
 }
 
 cJSON *mcp_tools_execute(const gw_message_t *msg,
-                         const mcp_request_meta_t *meta,
+                         const mcp_request_context_t *ctx,
                          mcp_rpc_error_t *error)
 {
     SemaphoreHandle_t mutex = ensure_dispatch_mutex();
@@ -374,7 +379,7 @@ cJSON *mcp_tools_execute(const gw_message_t *msg,
     xSemaphoreTake(mutex, portMAX_DELAY);
     command_dispatcher_handle(msg, &s_dispatch_result);
     cJSON *result =
-        mcp_tools_format_dispatch(&s_dispatch_result, meta, error);
+        mcp_tools_format_dispatch(&s_dispatch_result, ctx, error);
     xSemaphoreGive(mutex);
     return result;
 }

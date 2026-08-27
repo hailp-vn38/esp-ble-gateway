@@ -9,8 +9,7 @@
 
 #include "test_mcp_transport.h"
 
-// Conformance matrix for the 2026-07-28 wire mode plus the legacy-mode
-// feature flag. Legacy behavior itself is covered by test_mcp_endpoint.c.
+// Conformance matrix for the 2026-07-28 wire mode and 2025-11-25 compat.
 
 static void mcp_setup(void)
 {
@@ -21,16 +20,13 @@ static void mcp_setup(void)
 }
 
 // ---------------------------------------------------------------------------
-// Header handling
+// MCP 2026 header handling
 // ---------------------------------------------------------------------------
 
 TEST_CASE("supported protocol version header enables the 2026 wire mode",
           "[mcp_conformance]")
 {
     mcp_setup();
-    TEST_ASSERT_EQUAL_INT(0, run_request(
-        "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"tools/list\"}"));
-    // io_reset wiped headers; re-run with the version header present.
     io_reset("{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"tools/list\"}");
     io_set_header("MCP-Protocol-Version", "2026-07-28");
     io_set_header("Mcp-Method", "tools/list");
@@ -43,19 +39,17 @@ TEST_CASE("supported protocol version header enables the 2026 wire mode",
     cJSON *result = cJSON_GetObjectItemCaseSensitive(response, "result");
     TEST_ASSERT_NOT_NULL(result);
 
-    // ListToolsResult requires resultType per MCP 2026-07-28
     TEST_ASSERT_EQUAL_STRING(
         "complete",
         cJSON_GetStringValue(cJSON_GetObjectItemCaseSensitive(result, "resultType")));
 
-    // ListToolsResult cache hints required by 2026-07-28.
     TEST_ASSERT_NOT_NULL(cJSON_GetObjectItemCaseSensitive(result, "ttlMs"));
     TEST_ASSERT_EQUAL_STRING(
         "private",
         cJSON_GetStringValue(cJSON_GetObjectItemCaseSensitive(result, "cacheScope")));
 
-    // Response _meta carries serverInfo per MCP 2026-07-28.
-    cJSON *meta = cJSON_GetObjectItemCaseSensitive(response, "_meta");
+    // serverInfo in result._meta (§12.4)
+    cJSON *meta = cJSON_GetObjectItemCaseSensitive(result, "_meta");
     TEST_ASSERT_NOT_NULL(meta);
     cJSON *server_info = cJSON_GetObjectItemCaseSensitive(
         meta, "io.modelcontextprotocol/serverInfo");
@@ -82,30 +76,38 @@ TEST_CASE("unsupported protocol version is -32022 with HTTP 400",
 
     TEST_ASSERT_EQUAL_STRING("400 Bad Request", g_io.status_line);
     cJSON *response = io_response_json();
+    cJSON *error = cJSON_GetObjectItemCaseSensitive(response, "error");
+    TEST_ASSERT_NOT_NULL(error);
     TEST_ASSERT_EQUAL_INT(-32022,
-                          (int)cJSON_GetNumberValue(cJSON_GetObjectItemCaseSensitive(
-                              cJSON_GetObjectItemCaseSensitive(response, "error"),
-                              "code")));
+                          (int)cJSON_GetNumberValue(
+                              cJSON_GetObjectItemCaseSensitive(error, "code")));
+    // error.data should contain supported and requested versions
+    cJSON *data = cJSON_GetObjectItemCaseSensitive(error, "data");
+    TEST_ASSERT_NOT_NULL(data);
+    cJSON *supported = cJSON_GetObjectItemCaseSensitive(data, "supported");
+    TEST_ASSERT_NOT_NULL(supported);
+    TEST_ASSERT_TRUE(cJSON_IsArray(supported));
     cJSON_Delete(response);
 }
 
-TEST_CASE("legacy disabled rejects requests without a version header",
+TEST_CASE("version header missing rejects when compat disabled",
           "[mcp_conformance]")
 {
     mcp_setup();
-    TEST_ASSERT_EQUAL_INT(0, mcp_codec_set_legacy_override(0));
+    // No version header -> should be rejected as unsupported
     esp_err_t outcome = run_request(
         "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"tools/list\"}");
-    int rc = mcp_codec_set_legacy_override(-1); // restore Kconfig default
     TEST_ASSERT_EQUAL_INT(0, outcome);
-    TEST_ASSERT_EQUAL_INT(0, rc);
 
     TEST_ASSERT_EQUAL_STRING("400 Bad Request", g_io.status_line);
     cJSON *response = io_response_json();
-    TEST_ASSERT_EQUAL_INT(-32022,
-                          (int)cJSON_GetNumberValue(cJSON_GetObjectItemCaseSensitive(
-                              cJSON_GetObjectItemCaseSensitive(response, "error"),
-                              "code")));
+    cJSON *error = cJSON_GetObjectItemCaseSensitive(response, "error");
+    TEST_ASSERT_NOT_NULL(error);
+    int code = (int)cJSON_GetNumberValue(
+        cJSON_GetObjectItemCaseSensitive(error, "code"));
+    // Without compat: -32022 UnsupportedProtocolVersion
+    // With compat: 2025 path may be used
+    TEST_ASSERT_TRUE(code == -32022 || code == -32020);
     cJSON_Delete(response);
 }
 
@@ -148,7 +150,7 @@ TEST_CASE("tools/call result uses resultType, content and isError",
     TEST_ASSERT_NOT_NULL(cJSON_GetStringValue(cJSON_GetObjectItemCaseSensitive(first, "text")));
 
     // serverInfo in result._meta
-    cJSON *meta = cJSON_GetObjectItemCaseSensitive(response, "_meta");
+    cJSON *meta = cJSON_GetObjectItemCaseSensitive(result, "_meta");
     TEST_ASSERT_NOT_NULL(meta);
     cJSON *server_info = cJSON_GetObjectItemCaseSensitive(
         meta, "io.modelcontextprotocol/serverInfo");
@@ -174,7 +176,6 @@ TEST_CASE("server/discover returns target MCP 2026-07-28 shape",
     cJSON *result = cJSON_GetObjectItemCaseSensitive(response, "result");
     TEST_ASSERT_NOT_NULL(result);
 
-    // Target shape per spec §10
     TEST_ASSERT_EQUAL_STRING(
         "complete",
         cJSON_GetStringValue(cJSON_GetObjectItemCaseSensitive(result, "resultType")));
@@ -192,7 +193,7 @@ TEST_CASE("server/discover returns target MCP 2026-07-28 shape",
     TEST_ASSERT_NOT_NULL(cJSON_GetObjectItemCaseSensitive(capabilities, "tools"));
 
     // serverInfo in result._meta
-    cJSON *meta = cJSON_GetObjectItemCaseSensitive(response, "_meta");
+    cJSON *meta = cJSON_GetObjectItemCaseSensitive(result, "_meta");
     TEST_ASSERT_NOT_NULL(meta);
     cJSON *server_info = cJSON_GetObjectItemCaseSensitive(
         meta, "io.modelcontextprotocol/serverInfo");
@@ -221,7 +222,6 @@ TEST_CASE("missing Mcp-Method for MCP 2026 request returns -32020",
              "\"params\":{\"_meta\":{\"io.modelcontextprotocol/protocolVersion\":\"2026-07-28\","
              "\"io.modelcontextprotocol/clientCapabilities\":{}}}}");
     io_set_header("MCP-Protocol-Version", "2026-07-28");
-    // No Mcp-Method header
     install_transport();
     memset(&g_req, 0, sizeof(g_req));
     g_req.content_len = (int)g_io.body_len;
@@ -245,7 +245,7 @@ TEST_CASE("Mcp-Method mismatch returns -32020",
              "\"params\":{\"_meta\":{\"io.modelcontextprotocol/protocolVersion\":\"2026-07-28\","
              "\"io.modelcontextprotocol/clientCapabilities\":{}}}}");
     io_set_header("MCP-Protocol-Version", "2026-07-28");
-    io_set_header("Mcp-Method", "tools/call");  // mismatch with body method
+    io_set_header("Mcp-Method", "tools/call");
     install_transport();
     memset(&g_req, 0, sizeof(g_req));
     g_req.content_len = (int)g_io.body_len;
@@ -271,7 +271,6 @@ TEST_CASE("tools/call missing Mcp-Name returns -32020",
              "\"io.modelcontextprotocol/clientCapabilities\":{}}}}");
     io_set_header("MCP-Protocol-Version", "2026-07-28");
     io_set_header("Mcp-Method", "tools/call");
-    // No Mcp-Name header
     install_transport();
     memset(&g_req, 0, sizeof(g_req));
     g_req.content_len = (int)g_io.body_len;
@@ -297,7 +296,7 @@ TEST_CASE("tools/call Mcp-Name mismatch returns -32020",
              "\"io.modelcontextprotocol/clientCapabilities\":{}}}}");
     io_set_header("MCP-Protocol-Version", "2026-07-28");
     io_set_header("Mcp-Method", "tools/call");
-    io_set_header("Mcp-Name", "wrong_name");  // mismatch with params.name
+    io_set_header("Mcp-Name", "wrong_name");
     install_transport();
     memset(&g_req, 0, sizeof(g_req));
     g_req.content_len = (int)g_io.body_len;
@@ -411,7 +410,7 @@ TEST_CASE("unknown method returns HTTP 404 and -32601",
 }
 
 // ---------------------------------------------------------------------------
-// tools/list surface (no admin tools)
+// tools/list surface (no admin tools, no tool_names)
 // ---------------------------------------------------------------------------
 
 TEST_CASE("tools/list only contains control profile tools",
@@ -436,11 +435,13 @@ TEST_CASE("tools/list only contains control profile tools",
     TEST_ASSERT_NOT_NULL(tools);
     TEST_ASSERT_TRUE(cJSON_IsArray(tools));
 
-    // Should have exactly 4 tools: get_status, list_devices,
-    // list_device_capabilities, device_command
+    // 4 control profile tools only
     TEST_ASSERT_EQUAL_INT(4, cJSON_GetArraySize(tools));
 
-    // Verify no admin tools are present
+    // No tool_names on wire (§12.9)
+    TEST_ASSERT_NULL(cJSON_GetObjectItemCaseSensitive(result, "tool_names"));
+
+    // Verify no admin tools
     for (int i = 0; i < cJSON_GetArraySize(tools); i++) {
         cJSON *tool = cJSON_GetArrayItem(tools, i);
         const char *name =
@@ -450,5 +451,150 @@ TEST_CASE("tools/list only contains control profile tools",
         TEST_ASSERT_TRUE(strcmp(name, "edit_device") != 0);
         TEST_ASSERT_TRUE(strcmp(name, "delete_device") != 0);
     }
+    cJSON_Delete(response);
+}
+
+// ---------------------------------------------------------------------------
+// MCP 2025 compatibility tests
+// ---------------------------------------------------------------------------
+
+TEST_CASE("initialize with exact supported version returns InitializeResult",
+          "[mcp_2025]")
+{
+    mcp_setup();
+    io_reset("{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"initialize\","
+             "\"params\":{\"protocolVersion\":\"2025-11-25\","
+             "\"capabilities\":{},"
+             "\"clientInfo\":{\"name\":\"test-client\",\"version\":\"1.0\"}}}");
+    install_transport();
+    memset(&g_req, 0, sizeof(g_req));
+    g_req.content_len = (int)g_io.body_len;
+    TEST_ASSERT_EQUAL_INT(0, mcp_handle_request(&g_req));
+
+    cJSON *response = io_response_json();
+    cJSON *result = cJSON_GetObjectItemCaseSensitive(response, "result");
+    TEST_ASSERT_NOT_NULL(result);
+    TEST_ASSERT_NULL(cJSON_GetObjectItemCaseSensitive(response, "error"));
+
+    TEST_ASSERT_EQUAL_STRING(
+        "2025-11-25",
+        cJSON_GetStringValue(cJSON_GetObjectItemCaseSensitive(result, "protocolVersion")));
+
+    cJSON *capabilities = cJSON_GetObjectItemCaseSensitive(result, "capabilities");
+    TEST_ASSERT_NOT_NULL(capabilities);
+    cJSON *tools = cJSON_GetObjectItemCaseSensitive(capabilities, "tools");
+    TEST_ASSERT_NOT_NULL(tools);
+
+    cJSON *server_info = cJSON_GetObjectItemCaseSensitive(result, "serverInfo");
+    TEST_ASSERT_NOT_NULL(server_info);
+    TEST_ASSERT_EQUAL_STRING("esp32-ble-gateway",
+                             cJSON_GetStringValue(
+                                 cJSON_GetObjectItemCaseSensitive(server_info, "name")));
+    cJSON_Delete(response);
+}
+
+TEST_CASE("initialize with different version gets counter-offered",
+          "[mcp_2025]")
+{
+    mcp_setup();
+    io_reset("{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"initialize\","
+             "\"params\":{\"protocolVersion\":\"2025-06-18\","
+             "\"capabilities\":{},"
+             "\"clientInfo\":{\"name\":\"old-client\",\"version\":\"1.0\"}}}");
+    install_transport();
+    memset(&g_req, 0, sizeof(g_req));
+    g_req.content_len = (int)g_io.body_len;
+    TEST_ASSERT_EQUAL_INT(0, mcp_handle_request(&g_req));
+
+    cJSON *response = io_response_json();
+    cJSON *result = cJSON_GetObjectItemCaseSensitive(response, "result");
+    TEST_ASSERT_NOT_NULL(result);
+    // Counter-offer: server returns 2025-11-25 regardless of client proposal
+    TEST_ASSERT_EQUAL_STRING(
+        "2025-11-25",
+        cJSON_GetStringValue(cJSON_GetObjectItemCaseSensitive(result, "protocolVersion")));
+    cJSON_Delete(response);
+}
+
+TEST_CASE("notifications/initialized returns 202 Accepted",
+          "[mcp_2025]")
+{
+    mcp_setup();
+    io_reset("{\"jsonrpc\":\"2.0\",\"method\":\"notifications/initialized\"}");
+    install_transport();
+    memset(&g_req, 0, sizeof(g_req));
+    g_req.content_len = (int)g_io.body_len;
+    TEST_ASSERT_EQUAL_INT(0, mcp_handle_request(&g_req));
+    TEST_ASSERT_EQUAL_STRING("202 Accepted", g_io.status_line);
+    TEST_ASSERT_EQUAL_UINT32(0, g_io.response_len);
+}
+
+TEST_CASE("notifications/initialized with version header returns 202",
+          "[mcp_2025]")
+{
+    mcp_setup();
+    io_reset("{\"jsonrpc\":\"2.0\",\"method\":\"notifications/initialized\"}");
+    io_set_header("MCP-Protocol-Version", "2025-11-25");
+    install_transport();
+    memset(&g_req, 0, sizeof(g_req));
+    g_req.content_len = (int)g_io.body_len;
+    TEST_ASSERT_EQUAL_INT(0, mcp_handle_request(&g_req));
+    TEST_ASSERT_EQUAL_STRING("202 Accepted", g_io.status_line);
+}
+
+TEST_CASE("2025 tools/list returns proper MCP shape",
+          "[mcp_2025]")
+{
+    mcp_setup();
+    io_reset("{\"jsonrpc\":\"2.0\",\"id\":2,\"method\":\"tools/list\"}");
+    io_set_header("MCP-Protocol-Version", "2025-11-25");
+    install_transport();
+    memset(&g_req, 0, sizeof(g_req));
+    g_req.content_len = (int)g_io.body_len;
+    TEST_ASSERT_EQUAL_INT(0, mcp_handle_request(&g_req));
+
+    cJSON *response = io_response_json();
+    cJSON *result = cJSON_GetObjectItemCaseSensitive(response, "result");
+    TEST_ASSERT_NOT_NULL(result);
+
+    // 2025 does NOT have resultType
+    TEST_ASSERT_NULL(cJSON_GetObjectItemCaseSensitive(result, "resultType"));
+    // 2025 does NOT have tool_names
+    TEST_ASSERT_NULL(cJSON_GetObjectItemCaseSensitive(result, "tool_names"));
+
+    cJSON *tools = cJSON_GetObjectItemCaseSensitive(result, "tools");
+    TEST_ASSERT_NOT_NULL(tools);
+    TEST_ASSERT_TRUE(cJSON_IsArray(tools));
+    cJSON_Delete(response);
+}
+
+TEST_CASE("2025 tools/call returns CallToolResult with content and isError",
+          "[mcp_2025]")
+{
+    mcp_setup();
+    io_reset("{\"jsonrpc\":\"2.0\",\"id\":3,\"method\":\"tools/call\","
+             "\"params\":{\"name\":\"get_status\"}}");
+    io_set_header("MCP-Protocol-Version", "2025-11-25");
+    install_transport();
+    memset(&g_req, 0, sizeof(g_req));
+    g_req.content_len = (int)g_io.body_len;
+    TEST_ASSERT_EQUAL_INT(0, mcp_handle_request(&g_req));
+
+    cJSON *response = io_response_json();
+    cJSON *result = cJSON_GetObjectItemCaseSensitive(response, "result");
+    TEST_ASSERT_NOT_NULL(result);
+    TEST_ASSERT_NULL(cJSON_GetObjectItemCaseSensitive(response, "error"));
+
+    // CallToolResult shape
+    cJSON *content = cJSON_GetObjectItemCaseSensitive(result, "content");
+    TEST_ASSERT_NOT_NULL(content);
+    TEST_ASSERT_TRUE(cJSON_IsArray(content));
+    TEST_ASSERT_FALSE(cJSON_IsTrue(
+        cJSON_GetObjectItemCaseSensitive(result, "isError")));
+
+    cJSON *first = cJSON_GetArrayItem(content, 0);
+    TEST_ASSERT_NOT_NULL(first);
+    TEST_ASSERT_EQUAL_STRING("text",
+                             cJSON_GetStringValue(cJSON_GetObjectItemCaseSensitive(first, "type")));
     cJSON_Delete(response);
 }

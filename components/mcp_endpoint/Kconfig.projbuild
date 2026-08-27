@@ -25,16 +25,22 @@ menu "MCP Endpoint"
             tool may send (e.g. "toggle,set_power"). Empty denies all device
             commands. Gateway tools are not affected by this list.
 
-    config MCP_LEGACY_MODE
-        bool "Accept requests without MCP-Protocol-Version header"
+    config MCP_COMPAT_2025
+        bool "Enable MCP 2025-11-25 initialize compatibility"
+        default y
+        help
+            Accept MCP 2025-11-25 initialize/initialized flow and subsequent
+            tools/list and tools/call requests. The server does not create an
+            MCP-Session-Id and keeps no per-client protocol session state.
+
+    config MCP_STRICT_ACCEPT_HEADER
+        bool "Require both MCP Streamable HTTP Accept media types"
         default n
         help
-            DEPRECATED: Legacy mode is deprecated and will be removed in a
-            future release. When enabled, requests without an MCP-Protocol-Version
-            header are served with the legacy {success,message,data} wire format.
-            When disabled, such requests are rejected with -32022.
-            Can be flipped at runtime through NVS namespace "mcp", key "legacy"
-            (u8: 1=on, 0=off), which survives OTA updates without a reflash.
+            When enabled, requests must include both application/json and
+            text/event-stream in the Accept header. When disabled (default),
+            missing Accept or JSON-only Accept is accepted for compatibility
+            with clients that do not advertise event-stream support.
 
     config MCP_RATE_LIMIT_RPS
         int "Sustained request rate limit (requests per second)"
