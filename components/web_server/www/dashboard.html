@@ -108,79 +108,81 @@
             </section>
 
             <!-- VIEW: DEVICE DETAIL -->
-            <section id="view-device-detail" class="max-w-6xl mx-auto hidden pb-20 h-full flex flex-col">
-                <div class="mb-6 flex-shrink-0">
+            <section id="view-device-detail" class="max-w-6xl mx-auto hidden pb-20">
+                <div class="mb-6">
                     <button onclick="nav.switchTab('devices')" class="flex items-center text-gray-500 hover:text-brand-600 transition-colors mb-4 text-sm font-medium">
                         <i class="ph ph-arrow-left mr-2"></i> Back to Devices
                     </button>
                     
-                    <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-4 bg-white p-6 rounded-xl border border-gray-200 shadow-sm">
-                        <div class="flex items-center">
-                            <div id="detail-icon" class="w-12 h-12 rounded-lg flex items-center justify-center mr-4 text-2xl">
+                    <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-6 bg-white p-6 rounded-xl border border-gray-200 shadow-sm">
+                        <div class="flex items-center min-w-0">
+                            <div id="detail-icon" class="w-12 h-12 rounded-lg flex items-center justify-center mr-4 text-2xl flex-shrink-0">
                                 <!-- Icon injected by JS -->
                             </div>
-                            <div>
-                                <h2 id="detail-name" class="text-2xl font-bold text-gray-900">Device Name</h2>
-                                <p id="detail-mac" class="text-gray-500 text-sm font-mono mt-1">00:00:00:00:00:00</p>
+                            <div class="min-w-0">
+                                <div class="flex items-center gap-3">
+                                    <h2 id="detail-name" class="text-2xl font-bold text-gray-900 truncate">Device Name</h2>
+                                    <span id="detail-status" class="flex items-center text-sm font-medium flex-shrink-0">
+                                        <!-- Status injected by JS -->
+                                    </span>
+                                </div>
+                                <p class="text-gray-500 text-sm mt-1">
+                                    <span class="capitalize" id="detail-header-type">Unknown</span>
+                                    <span class="mx-2 text-gray-300">•</span>
+                                    <span id="detail-mac" class="font-mono">00:00:00:00:00:00</span>
+                                </p>
                             </div>
                         </div>
                         
-                        <div class="flex gap-2">
-                            <button onclick="devices.openEditModal()" class="px-4 py-2 bg-white border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 transition-colors shadow-sm text-sm font-medium flex items-center">
+                        <div class="flex gap-2 w-full sm:w-auto flex-shrink-0">
+                            <button onclick="devices.openEditModal()" class="flex-1 sm:w-auto px-4 py-2 bg-white border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 transition-colors shadow-sm text-sm font-medium flex items-center justify-center">
                                 <i class="ph ph-pencil-simple mr-2"></i> Edit
                             </button>
-                            <button onclick="devices.confirmDeleteDetail()" class="px-4 py-2 bg-white border border-red-200 text-red-600 rounded-lg hover:bg-red-50 transition-colors shadow-sm text-sm font-medium flex items-center">
+                            <button onclick="devices.confirmDeleteDetail()" class="flex-1 sm:w-auto px-4 py-2 bg-white border border-red-200 text-red-600 rounded-lg hover:bg-red-50 transition-colors shadow-sm text-sm font-medium flex items-center justify-center">
                                 <i class="ph ph-trash mr-2"></i> Remove
                             </button>
                         </div>
                     </div>
                 </div>
 
-                <div class="grid grid-cols-1 md:grid-cols-2 gap-6 flex-1 min-h-0">
-                    <!-- Info Sidebar -->
-                    <div class="space-y-6 overflow-y-auto">
-                        <div class="bg-white p-5 rounded-xl border border-gray-200 shadow-sm">
-                            <h3 class="font-semibold text-gray-900 mb-4 border-b border-gray-100 pb-2">Status</h3>
-                            <div class="space-y-3">
-                                <div class="flex justify-between items-center">
-                                    <span class="text-sm text-gray-500">Connection</span>
-                                    <span id="detail-status" class="flex items-center text-sm font-medium">
-                                        <!-- Status injected by JS -->
-                                    </span>
-                                </div>
+                <div class="grid grid-cols-1 md:grid-cols-3 gap-6 items-start">
+                    <div class="md:col-span-1 bg-white p-5 rounded-xl border border-gray-200 shadow-sm">
+                        <div class="mb-4 border-b border-gray-100 pb-3">
+                            <h3 class="font-semibold text-gray-900">Device information</h3>
+                            <p class="text-xs text-gray-500 mt-1">Identity and connection details</p>
+                        </div>
+                        <div class="space-y-4">
+                            <div>
+                                <p class="text-xs text-gray-500 mb-1">Device type</p>
+                                <p id="detail-type" class="text-sm font-medium text-gray-800 capitalize">Unknown</p>
+                            </div>
+                            <div>
+                                <p class="text-xs text-gray-500 mb-1">Device ID</p>
+                                <p id="detail-device-id" class="text-sm font-medium text-gray-800 font-mono break-all">Unknown</p>
+                            </div>
+                            <div>
+                                <p class="text-xs text-gray-500 mb-1">BLE address</p>
+                                <p id="detail-ble-address" class="text-sm font-medium text-gray-800 font-mono break-all">Unknown</p>
                             </div>
                         </div>
+                    </div>
 
-                        <div class="bg-white p-5 rounded-xl border border-gray-200 shadow-sm">
-                            <h3 class="font-semibold text-gray-900 mb-4 border-b border-gray-100 pb-2">Details</h3>
-                            <div class="space-y-3">
-                                <div class="flex justify-between items-center">
-                                    <span class="text-sm text-gray-500">Type</span>
-                                    <span id="detail-type" class="text-sm font-medium text-gray-700 capitalize">Unknown</span>
-                                </div>
-                                <div class="flex justify-between items-center">
-                                    <span class="text-sm text-gray-500">Device ID</span>
-                                    <span id="detail-device-id" class="text-sm font-medium text-gray-700 font-mono truncate max-w-[140px]">Unknown</span>
-                                </div>
-                                <div class="flex justify-between items-center">
-                                    <span class="text-sm text-gray-500">BLE Address</span>
-                                    <span id="detail-ble-address" class="text-sm font-medium text-gray-700 font-mono">Unknown</span>
-                                </div>
-                            </div>
-                        </div>
-
-                        <div class="bg-white p-5 rounded-xl border border-gray-200 shadow-sm">
-                            <div class="flex items-center justify-between mb-4 border-b border-gray-100 pb-2">
+                    <div class="md:col-span-2 bg-white p-5 rounded-xl border border-gray-200 shadow-sm">
+                        <div class="flex items-start justify-between mb-4 border-b border-gray-100 pb-3 gap-4">
+                            <div>
                                 <h3 class="font-semibold text-gray-900">Device Commands</h3>
-                                <button onclick="devices.refreshCapabilities()" class="text-xs text-brand-600 hover:text-brand-700">Refresh</button>
+                                <p class="text-xs text-gray-500 mt-1">Available controls reported by this device</p>
                             </div>
-                            <div class="space-y-3">
-                                <p id="capability-state" class="text-xs text-gray-500">Capabilities unknown</p>
-                                <div id="capability-controls" class="space-y-3"></div>
-                                <div id="legacy-command-controls" class="flex gap-2">
-                                    <input id="input-device-command" type="text" value="toggle" maxlength="31" class="min-w-0 flex-1 px-3 py-2 border border-gray-300 rounded-lg text-sm" aria-label="Custom command">
-                                    <button onclick="devices.sendCustomCommand()" class="px-4 py-2 bg-white border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 text-sm font-medium">Send</button>
-                                </div>
+                            <button onclick="devices.refreshCapabilities()" class="inline-flex items-center px-3 py-1.5 bg-brand-50 text-brand-600 rounded-lg hover:bg-brand-100 transition-colors text-xs font-medium flex-shrink-0">
+                                <i class="ph ph-arrows-clockwise mr-1.5"></i> Refresh
+                            </button>
+                        </div>
+                        <div>
+                            <p id="capability-state" class="inline-flex px-2 py-1 bg-gray-100 rounded text-xs text-gray-600 mb-4">Capabilities unknown</p>
+                            <div id="capability-controls" class="grid grid-cols-1 lg:grid-cols-2 gap-3"></div>
+                            <div id="legacy-command-controls" class="flex gap-2 pt-4">
+                                <input id="input-device-command" type="text" value="toggle" maxlength="31" class="min-w-0 flex-1 px-3 py-2 border border-gray-300 rounded-lg text-sm" aria-label="Custom command">
+                                <button onclick="devices.sendCustomCommand()" class="px-4 py-2 bg-brand-600 text-white rounded-lg hover:bg-brand-700 transition-colors text-sm font-medium">Send</button>
                             </div>
                         </div>
                     </div>
@@ -1016,6 +1018,7 @@
                 document.getElementById('detail-name').innerText = dev.customName;
                 document.getElementById('detail-mac').innerText = dev.mac;
                 document.getElementById('detail-type').innerText = dev.type;
+                document.getElementById('detail-header-type').innerText = dev.type;
                 document.getElementById('detail-device-id').innerText = dev.id;
                 document.getElementById('detail-ble-address').innerText = dev.mac;
                 
@@ -1036,7 +1039,7 @@
                 };
                 const iconClass = typeIconMap[dev.type] || typeIconMap['other'];
                 const iconContainer = document.getElementById('detail-icon');
-                iconContainer.className = `w-12 h-12 rounded-lg flex items-center justify-center mr-4 text-2xl ${iconClass.split(' ').slice(1).join(' ')}`;
+                iconContainer.className = `w-12 h-12 rounded-lg flex items-center justify-center mr-4 text-2xl flex-shrink-0 ${iconClass.split(' ').slice(1).join(' ')}`;
                 iconContainer.innerHTML = `<i class="ph ${iconClass.split(' ')[0]}"></i>`;
 
                 // Load Logs (device log panel removed)
@@ -1133,7 +1136,7 @@
                     legacy.classList.toggle('hidden', commands.length > 0 && snapshot.state === 'ready');
                     commands.forEach(capability => {
                         const row = document.createElement('div');
-                        row.className = 'space-y-1';
+                        row.className = 'p-4 rounded-lg border border-gray-200 bg-gray-50 space-y-2';
                         const label = document.createElement('label');
                         label.className = 'block text-sm font-medium text-gray-700';
                         label.textContent = capability.label || capability.name;
@@ -1150,7 +1153,7 @@
                             input.value = capability.minimum;
                             input.className = 'min-w-0 flex-1 px-3 py-2 border border-gray-300 rounded-lg text-sm';
                             const button = document.createElement('button');
-                            button.className = 'px-4 py-2 bg-brand-600 text-white rounded-lg text-sm';
+                            button.className = 'px-4 py-2 bg-brand-600 text-white rounded-lg hover:bg-brand-700 transition-colors text-sm';
                             button.textContent = capability.unit ? `Set ${capability.unit}` : 'Set';
                             button.onclick = () => this.sendCommand(capability.name, 'integer', input.value);
                             wrapper.append(input, button);
@@ -1160,7 +1163,7 @@
                             wrapper.className = 'grid grid-cols-2 gap-2';
                             ['On', 'Off'].forEach((text, index) => {
                                 const button = document.createElement('button');
-                                button.className = 'px-4 py-2 bg-brand-600 text-white rounded-lg text-sm';
+                                button.className = 'px-4 py-2 bg-brand-600 text-white rounded-lg hover:bg-brand-700 transition-colors text-sm';
                                 button.textContent = text;
                                 button.onclick = () => this.sendCommand(capability.name, 'boolean', index === 0);
                                 wrapper.appendChild(button);
@@ -1168,7 +1171,7 @@
                             row.appendChild(wrapper);
                         } else {
                             const button = document.createElement('button');
-                            button.className = 'w-full px-4 py-2 bg-brand-600 text-white rounded-lg text-sm';
+                            button.className = 'w-full px-4 py-2 bg-brand-600 text-white rounded-lg hover:bg-brand-700 transition-colors text-sm';
                             button.textContent = capability.destructive ? 'Run (confirmation required)' : 'Run';
                             button.onclick = () => {
                                 if (!capability.destructive || confirm(`Run ${capability.name}?`)) {

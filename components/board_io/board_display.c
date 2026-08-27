@@ -16,10 +16,7 @@
 
 #if DISPLAY_CAP
 static const char *TAG = "board_io";
-#endif
-
 static SemaphoreHandle_t s_lock;
-#if DISPLAY_CAP
 static bool s_runtime_enabled;
 static bool s_dirty;
 static uint64_t s_next_allowed;

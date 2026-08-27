@@ -1,12 +1,8 @@
 #include "board_led.h"
 
-#include "esp_log.h"
-
 #include "driver/gpio.h"
 
 #include "board_led_pattern.h"
-
-static const char *TAG = "board_io";
 
 #define ACTIVITY_PULSE_MS 80U
 #define IDENTIFY_DURATION_MS 5000U

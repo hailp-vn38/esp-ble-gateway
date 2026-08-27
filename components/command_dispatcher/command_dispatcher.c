@@ -147,7 +147,7 @@ void command_dispatcher_on_device_notify(const char *device_id,
 
     if (strcmp(msg->type, "device_event") == 0) {
         // Events never complete pending commands.
-        ESP_LOGI(TAG, "[DEVICE_EVENT] device=%s command=%s value=%d",
+        ESP_LOGD(TAG, "[DEVICE_EVENT] device=%s command=%s value=%d",
                  device_id, msg->command, msg->int_value);
         return;
     }
