@@ -50,13 +50,13 @@
 
         <!-- Navigation Links -->
         <nav class="flex-1 px-4 py-6 space-y-2 overflow-y-auto">
-            <button onclick="nav.switchTab('devices')" id="nav-devices" class="w-full flex items-center px-4 py-3 text-sm font-medium rounded-lg transition-colors bg-brand-600 text-white shadow-md shadow-brand-500/20">
+            <button onclick="nav.switchTab('devices')" id="nav-devices" class="w-full flex items-center px-4 py-3 text-sm font-medium rounded-lg transition-colors hover:bg-dark-surface hover:text-white text-gray-300">
                 <i class="ph ph-devices text-lg mr-3"></i> My Devices
             </button>
             <button onclick="nav.switchTab('scanner')" id="nav-scanner" class="w-full flex items-center px-4 py-3 text-sm font-medium rounded-lg transition-colors hover:bg-dark-surface hover:text-white text-gray-300">
                 <i class="ph ph-broadcast text-lg mr-3"></i> Add Device
             </button>
-            <button onclick="nav.switchTab('logs')" id="nav-logs" class="w-full flex items-center px-4 py-3 text-sm font-medium rounded-lg transition-colors hover:bg-dark-surface hover:text-white text-gray-300">
+            <button onclick="nav.switchTab('logs')" id="nav-logs" class="hidden w-full flex items-center px-4 py-3 text-sm font-medium rounded-lg transition-colors hover:bg-dark-surface hover:text-white text-gray-300">
                 <i class="ph ph-terminal-window text-lg mr-3"></i> System Logs
             </button>
             <button onclick="nav.switchTab('settings')" id="nav-settings" class="w-full flex items-center px-4 py-3 text-sm font-medium rounded-lg transition-colors hover:bg-dark-surface hover:text-white text-gray-300">
@@ -96,7 +96,7 @@
         <div class="flex-1 overflow-y-auto bg-gray-50/50 p-4 md:p-8 relative w-full">
             
             <!-- VIEW: DEVICES -->
-            <section id="view-devices" class="max-w-6xl mx-auto block pb-20">
+            <section id="view-devices" class="max-w-6xl mx-auto hidden pb-20">
                 <div class="flex flex-col sm:flex-row sm:items-center justify-between mb-8 gap-4">
                     <div>
                         <h2 class="text-2xl font-bold text-gray-900">Managed Devices</h2>
@@ -497,8 +497,32 @@
     <script>
         
         // --- Configuration & State ---
+        const SHOW_SYSTEM_LOGS = false;
+        const TAB_STORAGE_KEY = 'esp32-gateway.active-tab';
+        const PERSISTED_TABS = SHOW_SYSTEM_LOGS
+            ? ['devices', 'scanner', 'logs', 'settings']
+            : ['devices', 'scanner', 'settings'];
+
+        const loadSavedTab = () => {
+            try {
+                const savedTab = localStorage.getItem(TAB_STORAGE_KEY);
+                return PERSISTED_TABS.includes(savedTab) ? savedTab : 'devices';
+            } catch (_) {
+                return 'devices';
+            }
+        };
+
+        const saveTab = tabId => {
+            if (!PERSISTED_TABS.includes(tabId)) return;
+            try {
+                localStorage.setItem(TAB_STORAGE_KEY, tabId);
+            } catch (_) {
+                // Continue navigation when storage is unavailable.
+            }
+        };
+
         const state = {
-            activeTab: 'devices',
+            activeTab: loadSavedTab(),
             isScanning: false,
             scannedDevices: [],
             connectedDevices: [],
@@ -622,8 +646,11 @@
         // --- Navigation Controller ---
         const nav = {
             switchTab(tabId) {
+                if (tabId === 'logs' && !SHOW_SYSTEM_LOGS) return;
+
                 // Update state
                 state.activeTab = tabId;
+                saveTab(tabId);
                 
                 // Hide all views
                 ['devices', 'scanner', 'logs', 'device-detail', 'settings'].forEach(id => {
@@ -634,7 +661,10 @@
                 // Reset nav button styling
                 ['devices', 'scanner', 'logs', 'settings'].forEach(id => {
                     const btn = document.getElementById(`nav-${id}`);
-                    if(btn) btn.className = 'w-full flex items-center px-4 py-3 text-sm font-medium rounded-lg transition-colors hover:bg-dark-surface hover:text-white text-gray-300';
+                    if(btn) {
+                        btn.className = 'w-full flex items-center px-4 py-3 text-sm font-medium rounded-lg transition-colors hover:bg-dark-surface hover:text-white text-gray-300';
+                        if (id === 'logs' && !SHOW_SYSTEM_LOGS) btn.classList.add('hidden');
+                    }
                 });
                 
                 // Show target view
@@ -1516,6 +1546,9 @@
         };
 
         // --- Initialization ---
+        // All views start hidden so the default tab cannot flash before restore.
+        nav.switchTab(state.activeTab);
+
         window.addEventListener('DOMContentLoaded', async () => {
             logger.init();
             await Promise.all([devices.load(), settings.load()]);
