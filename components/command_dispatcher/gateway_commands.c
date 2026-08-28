@@ -13,6 +13,7 @@
 #include "command_dispatcher_internal.h"
 #include "device_store.h"
 #include "device_capabilities.h"
+#include "mcp_tool_exposure.h"
 
 static const char *TAG = "dispatcher";
 
@@ -120,7 +121,14 @@ static void cmd_delete_device(const gw_message_t *msg, dispatch_result_t *result
         return;
     }
 
-    /* Step 1: capability forget MUST succeed first (failure-safe per spec §14/§16). */
+    /* Step 1: MCP exposure revoke MUST happen first (spec §14/§29). */
+    esp_err_t exposure_rc = mcp_tool_exposure_forget_device(msg->device_id);
+    if (exposure_rc != ESP_OK) {
+        ESP_LOGW(TAG, "[DEVICE_DELETE] device=%s exposure revoke failed: %s (continuing)",
+                 msg->device_id, esp_err_to_name(exposure_rc));
+    }
+
+    /* Step 2: capability forget MUST succeed (failure-safe per spec §14/§16). */
     esp_err_t capability_rc = device_capabilities_forget(msg->device_id);
     if (capability_rc != ESP_OK) {
         ESP_LOGE(TAG, "[DEVICE_DELETE_FAILED] device=%s capability forget failed: %s",

@@ -2,6 +2,7 @@
 
 **MCP Protocol Version:** `2026-07-28`
 **Endpoint:** `POST /mcp`
+**Admin API:** `GET/PUT /api/mcp/exposures`
 **Transport:** Streamable HTTP (JSON responses only, no SSE)
 
 ---
@@ -25,8 +26,8 @@ AI / Voice / MCP Client
 | required request _meta       |
 | JSON-RPC validation          |
 | server/discover              |
-| tools/list                   |
-| tools/call                   |
+| tools/list (static + dynamic)|
+| tools/call  (static + dynamic)|
 | MCP policy                   |
 +--------------+---------------+
                |
@@ -47,14 +48,36 @@ AI / Voice / MCP Client
 - No session/handshake (`initialize` not required)
 - No SSE streaming (JSON responses only)
 - No resources, prompts, sampling, or roots
-- No dynamic tool generation per device
 - LAN-only (plaintext HTTP, never expose to Internet)
+
+### 1.1 Dynamic Tool Exposure
+
+Each registered BLE device can expose its commands as **individual MCP tools**,
+allowing LLM clients to call `set_speed` directly instead of
+`device_command(device_id="fan_01", command="set_speed")`.
+
+```text
+Admin Dashboard (GET/PUT /api/mcp/exposures)
+        |
+        | enable/disable per command
+        v
+mcp_tool_exposure (NVS + catalog)
+        |
+        | tools/list merges static + dynamic
+        v
+tools/call resolves dynamic tool → builds gw_message_t directly
+```
+
+Tool names are deterministic (device_id + command), NVS-persisted, and
+reconciled on boot. Capabilities are protected by a 128-bit semantic digest
+(SHA-256 truncated) — if a device's capabilities change, exposed tools enter
+`needs_review` state.
 
 ---
 
 ## 2. Authentication & Security
 
-### 2.1 Bearer Token
+### 2.1 Bearer Token (MCP)
 
 ```text
 Authorization: Bearer <token>
@@ -65,7 +88,17 @@ Authorization: Bearer <token>
 - Constant-time comparison, never logged
 - Missing/invalid → HTTP 401 Unauthorized
 
-### 2.2 Host/Origin Validation
+### 2.2 Bearer Token (Admin API)
+
+```text
+Authorization: Bearer <admin_token>
+```
+
+- Token configured via `CONFIG_WEB_ADMIN_AUTH_TOKEN` or NVS key `web_admin.token`
+- Separate from MCP token — fail closed if not configured
+- Required for all `/api/mcp/exposures` requests
+
+### 2.3 Host/Origin Validation
 
 ```text
 Host: gateway.local
@@ -76,7 +109,7 @@ Host: gateway.local
 - Case-insensitive, port stripped, IPv6 brackets preserved
 - Mismatch → HTTP 403 Forbidden (DNS rebinding protection)
 
-### 2.3 Rate Limiting
+### 2.4 Rate Limiting
 
 ```text
 Token bucket: 10 req/s, burst capacity 10
@@ -85,7 +118,7 @@ Token bucket: 10 req/s, burst capacity 10
 - Exceeds → HTTP 429 Too Many Requests
 - Configurable via `CONFIG_MCP_RATE_LIMIT_RPS`
 
-### 2.4 Content-Type
+### 2.5 Content-Type
 
 ```text
 Content-Type: application/json (required)
@@ -93,7 +126,7 @@ Content-Type: application/json (required)
 
 - Wrong type → HTTP 415 Unsupported Media Type
 
-### 2.5 Request Size
+### 2.6 Request Size
 
 ```text
 Maximum: 4096 bytes
@@ -236,7 +269,7 @@ Mcp-Method: server/discover
 
 ### 5.2 `tools/list`
 
-Returns the list of available tools with schemas and annotations.
+Returns the list of available tools: **static gateway tools + dynamic device tools**.
 
 **Request:**
 ```json
@@ -259,7 +292,7 @@ MCP-Protocol-Version: 2026-07-28
 Mcp-Method: tools/list
 ```
 
-**Response:**
+**Response (with dynamic tools enabled):**
 ```json
 {
   "jsonrpc": "2.0",
@@ -272,93 +305,45 @@ Mcp-Method: tools/list
       {
         "name": "get_status",
         "description": "Get gateway and BLE status",
-        "inputSchema": {
-          "type": "object",
-          "properties": {},
-          "additionalProperties": false
-        },
-        "annotations": {
-          "readOnlyHint": true,
-          "destructiveHint": false,
-          "idempotentHint": true
-        }
+        "inputSchema": { "type": "object", "properties": {} },
+        "annotations": { "readOnlyHint": true, "destructiveHint": false, "idempotentHint": true }
       },
       {
         "name": "list_devices",
         "description": "List devices known by the gateway",
-        "inputSchema": {
-          "type": "object",
-          "properties": {},
-          "additionalProperties": false
-        },
-        "annotations": {
-          "readOnlyHint": true,
-          "destructiveHint": false,
-          "idempotentHint": true
-        }
+        "inputSchema": { "type": "object", "properties": {} },
+        "annotations": { "readOnlyHint": true, "destructiveHint": false, "idempotentHint": true }
       },
       {
         "name": "list_device_capabilities",
         "description": "List commands advertised by a BLE device",
-        "inputSchema": {
-          "type": "object",
-          "properties": {
-            "device_id": {
-              "type": "string",
-              "maxLength": 31,
-              "description": "Target device identifier"
-            }
-          },
-          "additionalProperties": false,
-          "required": ["device_id"]
-        },
-        "annotations": {
-          "readOnlyHint": true,
-          "destructiveHint": false,
-          "idempotentHint": true
-        }
+        "inputSchema": { "type": "object", "properties": { "device_id": { "type": "string" } } },
+        "annotations": { "readOnlyHint": true, "destructiveHint": false, "idempotentHint": true }
       },
       {
         "name": "device_command",
         "description": "Send an allowlisted command to a device",
+        "inputSchema": { "type": "object", "properties": { "device_id": { "type": "string" }, "command": { "type": "string" } } },
+        "annotations": { "readOnlyHint": false, "destructiveHint": false }
+      },
+      {
+        "name": "fan_01.set_speed",
+        "description": "Set speed for TEST fan (0–100)",
         "inputSchema": {
           "type": "object",
           "properties": {
-            "device_id": {
-              "type": "string",
-              "maxLength": 31,
-              "description": "Target device identifier",
-              "minLength": 1
-            },
-            "command": {
-              "type": "string",
-              "maxLength": 31,
-              "description": "Command to execute",
-              "minLength": 1
-            },
-            "int_value": {
-              "type": "integer",
-              "description": "Integer command argument"
-            },
-            "bool_value": {
-              "type": "boolean",
-              "description": "Boolean command argument"
-            }
+            "value": { "type": "integer", "minimum": 0, "maximum": 100 }
           },
-          "additionalProperties": false,
-          "required": ["device_id", "command"]
+          "required": ["value"]
         },
-        "annotations": {
-          "readOnlyHint": false,
-          "destructiveHint": false
-        }
+        "annotations": { "readOnlyHint": false, "destructiveHint": false, "idempotentHint": true }
+      },
+      {
+        "name": "fan_01.toggle",
+        "description": "Toggle TEST fan on/off",
+        "inputSchema": { "type": "object", "properties": {} },
+        "annotations": { "readOnlyHint": false, "destructiveHint": false, "idempotentHint": true }
       }
-    ],
-    "tool_names": [
-      "get_status",
-      "list_devices",
-      "list_device_capabilities",
-      "device_command"
     ],
     "_meta": {
       "io.modelcontextprotocol/serverInfo": {
@@ -366,25 +351,26 @@ Mcp-Method: tools/list
         "version": "1.0.0"
       }
     }
-  },
-  "_meta": {
-    "io.modelcontextprotocol/serverInfo": {
-      "name": "esp32-ble-gateway",
-      "version": "1.0.0"
-    }
   }
 }
 ```
 
-**Tool order** is deterministic (stable for caching): `get_status`, `list_devices`, `list_device_capabilities`, `device_command`.
+**Tool order:** Static tools first (deterministic), then dynamic enabled tools
+(alphabetical by tool_name). Tool names are NVS-persisted — the same tool
+always has the same name across reboots.
+
+**Dynamic tool naming:**
+- Fast path: `{device_id}.{command}` (e.g. `fan_01.set_speed`)
+- Sanitized (non-ASCII device_id): `{slug}_{hash16}.{command}`
+- Max 128 characters, registered at enable time, never changes
 
 ---
 
 ### 5.3 `tools/call`
 
-Execute a tool with the given arguments.
+Execute a tool with the given arguments. Works for both static and dynamic tools.
 
-**Request:**
+**Static tool (device_command):**
 ```json
 {
   "jsonrpc": "2.0",
@@ -405,98 +391,74 @@ Execute a tool with the given arguments.
 }
 ```
 
+**Dynamic tool (direct name):**
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 4,
+  "method": "tools/call",
+  "params": {
+    "name": "fan_01.set_speed",
+    "arguments": {
+      "value": 60
+    },
+    "_meta": {
+      "io.modelcontextprotocol/protocolVersion": "2026-07-28",
+      "io.modelcontextprotocol/clientCapabilities": {}
+    }
+  }
+}
+```
+
 **Headers:**
 ```text
 MCP-Protocol-Version: 2026-07-28
 Mcp-Method: tools/call
-Mcp-Name: device_command
+Mcp-Name: fan_01.set_speed
 ```
 
 **Response (success):**
 ```json
 {
   "jsonrpc": "2.0",
-  "id": 3,
+  "id": 4,
   "result": {
     "resultType": "complete",
     "content": [
-      {
-        "type": "text",
-        "text": "Command executed successfully"
-      }
+      { "type": "text", "text": "Command executed successfully" }
     ],
     "structuredContent": {
       "success": true,
       "device_id": "fan_01",
       "command": "set_speed"
     },
-    "isError": false,
-    "_meta": {
-      "io.modelcontextprotocol/serverInfo": {
-        "name": "esp32-ble-gateway",
-        "version": "1.0.0"
-      }
-    }
-  },
-  "_meta": {
-    "io.modelcontextprotocol/serverInfo": {
-      "name": "esp32-ble-gateway",
-      "version": "1.0.0"
-    }
+    "isError": false
   }
 }
 ```
 
-**Response (tool error):**
-```json
-{
-  "jsonrpc": "2.0",
-  "id": 3,
-  "result": {
-    "resultType": "complete",
-    "content": [
-      {
-        "type": "text",
-        "text": "command 'toggle' is not allowed by policy"
-      }
-    ],
-    "isError": true,
-    "_meta": {
-      "io.modelcontextprotocol/serverInfo": {
-        "name": "esp32-ble-gateway",
-        "version": "1.0.0"
-      }
-    }
-  },
-  "_meta": {
-    "io.modelcontextprotocol/serverInfo": {
-      "name": "esp32-ble-gateway",
-      "version": "1.0.0"
-    }
-  }
-}
-```
+**Dynamic tool resolution (§32):**
+
+1. Lookup tool in catalog by name → get device_id + command
+2. Verify exposure state is `ENABLED` (defense in depth)
+3. Verify device still exists in store
+4. Verify capability still matches (semantic digest check)
+5. Map `value` → `int_value`/`bool_value` (NO `normalize_arguments`)
+6. Validate arguments via `device_capabilities_validate_command`
+7. Submit to command_executor
+
+If any check fails → JSON-RPC error `-32602` with descriptive message.
 
 ---
 
 ## 6. Tool Details
 
-### 6.1 `get_status`
+### 6.1 Static Tools
 
+#### `get_status`
 **Description:** Get gateway and BLE status
 **Input:** None
 **Annotations:** readOnly, non-destructive, idempotent
-
-**Example:**
-```sh
-curl -s -X POST http://<IP>/mcp \
-  -H "Content-Type: application/json" \
-  -H "Host: gateway.local" \
-  -H "MCP-Protocol-Version: 2026-07-28" \
-  -H "Mcp-Method: tools/call" \
-  -H "Mcp-Name: get_status" \
-  -d '{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"get_status","_meta":{"io.modelcontextprotocol/protocolVersion":"2026-07-28","io.modelcontextprotocol/clientCapabilities":{}}}}'
-```
 
 **structuredContent:**
 ```json
@@ -505,123 +467,184 @@ curl -s -X POST http://<IP>/mcp \
   "device_count": 1,
   "connected_count": 1,
   "ble_link_count": 1,
-  "internal": {
-    "free": 56975,
-    "min_free": 39828,
-    "largest_free_block": 31744
-  },
-  "psram": {
-    "ready": true,
-    "free": 7853840,
-    "min_free": 7851340,
-    "largest_free_block": 7733248
-  }
+  "internal": { "free": 56975, "min_free": 39828, "largest_free_block": 31744 },
+  "psram": { "ready": true, "free": 7853840, "min_free": 7851340, "largest_free_block": 7733248 }
 }
 ```
 
----
-
-### 6.2 `list_devices`
-
+#### `list_devices`
 **Description:** List devices known by the gateway
 **Input:** None
 **Annotations:** readOnly, non-destructive, idempotent
 
-**structuredContent:**
-```json
-[
-  {
-    "device_id": "AC:27:6E:CC:F2:26",
-    "name": "TEST",
-    "type": "generic",
-    "connected": true,
-    "has_ble_addr": true,
-    "ble_addr": "AC:27:6E:CC:F2:26",
-    "ble_addr_type": 0
-  }
-]
-```
-
----
-
-### 6.3 `list_device_capabilities`
-
+#### `list_device_capabilities`
 **Description:** List commands advertised by a BLE device
 **Input:** `device_id` (string, required)
 **Annotations:** readOnly, non-destructive, idempotent
 
-**Example:**
-```sh
-curl -s -X POST http://<IP>/mcp \
-  -H "Content-Type: application/json" \
-  -H "Host: gateway.local" \
-  -H "MCP-Protocol-Version: 2026-07-28" \
-  -H "Mcp-Method: tools/call" \
-  -H "Mcp-Name: list_device_capabilities" \
-  -d '{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"list_device_capabilities","arguments":{"device_id":"AC:27:6E:CC:F2:26"},"_meta":{"io.modelcontextprotocol/protocolVersion":"2026-07-28","io.modelcontextprotocol/clientCapabilities":{}}}}'
+#### `device_command`
+**Description:** Send an allowlisted command to a device
+**Input:** `device_id` (string), `command` (string), `int_value` (integer, optional), `bool_value` (boolean, optional)
+**Annotations:** non-read-only
+
+**Async execution:**
+- Queue capacity: 2 pending + 1 running
+- Queue full → HTTP 503 + JSON-RPC `-32000 Gateway busy`
+- HTTPD task never blocks waiting for BLE ACK
+
+### 6.2 Dynamic Device Tools
+
+Each enabled command becomes a first-class MCP tool:
+
+| Tool Name | Description | Value Schema |
+|---|---|---|
+| `{device_id}.{command}` | Device command label | Based on capability |
+
+**Example dynamic tools for device `fan_01`:**
+| Tool Name | Description | Value |
+|---|---|---|
+| `fan_01.set_speed` | Set fan speed (0–100) | `value: integer` |
+| `fan_01.toggle` | Toggle fan on/off | none |
+| `fan_01.set_mode` | Set operating mode | `value: integer` |
+
+**Value mapping (§33):**
+- `value_type = INT`: `arguments.value` → `msg.int_value`
+- `value_type = BOOL`: `arguments.value` → `msg.bool_value`
+- `value_type = NONE`: no value argument
+
+---
+
+## 7. Admin API — MCP Tool Exposure
+
+Admin-protected REST endpoints for managing which device commands are
+exposed as MCP tools. Requires `CONFIG_WEB_ADMIN_AUTH_TOKEN`.
+
+### 7.1 `GET /api/mcp/exposures`
+
+Returns exposure state, capacity, and catalog info for a device.
+
+**Headers:**
+```text
+Authorization: Bearer <admin_token>
 ```
 
-**structuredContent:**
+**Query:** `?device_id=<id>`
+
+**Response:**
 ```json
 {
-  "device_id": "AC:27:6E:CC:F2:26",
+  "device_id": "fan_01",
+  "catalog_revision": 5,
+  "capacity": {
+    "enabled": 2,
+    "max_enabled": 32,
+    "records": 2,
+    "max_records": 96
+  },
   "commands": [
     {
-      "name": "toggle",
-      "value_type": "none",
-      "flags": ["idempotent"]
+      "command": "set_speed",
+      "label": "Set fan speed",
+      "value_type": "integer",
+      "destructive": false,
+      "idempotent": true,
+      "minimum": 0,
+      "maximum": 100,
+      "step": 1,
+      "unit": "%",
+      "enabled": true,
+      "state": "enabled",
+      "tool_name": "fan_01.set_speed"
     },
     {
-      "name": "set_speed",
-      "value_type": "int",
-      "min": 0,
-      "max": 100,
-      "unit": "%",
-      "flags": []
+      "command": "toggle",
+      "label": "Toggle fan on/off",
+      "value_type": "none",
+      "destructive": false,
+      "idempotent": true,
+      "enabled": false,
+      "state": "disabled",
+      "tool_name": "fan_01.toggle"
     }
   ]
 }
 ```
 
----
+**States:**
+| State | Meaning |
+|---|---|
+| `enabled` | Tool exposed in `tools/list`, callable via `tools/call` |
+| `disabled` | Not exposed, can be enabled |
+| `needs_review` | Capability changed since enable, tool blocked until re-enabled |
+| `orphaned` | Device deleted but exposure record retained |
 
-### 6.4 `device_command`
+### 7.2 `PUT /api/mcp/exposures`
 
-**Description:** Send an allowlisted command to a device
-**Input:** `device_id` (string, required), `command` (string, required), `int_value` (integer, optional), `bool_value` (boolean, optional)
-**Annotations:** non-read-only, non-destructive (destructive commands blocked by policy)
+Enable or disable a tool. Supports single command or bulk mode.
 
-**Policy checks (in order):**
-1. Device exists in store
-2. Capabilities ready (state = READY)
-3. Command advertised by device
-4. Command in `CONFIG_MCP_DEVICE_COMMAND_ALLOWLIST`
-5. Command not destructive (control profile)
-
-**Example:**
-```sh
-curl -s -X POST http://<IP>/mcp \
-  -H "Content-Type: application/json" \
-  -H "Host: gateway.local" \
-  -H "MCP-Protocol-Version: 2026-07-28" \
-  -H "Mcp-Method: tools/call" \
-  -H "Mcp-Name: device_command" \
-  -d '{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"device_command","arguments":{"device_id":"AC:27:6E:CC:F2:26","command":"set_speed","int_value":60},"_meta":{"io.modelcontextprotocol/protocolVersion":"2026-07-28","io.modelcontextprotocol/clientCapabilities":{}}}}'
+**Headers:**
+```text
+Authorization: Bearer <admin_token>
+Content-Type: application/json
 ```
 
-**Async execution:**
-- `device_command` is executed asynchronously via `command_executor`
-- Queue capacity: 2 pending + 1 running
-- Queue full → HTTP 503 + JSON-RPC `-32000 Gateway busy`
-- HTTPD task never blocks waiting for BLE ACK
+**Single command:**
+```json
+{
+  "device_id": "fan_01",
+  "command": "set_speed",
+  "enabled": true,
+  "confirm_destructive": true
+}
+```
+
+**Bulk mode:**
+```json
+{
+  "device_id": "fan_01",
+  "commands": [
+    { "command": "set_speed", "enabled": true },
+    { "command": "toggle", "enabled": false, "confirm_destructive": true }
+  ]
+}
+```
+
+**Response (single):**
+```json
+{ "success": true }
+```
+
+**Response (bulk):**
+```json
+{
+  "success": true,
+  "results": [
+    { "command": "set_speed", "success": true },
+    { "command": "toggle", "success": true }
+  ]
+}
+```
+
+**Error responses:**
+| HTTP | Error | Meaning |
+|---|---|---|
+| 401 | `unauthorized` | Invalid admin token |
+| 403 | `admin_auth_not_configured` | No token set |
+| 404 | `not_found` | Device or command not found |
+| 409 | `mcp_tool_capacity_exceeded` | Max enabled tools reached |
+| 409 | `capabilities_not_ready` | No committed capabilities |
+| 409 | `destructive_blocked` | Destructive command not confirmed |
+
+**Confirming destructive commands:**
+- Destructive commands (set by peripheral firmware via `DEVICE_CAP_FLAG_DESTRUCTIVE`)
+- Require `"confirm_destructive": true` in the request
+- Controlled by `CONFIG_MCP_DYNAMIC_ALLOW_DESTRUCTIVE` (default: disabled)
 
 ---
 
-## 7. Error Handling
+## 8. Error Handling
 
-### 7.1 JSON-RPC Errors (Protocol Layer)
-
-Returned in the JSON-RPC `error` object when the request cannot be processed at the protocol level.
+### 8.1 JSON-RPC Errors (Protocol Layer)
 
 | Code | Name | HTTP Status | Description |
 |---|---|---|---|
@@ -637,9 +660,10 @@ Returned in the JSON-RPC `error` object when the request cannot be processed at 
 | `-32020` | Header mismatch | **400** | Mcp-Method/Mcp-Name mismatch |
 | `-32022` | Unsupported version | **400** | Protocol version not supported |
 
-### 7.2 Tool Execution Errors (Application Layer)
+### 8.2 Tool Execution Errors (Application Layer)
 
-When a `tools/call` request is valid but the tool execution fails, the error is returned in `CallToolResult.isError = true`, NOT as a JSON-RPC error. This allows AI clients to read and retry.
+When a `tools/call` request is valid but the tool execution fails, the error
+is returned in `CallToolResult.isError = true`, NOT as a JSON-RPC error.
 
 ```json
 {
@@ -651,9 +675,7 @@ When a `tools/call` request is valid but the tool execution fails, the error is 
 }
 ```
 
-### 7.3 HTTP Transport Errors
-
-Returned as plain HTTP errors (no JSON-RPC envelope) for security/transport failures.
+### 8.3 HTTP Transport Errors
 
 | HTTP Status | Trigger |
 |---|---|
@@ -665,9 +687,9 @@ Returned as plain HTTP errors (no JSON-RPC envelope) for security/transport fail
 
 ---
 
-## 8. Configuration
+## 9. Configuration
 
-### 8.1 Kconfig Options
+### 9.1 Kconfig Options — MCP Endpoint
 
 | Option | Default | Description |
 |---|---|---|
@@ -676,33 +698,87 @@ Returned as plain HTTP errors (no JSON-RPC envelope) for security/transport fail
 | `CONFIG_MCP_DEVICE_COMMAND_ALLOWLIST` | `""` | Allowed device commands (empty = deny all) |
 | `CONFIG_MCP_LEGACY_MODE` | `n` | Accept requests without MCP-Protocol-Version header |
 | `CONFIG_MCP_RATE_LIMIT_RPS` | `10` | Rate limit (requests/second) |
+| `CONFIG_MCP_TOOLS_CACHE_TTL_MS` | `60000` | tools/list cache TTL (ms) |
 
-### 8.2 NVS Runtime Overrides
+### 9.2 Kconfig Options — Dynamic Tool Exposure
+
+| Option | Default | Description |
+|---|---|---|
+| `CONFIG_MCP_DYNAMIC_TOOLS` | `y` | Enable dynamic device tool exposure |
+| `CONFIG_MCP_DYNAMIC_TOOL_MAX_ENABLED` | `32` | Max simultaneously enabled dynamic tools |
+| `CONFIG_MCP_EXPOSURE_RECORD_MAX` | `96` | Max NVS exposure records |
+| `CONFIG_MCP_DYNAMIC_ALLOW_DESTRUCTIVE` | `n` | Allow exposing destructive commands |
+| `CONFIG_MCP_KEEP_GENERIC_DEVICE_COMMAND` | `n` | Keep generic `device_command` in tools/list |
+| `CONFIG_MCP_EXPOSE_FULL_CAPABILITY_TOOL` | `n` | Keep `device_command(device_id,command)` fallback |
+
+### 9.3 Kconfig Options — Web Admin Auth
+
+| Option | Default | Description |
+|---|---|---|
+| `CONFIG_WEB_ADMIN_AUTH_TOKEN` | `""` | Bearer token for admin API (empty = disabled) |
+
+### 9.4 NVS Runtime Overrides
 
 | Namespace | Key | Type | Description |
 |---|---|---|---|
-| `mcp` | `token` | string | Bearer token override |
+| `mcp` | `token` | string | MCP Bearer token override |
 | `mcp` | `legacy` | u8 | Legacy mode override (1=on, 0=off) |
-
-Override via `mcp_codec_set_legacy_override()` or direct NVS write.
+| `web_admin` | `token` | string | Admin API Bearer token |
+| `mcp_exp` | `exposures` | blob | Exposure records (schema v2, auto-managed) |
 
 ---
 
-## 9. Implementation Details
+## 10. Implementation Details
 
-### 9.1 Component Architecture
+### 10.1 Component Architecture
 
 | File | Responsibility |
 |---|---|
 | `mcp_endpoint.c` | HTTP route, body receive, JSON-RPC dispatch |
 | `mcp_codec.c` | Protocol validation, `_meta` validation, Base64 decode, `server/discover` |
 | `mcp_rpc.c` | JSON-RPC envelope (result/error), `serverInfo` in `result._meta` |
-| `mcp_registry.c` | Tool table, schemas, annotations |
-| `mcp_tools.c` | Argument parsing, `gw_message_t` normalization, result formatting |
+| `mcp_registry.c` | Static tool table + dynamic schema builder |
+| `mcp_tools.c` | Argument parsing, `gw_message_t` normalization, dynamic resolver |
 | `mcp_policy.c` | Device capability + allowlist + destructive guard |
 | `mcp_auth.c` | Bearer token, Host/Origin, Content-Type, rate limit |
+| `mcp_tool_exposure.c` | Exposure enable/disable/reconcile/forget, worker task |
+| `mcp_tool_catalog.c` | RAM catalog with mutex, revision tracking |
+| `mcp_tool_name.c` | Deterministic tool name generation (PSA SHA-256) |
+| `mcp_tool_digest.c` | Capability semantic digest (128-bit truncated SHA-256) |
+| `mcp_tool_exposure_store.c` | NVS blob persistence (schema v2) |
+| `web_admin_auth.c` | Admin bearer token, constant-time comparison |
 
-### 9.2 MCP 2026-07-28 Response Metadata
+### 10.2 Dynamic Tool Lifecycle
+
+```text
+Device discovered → capabilities committed → capabilities discovered
+        |
+        v
+GET /api/mcp/exposures?device_id=X  →  see commands
+        |
+        v
+PUT /api/mcp/exposures  →  enable command
+        |
+        v
+mcp_tool_name_generate() → "fan_01.set_speed"
+mcp_tool_digest_compute() → 128-bit hash
+NVS write (schema v2) → persistence
+catalog_add() → RAM catalog
+        |
+        v
+tools/list → merged static + dynamic
+tools/call "fan_01.set_speed" → resolve → validate → execute
+```
+
+### 10.3 Boot Reconciliation
+
+On boot, `mcp_tool_exposure_init()` reads all NVS records and:
+1. Checks each device still exists in device_store
+2. Re-checks capability digest matches
+3. Marks mismatched records as `needs_review`
+4. Re-enables matching records
+
+### 10.4 MCP 2026-07-28 Response Metadata
 
 Every successful response includes `serverInfo` in `result._meta`:
 
@@ -719,16 +795,11 @@ Every successful response includes `serverInfo` in `result._meta`:
 
 The JSON-RPC-level `_meta` is NOT used for server identity (per spec §35).
 
-### 9.3 No Synchronous Fallback
-
-If async submission fails (OOM, executor unavailable, queue full), the gateway
-returns an error immediately. It NEVER falls back to synchronous BLE execution
-from the HTTP handler.
-
 ---
 
-## 10. Example: AI Voice Flow
+## 11. Example: AI Voice Flow
 
+### Static Tool
 ```text
 User: "Bật quạt phòng khách lên 60%"
         |
@@ -739,14 +810,24 @@ AI Host resolves device + command
 tools/call device_command(device_id="fan_01", command="set_speed", int_value=60)
         |
         v
-Gateway:
-  1. Validate headers (_meta, Mcp-Method, Mcp-Name)
-  2. Registry lookup → device_command
-  3. Policy check → device exists, capabilities ready, command allowed
-  4. Async submit → command_executor
-  5. BLE Central sends command to fan_01
-  6. BLE ACK received
-  7. Completion callback → CallToolResult
+Gateway: validate → policy check → async submit → BLE ACK → result
+        |
+        v
+AI Host reads structuredContent and responds to user
+```
+
+### Dynamic Tool
+```text
+User: "Bật quạt phòng khách lên 60%"
+        |
+        v
+AI Host calls tools/list → sees "fan_01.set_speed" with value schema
+        |
+        v
+tools/call fan_01.set_speed({ "value": 60 })
+        |
+        v
+Gateway: resolve dynamic → build gw_message_t → validate → async → BLE ACK
         |
         v
 AI Host reads structuredContent and responds to user
@@ -754,9 +835,9 @@ AI Host reads structuredContent and responds to user
 
 ---
 
-## 11. Testing
+## 12. Testing
 
-### 11.1 Manual Test
+### 12.1 Manual Test — Static Tools
 
 ```sh
 # server/discover
@@ -774,18 +855,38 @@ curl -s -X POST http://<IP>/mcp \
   -H "MCP-Protocol-Version: 2026-07-28" \
   -H "Mcp-Method: tools/list" \
   -d '{"jsonrpc":"2.0","id":2,"method":"tools/list","params":{"_meta":{"io.modelcontextprotocol/protocolVersion":"2026-07-28","io.modelcontextprotocol/clientCapabilities":{}}}}'
+```
 
-# tools/call get_status
+### 12.2 Manual Test — Admin API
+
+```sh
+# Get exposures for a device
+curl -s http://<IP>/api/mcp/exposures?device_id=fan_01 \
+  -H "Authorization: Bearer <admin_token>"
+
+# Enable a tool
+curl -s -X PUT http://<IP>/api/mcp/exposures \
+  -H "Authorization: Bearer <admin_token>" \
+  -H "Content-Type: application/json" \
+  -d '{"device_id":"fan_01","command":"set_speed","enabled":true}'
+
+# Disable a tool
+curl -s -X PUT http://<IP>/api/mcp/exposures \
+  -H "Authorization: Bearer <admin_token>" \
+  -H "Content-Type: application/json" \
+  -d '{"device_id":"fan_01","command":"set_speed","enabled":false}'
+
+# Call dynamic tool
 curl -s -X POST http://<IP>/mcp \
   -H "Content-Type: application/json" \
   -H "Host: gateway.local" \
   -H "MCP-Protocol-Version: 2026-07-28" \
   -H "Mcp-Method: tools/call" \
-  -H "Mcp-Name: get_status" \
-  -d '{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"get_status","_meta":{"io.modelcontextprotocol/protocolVersion":"2026-07-28","io.modelcontextprotocol/clientCapabilities":{}}}}'
+  -H "Mcp-Name: fan_01.set_speed" \
+  -d '{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"fan_01.set_speed","arguments":{"value":60},"_meta":{"io.modelcontextprotocol/protocolVersion":"2026-07-28","io.modelcontextprotocol/clientCapabilities":{}}}}'
 ```
 
-### 11.2 Unity Tests
+### 12.3 Unity Tests
 
 ```sh
 cd test
@@ -798,7 +899,7 @@ Test tags: `[mcp_endpoint]`, `[mcp_conformance]`, `[mcp_stress]`
 
 ---
 
-## 12. SDK Interoperability
+## 13. SDK Interoperability
 
 Tested with:
 - ESP32 firmware (this project)
@@ -812,7 +913,7 @@ Success criteria:
 
 ---
 
-## 13. Security Model
+## 14. Security Model
 
 ```text
 Threat: LAN-only, plaintext HTTP
@@ -829,7 +930,15 @@ Threat: Resource exhaustion
   - Rate limiting (10 req/s token bucket)
   - Request size limit (4096 bytes)
   - Async queue bounded (2 pending + 1 running)
+  - Dynamic tool cap (CONFIG_MCP_DYNAMIC_TOOL_MAX_ENABLED)
+  - Exposure record cap (CONFIG_MCP_EXPOSURE_RECORD_MAX)
   - No session state, no memory leak paths
+
+Threat: Tool exposure integrity
+  - 128-bit semantic digest on capabilities
+  - Capability change → needs_review (tool blocked)
+  - Defense in depth: re-checks ENABLED state on every tools/call
+  - Deterministic tool names (no collision, no injection)
 
 Cloud AI voice architecture:
   Cloud AI

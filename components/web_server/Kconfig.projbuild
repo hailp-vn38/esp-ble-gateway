@@ -1,0 +1,11 @@
+menu "Web Server"
+
+    config WEB_ADMIN_AUTH_TOKEN
+        string "Admin bearer token for exposure API"
+        default ""
+        help
+            Bearer token for GET/PUT /api/mcp/exposures. Empty disables
+            admin auth (exposure mutation fails closed). Can also be set
+            at runtime via NVS namespace "web_admin", key "token".
+
+endmenu

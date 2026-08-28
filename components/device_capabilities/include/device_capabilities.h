@@ -46,6 +46,11 @@ typedef enum {
 typedef struct {
     char device_id[GW_MSG_DEVICE_ID_LEN];
     device_cap_state_t state;
+    /* True when a committed snapshot exists (loaded from NVS or committed
+     * live). `state` alone is not authoritative: it reads DISCOVERING while a
+     * refresh is in flight and stays DISCOVERING after a failed refresh when
+     * a committed snapshot exists. */
+    bool has_committed;
     uint32_t revision;
     uint32_t snapshot_id;
     int64_t updated_at_ms;
@@ -113,6 +118,17 @@ typedef enum {
 
 esp_err_t device_capabilities_init(void);
 void device_capabilities_set_submitter(device_cap_submit_fn submitter);
+
+/* Commit listener — invoked from the capability worker after a snapshot is
+ * committed (in memory) and the persist attempt has been made, always outside
+ * the capability mutex. Listeners must be non-blocking and only enqueue work
+ * (never call back into device_capabilities or wait on locks). Only one
+ * listener slot; registering replaces the previous listener. */
+typedef void (*device_capability_commit_listener_t)(const char *device_id,
+                                                    uint32_t revision,
+                                                    void *context);
+esp_err_t device_capabilities_register_commit_listener(
+    device_capability_commit_listener_t listener, void *context);
 
 /* BLE lifecycle inputs. Both are non-blocking and safe from NimBLE callbacks. */
 esp_err_t device_capabilities_on_ready(const char *device_id);

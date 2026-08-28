@@ -13,6 +13,7 @@
 #include "device_capabilities.h"
 #include "gateway_ota_validate.h"
 #include "mcp_endpoint.h"
+#include "mcp_tool_exposure.h"
 #include "web_server.h"
 #include "wifi_prov.h"
 
@@ -164,6 +165,10 @@ void app_main(void)
     }
     if (device_capabilities_init() != ESP_OK) {
         ESP_LOGE(TAG, "Device capability manager initialization failed");
+        return;
+    }
+    if (mcp_tool_exposure_init() != ESP_OK) {
+        ESP_LOGE(TAG, "MCP tool exposure initialization failed");
         return;
     }
     if (command_dispatcher_init() != 0) {

@@ -68,5 +68,8 @@ CONFIG_HTTPD_WS_SUPPORT=n
 # ==== MCP endpoint ====
 CONFIG_MCP_HOST_ALLOWLIST="gateway.local,192.168.4.1,192.168.1.114"
 
+# ==== Web admin auth ====
+CONFIG_WEB_ADMIN_AUTH_TOKEN="gw-admin-token-2026"
+
 # ==== RTOS ====
 CONFIG_FREERTOS_HZ=1000

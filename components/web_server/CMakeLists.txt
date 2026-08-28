@@ -22,11 +22,13 @@ idf_component_register(
          "web_system_api.c"
          "web_wifi_api.c"
          "web_ble_api.c"
+         "web_admin_auth.c"
     INCLUDE_DIRS "include"
     REQUIRES esp_http_server cbor_codec command_dispatcher command_executor
              device_store gateway_status wifi_provisioning
-             ble_central device_capabilities espressif__cjson esp_system esp_timer freertos
-             esp_wifi esp_app_format
+             ble_central device_capabilities mcp_tool_exposure
+             espressif__cjson esp_system esp_timer freertos
+             esp_wifi esp_app_format nvs_flash
     EMBED_FILES
              "www/dashboard.html"
              "${setup_html_gz}"

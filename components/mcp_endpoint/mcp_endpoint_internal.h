@@ -12,6 +12,9 @@
 
 #include "cbor_codec.h"
 #include "command_dispatcher.h"
+#include "device_store.h"
+#include "device_capabilities.h"
+#include "mcp_tool_exposure.h"
 
 // ---------------------------------------------------------------------------
 // Protocol constants
@@ -55,7 +58,10 @@
 #define MCP_META_KEY_CLIENT_INFO      "io.modelcontextprotocol/clientInfo"
 #define MCP_META_KEY_CLIENT_CAPS      "io.modelcontextprotocol/clientCapabilities"
 #define MCP_META_KEY_SERVER_INFO      "io.modelcontextprotocol/serverInfo"
-#define MCP_TOOLS_CACHE_TTL_MS        60000
+#ifndef CONFIG_MCP_TOOLS_CACHE_TTL_MS
+#define CONFIG_MCP_TOOLS_CACHE_TTL_MS 60000
+#endif
+#define MCP_TOOLS_CACHE_TTL_MS        CONFIG_MCP_TOOLS_CACHE_TTL_MS
 #define MCP_TOOLS_CACHE_SCOPE         "private"
 
 // ---------------------------------------------------------------------------
@@ -244,6 +250,10 @@ typedef struct {
 
 const mcp_tool_desc_t *mcp_registry_find(const char *name);
 int mcp_registry_build_tools_list(cJSON *tools_array);
+
+// Dynamic tool schema builder from device capability (mcp_registry.c).
+cJSON *mcp_dynamic_tool_build_schema(const device_capability_t *cap);
+cJSON *mcp_dynamic_tool_build_json(const mcp_tool_binding_t *binding);
 
 // ---------------------------------------------------------------------------
 // Policy (mcp_policy.c)

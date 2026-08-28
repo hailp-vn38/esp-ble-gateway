@@ -10,7 +10,9 @@
 
 #include "cbor_codec.h"
 #include "command_dispatcher.h"
+#include "device_capabilities.h"
 #include "mcp_endpoint_internal.h"
+#include "mcp_tool_exposure.h"
 
 // One static dispatch result guarded by a mutex: no per-request 4KB heap
 // churn, and the same lock serializes dispatcher access between the HTTPD
@@ -89,13 +91,26 @@ cJSON *mcp_tools_list(const mcp_request_context_t *ctx)
         cJSON_AddStringToObject(result, "cacheScope", MCP_TOOLS_CACHE_SCOPE);
     }
 
+    // Static tools first.
     if (mcp_registry_build_tools_list(tools) != 0) {
         cJSON_Delete(result);
         cJSON_Delete(tools);
         return NULL;
     }
+
+    // Dynamic device tools (ENABLED only, deterministic order).
+    mcp_tool_binding_t bindings[CONFIG_MCP_DYNAMIC_TOOL_MAX_ENABLED];
+    size_t binding_count = 0;
+    mcp_tool_catalog_get_snapshot(bindings, CONFIG_MCP_DYNAMIC_TOOL_MAX_ENABLED,
+                                  &binding_count);
+    for (size_t i = 0; i < binding_count; i++) {
+        cJSON *tool = mcp_dynamic_tool_build_json(&bindings[i]);
+        if (tool != NULL) {
+            cJSON_AddItemToArray(tools, tool);
+        }
+    }
+
     cJSON_AddItemToObject(result, "tools", tools);
-    // No tool_names on MCP wire (§12.9).
 
     // serverInfo in result._meta (§12.4)
     if (ctx->era == MCP_ERA_2026_07_28) {
@@ -208,77 +223,197 @@ mcp_resolve_status_t mcp_tools_resolve(const cJSON *params, gw_message_t *msg,
         return MCP_RESOLVE_INVALID;
     }
 
+    // 1. Try static registry first.
     const mcp_tool_desc_t *desc = mcp_registry_find(tool_name);
-    if (desc == NULL) {
-        *error = (mcp_rpc_error_t){-32602, "unknown tool"};
-        return MCP_RESOLVE_INVALID;
+    if (desc != NULL) {
+        const char *message_type =
+            strcmp(tool_name, "device_command") == 0 ? "device_command"
+                                                     : "gateway_command";
+        if (strcmp(message_type, "device_command") == 0) {
+            const cJSON *device_id =
+                cJSON_GetObjectItemCaseSensitive(source, "device_id");
+            if (!cJSON_IsString(device_id) || device_id->valuestring == NULL ||
+                device_id->valuestring[0] == '\0') {
+                *error = (mcp_rpc_error_t){-32602, "device_command requires device_id"};
+                return MCP_RESOLVE_INVALID;
+            }
+            const cJSON *command_item =
+                cJSON_GetObjectItemCaseSensitive(source, "command");
+            const char *device_command =
+                cJSON_IsString(command_item) && command_item->valuestring != NULL &&
+                        command_item->valuestring[0] != '\0'
+                    ? command_item->valuestring
+                    : NULL;
+            if (device_command == NULL) {
+                *error = (mcp_rpc_error_t){-32602,
+                                           "device_command requires command"};
+                return MCP_RESOLVE_INVALID;
+            }
+            if (!mcp_device_command_allowed(device_command)) {
+                snprintf(denial_text, denial_len,
+                         "command '%s' is not in the device command allowlist",
+                         device_command);
+                *error = (mcp_rpc_error_t){MCP_ERR_COMMAND_DENIED, "command denied"};
+                return MCP_RESOLVE_ALLOWLIST_DENIED;
+            }
+
+            mcp_policy_result_t policy = mcp_policy_check_device_command(
+                device_id->valuestring, device_command);
+            if (policy == MCP_POLICY_DENY_COMMAND) {
+                snprintf(denial_text, denial_len,
+                         "command '%s' is not allowed by policy",
+                         device_command);
+                *error = (mcp_rpc_error_t){MCP_ERR_COMMAND_DENIED, "command denied"};
+                return MCP_RESOLVE_ALLOWLIST_DENIED;
+            }
+            if (policy == MCP_POLICY_DENY_DESTRUCTIVE) {
+                snprintf(denial_text, denial_len,
+                         "destructive command '%s' denied in control profile",
+                         device_command);
+                *error = (mcp_rpc_error_t){MCP_ERR_COMMAND_DENIED, "command denied"};
+                return MCP_RESOLVE_ALLOWLIST_DENIED;
+            }
+            if (policy == MCP_POLICY_DEVICE_UNAVAILABLE) {
+                *error = (mcp_rpc_error_t){MCP_ERR_DEVICE_UNAVAILABLE,
+                                           "device not found"};
+                return MCP_RESOLVE_INVALID;
+            }
+            if (policy == MCP_POLICY_CAPABILITY_UNKNOWN) {
+                *error = (mcp_rpc_error_t){MCP_ERR_CAPABILITY_UNKNOWN,
+                                           "device capabilities not ready"};
+                return MCP_RESOLVE_INVALID;
+            }
+            *is_device_command = true;
+            return normalize_arguments(source, "device_command", device_command,
+                                       msg, error);
+        }
+
+        *is_device_command = false;
+        return normalize_arguments(source, "gateway_command", tool_name, msg,
+                                   error);
     }
 
-    const char *message_type =
-        strcmp(tool_name, "device_command") == 0 ? "device_command"
-                                                 : "gateway_command";
-    if (strcmp(message_type, "device_command") == 0) {
-        const cJSON *device_id =
-            cJSON_GetObjectItemCaseSensitive(source, "device_id");
-        if (!cJSON_IsString(device_id) || device_id->valuestring == NULL ||
-            device_id->valuestring[0] == '\0') {
-            *error = (mcp_rpc_error_t){-32602, "device_command requires device_id"};
+    // 2. Try dynamic catalog (§32 — tool resolution order).
+    const mcp_tool_binding_t *dyn_binding = mcp_tool_catalog_find_ptr(tool_name);
+    if (dyn_binding != NULL) {
+        mcp_tool_binding_t binding;
+        memcpy(&binding, dyn_binding, sizeof(binding));
+        // Defense in depth (§34): revalidate exposure is ENABLED.
+        mcp_tool_exposure_t exposure;
+        if (mcp_tool_exposure_get(binding.device_id, binding.command,
+                                  &exposure) != ESP_OK ||
+            exposure.state != MCP_EXPOSURE_ENABLED) {
+            *error = (mcp_rpc_error_t){-32602, "unknown tool"};
             return MCP_RESOLVE_INVALID;
-        }
-        const cJSON *command_item =
-            cJSON_GetObjectItemCaseSensitive(source, "command");
-        const char *device_command =
-            cJSON_IsString(command_item) && command_item->valuestring != NULL &&
-                    command_item->valuestring[0] != '\0'
-                ? command_item->valuestring
-                : NULL;
-        if (device_command == NULL) {
-            *error = (mcp_rpc_error_t){-32602,
-                                       "device_command requires command"};
-            return MCP_RESOLVE_INVALID;
-        }
-        if (!mcp_device_command_allowed(device_command)) {
-            snprintf(denial_text, denial_len,
-                     "command '%s' is not in the device command allowlist",
-                     device_command);
-            *error = (mcp_rpc_error_t){MCP_ERR_COMMAND_DENIED, "command denied"};
-            return MCP_RESOLVE_ALLOWLIST_DENIED;
         }
 
-        mcp_policy_result_t policy = mcp_policy_check_device_command(
-            device_id->valuestring, device_command);
-        if (policy == MCP_POLICY_DENY_COMMAND) {
+        // Verify device still exists.
+        device_entry_t entry;
+        if (device_store_get(binding.device_id, &entry) != DEVICE_STORE_OK) {
             snprintf(denial_text, denial_len,
-                     "command '%s' is not allowed by policy",
-                     device_command);
-            *error = (mcp_rpc_error_t){MCP_ERR_COMMAND_DENIED, "command denied"};
-            return MCP_RESOLVE_ALLOWLIST_DENIED;
-        }
-        if (policy == MCP_POLICY_DENY_DESTRUCTIVE) {
-            snprintf(denial_text, denial_len,
-                     "destructive command '%s' denied in control profile",
-                     device_command);
-            *error = (mcp_rpc_error_t){MCP_ERR_COMMAND_DENIED, "command denied"};
-            return MCP_RESOLVE_ALLOWLIST_DENIED;
-        }
-        if (policy == MCP_POLICY_DEVICE_UNAVAILABLE) {
+                     "Device is currently unavailable");
             *error = (mcp_rpc_error_t){MCP_ERR_DEVICE_UNAVAILABLE,
                                        "device not found"};
-            return MCP_RESOLVE_INVALID;
+            return MCP_RESOLVE_ALLOWLIST_DENIED;
         }
-        if (policy == MCP_POLICY_CAPABILITY_UNKNOWN) {
+
+        // Verify capability still matches (§36 — semantic digest).
+        device_capability_snapshot_t cap;
+        if (device_capabilities_get(binding.device_id, &cap) != ESP_OK ||
+            !cap.has_committed || cap.count == 0) {
+            snprintf(denial_text, denial_len,
+                     "Tool capability changed and requires review");
             *error = (mcp_rpc_error_t){MCP_ERR_CAPABILITY_UNKNOWN,
-                                       "device capabilities not ready"};
-            return MCP_RESOLVE_INVALID;
+                                       "capabilities not ready"};
+            return MCP_RESOLVE_ALLOWLIST_DENIED;
         }
+
+        const device_capability_t *target = NULL;
+        for (size_t i = 0; i < cap.count; i++) {
+            if (strcmp(cap.items[i].command, binding.command) == 0) {
+                target = &cap.items[i];
+                break;
+            }
+        }
+        if (target == NULL) {
+            snprintf(denial_text, denial_len,
+                     "Tool capability changed and requires review");
+            *error = (mcp_rpc_error_t){MCP_ERR_CAPABILITY_UNKNOWN,
+                                       "command missing"};
+            return MCP_RESOLVE_ALLOWLIST_DENIED;
+        }
+
+        // Verify semantic digest still matches.
+        uint8_t current_digest[MCP_CAPABILITY_DIGEST_LEN];
+        mcp_tool_digest_compute(target, current_digest);
+        if (!mcp_tool_digest_match(current_digest, exposure.capability_digest)) {
+            snprintf(denial_text, denial_len,
+                     "Tool capability changed and requires review");
+            *error = (mcp_rpc_error_t){MCP_ERR_CAPABILITY_UNKNOWN,
+                                       "capability changed"};
+            return MCP_RESOLVE_ALLOWLIST_DENIED;
+        }
+
+        // Build gw_message_t directly from binding (§33 — no normalize_arguments).
         *is_device_command = true;
-        return normalize_arguments(source, "device_command", device_command,
-                                   msg, error);
+        msg->protocol_version = GW_PROTOCOL_VERSION;
+        strlcpy(msg->type, "device_command", sizeof(msg->type));
+        strlcpy(msg->device_id, binding.device_id, sizeof(msg->device_id));
+        strlcpy(msg->command, binding.command, sizeof(msg->command));
+        msg->has_device_id = true;
+
+        // Dynamic argument normalization (§33): map value → int_value/bool_value.
+        const cJSON *value_item = cJSON_GetObjectItemCaseSensitive(source, "value");
+        if (target->value_type == DEVICE_CAP_VALUE_BOOL) {
+            if (value_item != NULL && cJSON_IsBool(value_item)) {
+                msg->has_bool_value = true;
+                msg->bool_value = cJSON_IsTrue(value_item);
+            } else if (value_item != NULL) {
+                *error = (mcp_rpc_error_t){-32602, "value must be a boolean"};
+                return MCP_RESOLVE_INVALID;
+            }
+        } else if (target->value_type == DEVICE_CAP_VALUE_INT) {
+            if (value_item != NULL && cJSON_IsNumber(value_item)) {
+                msg->has_int_value = true;
+                msg->int_value = value_item->valueint;
+            } else if (value_item != NULL) {
+                *error = (mcp_rpc_error_t){-32602, "value must be an integer"};
+                return MCP_RESOLVE_INVALID;
+            }
+        }
+        // DEVICE_CAP_VALUE_NONE: no value argument expected.
+
+        // Validate arguments (§34 — defense in depth).
+        device_capability_t validated_cap;
+        device_cap_validation_t val =
+            device_capabilities_validate_command(msg, &validated_cap);
+        if (val == DEVICE_CAP_VALID_UNKNOWN) {
+            snprintf(denial_text, denial_len,
+                     "Device is currently unavailable");
+            *error = (mcp_rpc_error_t){MCP_ERR_DEVICE_UNAVAILABLE,
+                                       "device unavailable"};
+            return MCP_RESOLVE_ALLOWLIST_DENIED;
+        }
+        if (val == DEVICE_CAP_VALID_UNSUPPORTED_COMMAND) {
+            snprintf(denial_text, denial_len,
+                     "Tool capability changed and requires review");
+            *error = (mcp_rpc_error_t){MCP_ERR_CAPABILITY_UNKNOWN,
+                                       "command not supported"};
+            return MCP_RESOLVE_ALLOWLIST_DENIED;
+        }
+        if (val == DEVICE_CAP_VALID_ARGUMENT) {
+            *error = (mcp_rpc_error_t){-32602, "invalid argument"};
+            snprintf(denial_text, denial_len,
+                     "Invalid argument for command '%s'", binding.command);
+            return MCP_RESOLVE_ALLOWLIST_DENIED;
+        }
+
+        return MCP_RESOLVE_OK;
     }
 
-    *is_device_command = false;
-    return normalize_arguments(source, "gateway_command", tool_name, msg,
-                               error);
+    // 3. Unknown tool.
+    *error = (mcp_rpc_error_t){-32602, "unknown tool"};
+    return MCP_RESOLVE_INVALID;
 }
 
 // ---------------------------------------------------------------------------

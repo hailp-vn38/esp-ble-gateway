@@ -1,0 +1,27 @@
+menu "MCP Dynamic Tools"
+
+    config MCP_DYNAMIC_TOOLS
+        bool "Enable dashboard-managed dynamic MCP tools"
+        default y
+
+    config MCP_DYNAMIC_TOOL_MAX_ENABLED
+        int "Maximum enabled dynamic MCP tools"
+        range 8 64
+        default 32
+        depends on MCP_DYNAMIC_TOOLS
+
+    config MCP_EXPOSURE_RECORD_MAX
+        int "Maximum persisted MCP exposure records"
+        range 32 192
+        default 96
+        depends on MCP_DYNAMIC_TOOLS
+
+    config MCP_DYNAMIC_ALLOW_DESTRUCTIVE
+        bool "Allow destructive dynamic tools to be enabled"
+        default n
+        depends on MCP_DYNAMIC_TOOLS
+        help
+            Even when enabled, the admin API still requires explicit
+            confirm_destructive=true per grant.
+
+endmenu

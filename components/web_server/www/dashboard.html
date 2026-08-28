@@ -41,6 +41,9 @@
             <button onclick="nav.switchTab('scanner')" id="nav-scanner" class="w-full flex items-center px-4 py-3 text-sm font-medium rounded-lg transition-colors hover:bg-dark-surface hover:text-white text-gray-300">
                 <i class="ph ph-broadcast text-lg mr-3"></i> Add Device
             </button>
+            <button onclick="nav.switchTab('mcp-tools')" id="nav-mcp-tools" class="w-full flex items-center px-4 py-3 text-sm font-medium rounded-lg transition-colors hover:bg-dark-surface hover:text-white text-gray-300">
+                <i class="ph ph-plugs text-lg mr-3"></i> MCP Tools
+            </button>
             <button onclick="nav.switchTab('settings')" id="nav-settings" class="w-full flex items-center px-4 py-3 text-sm font-medium rounded-lg transition-colors hover:bg-dark-surface hover:text-white text-gray-300">
                 <i class="ph ph-gear text-lg mr-3"></i> Gateway Settings
             </button>
@@ -239,6 +242,46 @@
                 </div>
             </section>
 
+            <!-- VIEW: MCP TOOLS -->
+            <section id="view-mcp-tools" class="max-w-5xl mx-auto hidden pb-20">
+                <div class="mb-8">
+                    <h2 class="text-2xl font-bold text-gray-900">MCP Tool Exposure</h2>
+                    <p class="text-gray-500 text-sm mt-1">Control which device commands are exposed as MCP tools for LLM clients.</p>
+                </div>
+
+                <!-- Capacity bar -->
+                <div class="bg-white rounded-xl border border-gray-200 p-4 shadow-sm mb-6">
+                    <div class="flex items-center justify-between mb-2">
+                        <span class="text-sm font-medium text-gray-700">Tool Slots</span>
+                        <span id="mcp-capacity-text" class="text-xs text-gray-500 font-mono">0 / 32 enabled</span>
+                    </div>
+                    <div class="w-full bg-gray-200 rounded-full h-2">
+                        <div id="mcp-capacity-bar" class="bg-brand-500 h-2 rounded-full transition-all" style="width: 0%"></div>
+                    </div>
+                </div>
+
+                <!-- Device selector -->
+                <div class="bg-white rounded-xl border border-gray-200 p-5 shadow-sm mb-6">
+                    <div class="flex items-center gap-3">
+                        <label for="mcp-device-select" class="text-sm font-medium text-gray-700 whitespace-nowrap">Device</label>
+                        <select id="mcp-device-select" class="flex-1 px-4 py-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-brand-500 focus:border-brand-500 outline-none bg-white text-sm" onchange="mcpTools.loadDevice(this.value)">
+                            <option value="">Select a device…</option>
+                        </select>
+                        <button onclick="mcpTools.loadDevice(document.getElementById('mcp-device-select').value)" class="px-3 py-2.5 bg-gray-100 text-gray-600 rounded-lg hover:bg-gray-200 transition-colors text-sm" title="Refresh">
+                            <i class="ph ph-arrows-clockwise"></i>
+                        </button>
+                    </div>
+                </div>
+
+                <!-- Tool list -->
+                <div id="mcp-tools-list" class="space-y-3">
+                    <div class="bg-white rounded-xl border border-gray-200 p-8 shadow-sm text-center text-gray-400">
+                        <i class="ph ph-plugs text-4xl mb-3 block"></i>
+                        <p class="text-sm">Select a device to view its available tools.</p>
+                    </div>
+                </div>
+            </section>
+
             <!-- VIEW: SETTINGS -->
             <section id="view-settings" class="max-w-5xl mx-auto hidden pb-20">
                 <div class="mb-8">
@@ -309,6 +352,26 @@
                             </div>
                         </div>
 
+                        <!-- MCP Admin Token -->
+                        <div class="bg-white rounded-xl border border-gray-200 p-6 shadow-sm">
+                            <h3 class="font-semibold text-gray-900 mb-4 flex items-center border-b border-gray-100 pb-3">
+                                <i class="ph ph-key text-brand-600 text-xl mr-2"></i> MCP Admin Token
+                            </h3>
+                            <p class="text-xs text-gray-500 mb-3">Required for managing MCP tool exposure. Stored locally in your browser.</p>
+                            <div class="flex gap-2">
+                                <input id="input-admin-token" type="password" placeholder="Enter admin token" class="flex-1 px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-brand-500 focus:border-brand-500 outline-none" autocomplete="off">
+                                <button onclick="settings.toggleTokenVisibility()" class="px-3 py-2 bg-gray-100 text-gray-600 rounded-lg hover:bg-gray-200 transition-colors text-sm" title="Show/hide">
+                                    <i class="ph ph-eye"></i>
+                                </button>
+                            </div>
+                            <div class="flex items-center justify-between mt-3">
+                                <span id="token-status" class="text-xs text-gray-400">Not set</span>
+                                <div class="flex gap-2">
+                                    <button onclick="settings.saveToken()" class="px-3 py-1.5 bg-brand-600 text-white rounded-lg hover:bg-brand-700 transition-colors text-xs font-medium">Save</button>
+                                    <button onclick="settings.clearToken()" class="px-3 py-1.5 bg-gray-100 text-gray-600 rounded-lg hover:bg-gray-200 transition-colors text-xs font-medium">Clear</button>
+                                </div>
+                            </div>
+                        </div>
                     </div>
                 </div>
             </section>
@@ -471,7 +534,17 @@
 
         // --- ESP32 API Interface ---
         const api = {
+            _getToken() {
+                return localStorage.getItem('mcp_admin_token') || '';
+            },
             async request(path, options = {}) {
+                const token = this._getToken();
+                if (token && !options.headers) {
+                    options.headers = {};
+                }
+                if (token) {
+                    options.headers['Authorization'] = 'Bearer ' + token;
+                }
                 const response = await fetch(path, options);
                 let data;
                 try {
@@ -632,13 +705,13 @@
                 saveTab(tabId);
                 
                 // Hide all views
-                ['devices', 'scanner', 'device-detail', 'settings'].forEach(id => {
+                ['devices', 'scanner', 'device-detail', 'settings', 'mcp-tools'].forEach(id => {
                     const el = document.getElementById(`view-${id}`);
                     if(el) el.classList.add('hidden');
                 });
                 
                 // Reset nav button styling
-                ['devices', 'scanner', 'settings'].forEach(id => {
+                ['devices', 'scanner', 'settings', 'mcp-tools'].forEach(id => {
                     const btn = document.getElementById(`nav-${id}`);
                     if(btn) {
                         btn.className = 'w-full flex items-center px-4 py-3 text-sm font-medium rounded-lg transition-colors hover:bg-dark-surface hover:text-white text-gray-300';
@@ -666,6 +739,7 @@
 
                 // Trigger specific view logic
                 if(tabId === 'devices') devices.renderGrid();
+                if(tabId === 'mcp-tools') { mcpTools.populateDeviceList(); mcpTools.updateCapacity(); }
                 if(tabId === 'scanner') {
                     if(!state.isScanning && state.scannedDevices.length === 0) {
                         // Optional: auto-start scan on view open
@@ -802,6 +876,122 @@
         };
 
         
+        // --- MCP Tools Logic ---
+        const mcpTools = {
+            async loadExposures(deviceId) {
+                if (!deviceId) return [];
+                try {
+                    const data = await api.request(`/api/mcp/exposures?device_id=${encodeURIComponent(deviceId)}`);
+                    return data.commands || [];
+                } catch (e) {
+                    console.error('Failed to load exposures:', e);
+                    return [];
+                }
+            },
+
+            async toggleExposure(deviceId, command, enable) {
+                const payload = {device_id: deviceId, command: command, enabled: enable};
+                if (enable) payload.confirm_destructive = true;
+                const headers = {'Content-Type': 'application/json'};
+                return api.request('/api/mcp/exposures', {method: 'PUT', headers, body: JSON.stringify(payload)});
+            },
+
+            async loadDevice(deviceId) {
+                const list = document.getElementById('mcp-tools-list');
+                if (!deviceId) {
+                    list.innerHTML = '<div class="bg-white rounded-xl border border-gray-200 p-8 shadow-sm text-center text-gray-400"><i class="ph ph-plugs text-4xl mb-3 block"></i><p class="text-sm">Select a device to view its available tools.</p></div>';
+                    return;
+                }
+                list.innerHTML = '<div class="bg-white rounded-xl border border-gray-200 p-8 shadow-sm text-center text-gray-400"><i class="ph ph-spinner animate-spin text-2xl mb-2 block"></i><p class="text-sm">Loading tools…</p></div>';
+
+                const commands = await this.loadExposures(deviceId);
+                this.updateCapacity();
+
+                if (commands.length === 0) {
+                    list.innerHTML = '<div class="bg-white rounded-xl border border-gray-200 p-8 shadow-sm text-center text-gray-400"><i class="ph ph-magnifying-glass text-4xl mb-3 block"></i><p class="text-sm">No capabilities discovered yet. Click Refresh on the device detail page first.</p></div>';
+                    return;
+                }
+
+                let html = '';
+                for (const cmd of commands) {
+                    const isDestructive = cmd.destructive;
+                    const isOn = cmd.enabled;
+                    const stateColor = cmd.state === 'enabled' ? 'text-green-600 bg-green-50' : cmd.state === 'needs_review' ? 'text-amber-600 bg-amber-50' : isOn ? 'text-blue-600 bg-blue-50' : 'text-gray-500 bg-gray-50';
+                    const stateLabel = cmd.state === 'enabled' ? 'Enabled' : cmd.state === 'needs_review' ? 'Needs Review' : isOn ? 'Active' : 'Disabled';
+                    const valueInfo = cmd.value_type === 'integer' ? `Integer (${cmd.minimum}–${cmd.maximum}, step ${cmd.step})` : cmd.value_type === 'boolean' ? 'Boolean' : 'No value';
+                    const toggleId = `toggle-${cmd.command.replace(/[^a-z0-9]/gi, '_')}`;
+
+                    html += `
+                    <div class="bg-white rounded-xl border border-gray-200 p-5 shadow-sm hover:shadow-md transition-all">
+                        <div class="flex items-start justify-between gap-4">
+                            <div class="min-w-0 flex-1">
+                                <div class="flex items-center gap-2 mb-1">
+                                    <span class="font-semibold text-gray-900 text-sm">${cmd.command}</span>
+                                    ${isDestructive ? '<span class="px-1.5 py-0.5 bg-red-50 text-red-600 text-[10px] font-semibold rounded uppercase tracking-wide">Destructive</span>' : ''}
+                                    ${cmd.idempotent ? '<span class="px-1.5 py-0.5 bg-blue-50 text-blue-600 text-[10px] font-semibold rounded uppercase tracking-wide">Idempotent</span>' : ''}
+                                </div>
+                                <p class="text-xs text-gray-500 mb-2">${cmd.label || ''}</p>
+                                <div class="flex flex-wrap gap-x-4 gap-y-1 text-xs text-gray-400">
+                                    <span><i class="ph ph-tag mr-1"></i>${cmd.tool_name || '—'}</span>
+                                    <span><i class="ph ph-sliders mr-1"></i>${valueInfo}</span>
+                                </div>
+                            </div>
+                            <div class="flex items-center gap-3 flex-shrink-0">
+                                <span class="text-xs font-medium px-2 py-1 rounded-full ${stateColor}">${stateLabel}</span>
+                                <label class="relative inline-flex items-center cursor-pointer" title="${isOn ? 'Disable tool' : 'Enable tool'}">
+                                    <input type="checkbox" id="${toggleId}" class="sr-only peer" ${isOn ? 'checked' : ''} onchange="mcpTools.onToggle('${deviceId}', '${cmd.command}', this.checked)">
+                                    <div class="w-9 h-5 bg-gray-200 peer-focus:ring-2 peer-focus:ring-brand-300 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:start-[2px] after:bg-white after:border after:border-gray-300 after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-brand-600"></div>
+                                </label>
+                            </div>
+                        </div>
+                    </div>`;
+                }
+                list.innerHTML = html;
+            },
+
+            async onToggle(deviceId, command, checked) {
+                try {
+                    await this.toggleExposure(deviceId, command, checked);
+                    this.updateCapacity();
+                } catch (e) {
+                    alert('Failed to toggle: ' + e.message);
+                    this.loadDevice(deviceId);
+                }
+            },
+
+            async updateCapacity() {
+                const devId = document.getElementById('mcp-device-select').value;
+                if (!devId) return;
+                try {
+                    const data = await api.request(`/api/mcp/exposures?device_id=${encodeURIComponent(devId)}`);
+                    const cap = data.capacity || {};
+                    const used = cap.enabled || 0;
+                    const max = cap.max_enabled || 32;
+                    const pct = Math.round((used / max) * 100);
+                    document.getElementById('mcp-capacity-text').textContent = `${used} / ${max} enabled`;
+                    document.getElementById('mcp-capacity-bar').style.width = pct + '%';
+                } catch (_) {}
+            },
+
+            async populateDeviceList() {
+                const select = document.getElementById('mcp-device-select');
+                try {
+                    const devices = await api.getDevices();
+                    const current = select.value;
+                    select.innerHTML = '<option value="">Select a device…</option>';
+                    for (const dev of devices) {
+                        const opt = document.createElement('option');
+                        opt.value = dev.id;
+                        opt.textContent = dev.customName || dev.id;
+                        select.appendChild(opt);
+                    }
+                    if (current) select.value = current;
+                } catch (e) {
+                    console.error('Failed to populate devices:', e);
+                }
+            }
+        };
+
         // --- Scanner Logic ---
         const scanner = {
             scanInterval: null,
@@ -1415,6 +1605,47 @@
                         window.location.reload();
                     }
                 }, 1000);
+            },
+
+            // --- Admin Token Management ---
+            _tokenKey: 'mcp_admin_token',
+
+            loadTokenUI() {
+                const input = document.getElementById('input-admin-token');
+                const status = document.getElementById('token-status');
+                const token = localStorage.getItem(this._tokenKey);
+                if (token) {
+                    input.value = token;
+                    status.textContent = 'Set (' + token.length + ' chars)';
+                    status.className = 'text-xs text-green-600';
+                } else {
+                    input.value = '';
+                    status.textContent = 'Not set';
+                    status.className = 'text-xs text-gray-400';
+                }
+            },
+
+            saveToken() {
+                const input = document.getElementById('input-admin-token');
+                const val = input.value.trim();
+                if (!val) {
+                    ui.showToast('Token cannot be empty', 'error');
+                    return;
+                }
+                localStorage.setItem(this._tokenKey, val);
+                this.loadTokenUI();
+                ui.showToast('Admin token saved', 'success');
+            },
+
+            clearToken() {
+                localStorage.removeItem(this._tokenKey);
+                this.loadTokenUI();
+                ui.showToast('Admin token cleared', 'success');
+            },
+
+            toggleTokenVisibility() {
+                const input = document.getElementById('input-admin-token');
+                input.type = input.type === 'password' ? 'text' : 'password';
             }
         };
 
@@ -1431,6 +1662,7 @@
         });
 
         window.addEventListener('DOMContentLoaded', async () => {
+            settings.loadTokenUI();
             await Promise.all([devices.load(), settings.load()]);
             if (state.devicesLoaded) nav.restoreRoute();
         });

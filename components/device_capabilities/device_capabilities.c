@@ -112,6 +112,8 @@ static SemaphoreHandle_t s_mutex;
 static QueueHandle_t s_queue;
 static TaskHandle_t s_worker;
 static device_cap_submit_fn s_submitter;
+static device_capability_commit_listener_t s_commit_listener;
+static void *s_commit_listener_context;
 static bool s_initialized;
 static capability_global_owner_t s_owner;
 static uint32_t s_next_operation_id;
@@ -711,23 +713,30 @@ static void handle_end(const char *device_id, const gw_message_t *message)
                 }
                 unlock_records();
             }
-            return;
-        }
-
-        esp_err_t error = persist_record(persist_index, &committed);
-        if (error != ESP_OK) {
-            ESP_LOGW(TAG, "[%s] NVS persist failed: %s (persist_dirty=true)",
-                     device_id, esp_err_to_name(error));
-            if (lock_records()) {
-                int idx = find_record_locked(device_id);
-                if (idx >= 0) {
-                    s_records[idx].persist_dirty = true;
-                }
-                unlock_records();
-            }
         } else {
-            ESP_LOGI(TAG, "[%s] persisted capabilities to NVS", device_id);
+            esp_err_t error = persist_record(persist_index, &committed);
+            if (error != ESP_OK) {
+                ESP_LOGW(TAG, "[%s] NVS persist failed: %s (persist_dirty=true)",
+                         device_id, esp_err_to_name(error));
+                if (lock_records()) {
+                    int idx = find_record_locked(device_id);
+                    if (idx >= 0) {
+                        s_records[idx].persist_dirty = true;
+                    }
+                    unlock_records();
+                }
+            } else {
+                ESP_LOGI(TAG, "[%s] persisted capabilities to NVS", device_id);
+            }
         }
+    }
+
+    /* Commit listener fires outside the capability mutex, after the persist
+     * decision, for every successful commit (changed or not). It must only
+     * enqueue work — the exposure consumer relies on this contract. */
+    if (persist_index >= 0 && s_commit_listener != NULL) {
+        s_commit_listener(device_id, committed.revision,
+                          s_commit_listener_context);
     }
 }
 
@@ -988,6 +997,16 @@ void device_capabilities_set_submitter(device_cap_submit_fn submitter)
     s_submitter = submitter;
 }
 
+esp_err_t device_capabilities_register_commit_listener(
+    device_capability_commit_listener_t listener, void *context)
+{
+    if (!lock_records()) return ESP_ERR_TIMEOUT;
+    s_commit_listener = listener;
+    s_commit_listener_context = context;
+    unlock_records();
+    return ESP_OK;
+}
+
 static esp_err_t enqueue_device_event(capability_event_type_t type,
                                       const char *device_id,
                                       uint32_t operation_id,
@@ -1121,7 +1140,10 @@ esp_err_t device_capabilities_get(const char *device_id,
     out_snapshot->state = DEVICE_CAP_STATE_UNKNOWN;
     if (!lock_records()) return ESP_ERR_TIMEOUT;
     int index = find_record_locked(device_id);
-    if (index >= 0) *out_snapshot = s_records[index].committed;
+    if (index >= 0) {
+        *out_snapshot = s_records[index].committed;
+        out_snapshot->has_committed = s_records[index].has_committed;
+    }
     unlock_records();
     return ESP_OK;
 }

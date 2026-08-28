@@ -6,10 +6,18 @@
 #include "sdkconfig.h"
 
 #include "mcp_endpoint_internal.h"
+#include "mcp_tool_exposure.h"
 
 // Strict tool registry: the only tools exposed over MCP. tools/list is built
 // exclusively from this table, closing the hidden command surface that the
 // old unknown-tool fallback allowed.
+
+#ifndef CONFIG_MCP_KEEP_GENERIC_DEVICE_COMMAND
+#define CONFIG_MCP_KEEP_GENERIC_DEVICE_COMMAND 0
+#endif
+#ifndef CONFIG_MCP_EXPOSE_FULL_CAPABILITY_TOOL
+#define CONFIG_MCP_EXPOSE_FULL_CAPABILITY_TOOL 0
+#endif
 
 #define MAX_LEN_OF(field) ((int)(sizeof(((gw_message_t *)0)->field) - 1))
 
@@ -121,28 +129,34 @@ static cJSON *schema_device_command(void)
 
 #undef SCHEMA_FAIL
 
-static const mcp_tool_desc_t MCP_TOOL_TABLE[] = {
+// Production static tools: get_status + list_devices always present.
+// list_device_capabilities and device_command are debug/migration only.
+static const mcp_tool_desc_t MCP_STATIC_TOOLS[] = {
     {"get_status", "Get gateway and BLE status", schema_empty, true, false},
     {"list_devices", "List devices known by the gateway", schema_empty, true, false},
+#if CONFIG_MCP_EXPOSE_FULL_CAPABILITY_TOOL
     {"list_device_capabilities", "List commands advertised by a BLE device",
      schema_device_id, true, false},
+#endif
+#if CONFIG_MCP_KEEP_GENERIC_DEVICE_COMMAND
     {"device_command", "Send an allowlisted command to a device",
      schema_device_command, false, false},
+#endif
 };
 
 const mcp_tool_desc_t *mcp_registry_find(const char *name)
 {
-    for (size_t i = 0; i < sizeof(MCP_TOOL_TABLE) / sizeof(MCP_TOOL_TABLE[0]); i++) {
-        if (strcmp(MCP_TOOL_TABLE[i].name, name) == 0) return &MCP_TOOL_TABLE[i];
+    for (size_t i = 0; i < sizeof(MCP_STATIC_TOOLS) / sizeof(MCP_STATIC_TOOLS[0]); i++) {
+        if (strcmp(MCP_STATIC_TOOLS[i].name, name) == 0) return &MCP_STATIC_TOOLS[i];
     }
     return NULL;
 }
 
-// Build tools array only — no tool_names (§12.9).
+// Build static tools array only (§12.9).
 int mcp_registry_build_tools_list(cJSON *tools_array)
 {
-    for (size_t i = 0; i < sizeof(MCP_TOOL_TABLE) / sizeof(MCP_TOOL_TABLE[0]); i++) {
-        const mcp_tool_desc_t *desc = &MCP_TOOL_TABLE[i];
+    for (size_t i = 0; i < sizeof(MCP_STATIC_TOOLS) / sizeof(MCP_STATIC_TOOLS[0]); i++) {
+        const mcp_tool_desc_t *desc = &MCP_STATIC_TOOLS[i];
         cJSON *tool = cJSON_CreateObject();
         cJSON *schema = desc->input_schema();
         cJSON *annotations = cJSON_CreateObject();
@@ -164,4 +178,95 @@ int mcp_registry_build_tools_list(cJSON *tools_array)
         cJSON_AddItemToArray(tools_array, tool);
     }
     return 0;
+}
+
+// ---------------------------------------------------------------------------
+// Dynamic tool schema builder from device capability
+// ---------------------------------------------------------------------------
+
+cJSON *mcp_dynamic_tool_build_schema(const device_capability_t *cap)
+{
+    cJSON *schema = new_object_schema();
+    if (schema == NULL) return NULL;
+    cJSON *properties = cJSON_GetObjectItemCaseSensitive(schema, "properties");
+    if (properties == NULL) {
+        cJSON_Delete(schema);
+        return NULL;
+    }
+
+    if (cap->value_type == DEVICE_CAP_VALUE_NONE) {
+        // No arguments needed — empty object.
+        return schema;
+    }
+
+    cJSON *value_prop = cJSON_CreateObject();
+    if (value_prop == NULL) {
+        cJSON_Delete(schema);
+        return NULL;
+    }
+
+    if (cap->value_type == DEVICE_CAP_VALUE_BOOL) {
+        cJSON_AddStringToObject(value_prop, "type", "boolean");
+    } else if (cap->value_type == DEVICE_CAP_VALUE_INT) {
+        cJSON_AddStringToObject(value_prop, "type", "integer");
+        cJSON_AddNumberToObject(value_prop, "minimum", cap->min_value);
+        cJSON_AddNumberToObject(value_prop, "maximum", cap->max_value);
+        if (cap->step > 0) {
+            cJSON_AddNumberToObject(value_prop, "multipleOf", cap->step);
+        }
+        char desc_buf[64];
+        if (cap->unit[0] != '\0') {
+            snprintf(desc_buf, sizeof(desc_buf), "Value (%s)", cap->unit);
+        } else {
+            snprintf(desc_buf, sizeof(desc_buf), "Value");
+        }
+        cJSON_AddStringToObject(value_prop, "description", desc_buf);
+    }
+
+    cJSON_AddItemToObject(properties, "value", value_prop);
+
+    cJSON *required = cJSON_CreateArray();
+    if (required == NULL) {
+        cJSON_Delete(schema);
+        return NULL;
+    }
+    cJSON_AddItemToArray(required, cJSON_CreateString("value"));
+    cJSON_AddItemToObject(schema, "required", required);
+
+    return schema;
+}
+
+// Build a single dynamic tool cJSON object from a binding.
+cJSON *mcp_dynamic_tool_build_json(const mcp_tool_binding_t *binding)
+{
+    cJSON *tool = cJSON_CreateObject();
+    if (tool == NULL) return NULL;
+
+    cJSON *schema = mcp_dynamic_tool_build_schema(&binding->capability);
+    cJSON *annotations = cJSON_CreateObject();
+    if (schema == NULL || annotations == NULL) {
+        cJSON_Delete(tool);
+        cJSON_Delete(schema);
+        cJSON_Delete(annotations);
+        return NULL;
+    }
+
+    cJSON_AddStringToObject(tool, "name", binding->tool_name);
+
+    // Trusted template description — no raw peripheral text (§19.1).
+    char desc[192];
+    snprintf(desc, sizeof(desc), "Execute command '%s' on device '%s'.",
+             binding->command, binding->device_id);
+    cJSON_AddStringToObject(tool, "description", desc);
+    cJSON_AddItemToObject(tool, "inputSchema", schema);
+
+    // Annotations (§19.4).
+    cJSON_AddBoolToObject(annotations, "readOnlyHint", false);
+    bool destructive = (binding->capability.flags & DEVICE_CAP_FLAG_DESTRUCTIVE) != 0;
+    bool idempotent = (binding->capability.flags & DEVICE_CAP_FLAG_IDEMPOTENT) != 0;
+    cJSON_AddBoolToObject(annotations, "destructiveHint", destructive);
+    cJSON_AddBoolToObject(annotations, "idempotentHint", idempotent);
+    cJSON_AddItemToObject(tool, "annotations", annotations);
+
+    return tool;
 }

@@ -535,7 +535,11 @@ int mcp_endpoint_register(httpd_handle_t server)
         .handler = handle_get_mcp,
         .user_ctx = NULL,
     };
-    httpd_register_uri_handler(server, &get_route);
+    error = httpd_register_uri_handler(server, &get_route);
+    if (error != ESP_OK) {
+        ESP_LOGE(TAG, "Could not register GET /mcp: %s", esp_err_to_name(error));
+        return -1;
+    }
 
     const httpd_uri_t delete_route = {
         .uri = "/mcp",
@@ -543,7 +547,11 @@ int mcp_endpoint_register(httpd_handle_t server)
         .handler = handle_delete_mcp,
         .user_ctx = NULL,
     };
-    httpd_register_uri_handler(server, &delete_route);
+    error = httpd_register_uri_handler(server, &delete_route);
+    if (error != ESP_OK) {
+        ESP_LOGE(TAG, "Could not register DELETE /mcp: %s", esp_err_to_name(error));
+        return -1;
+    }
 
     ESP_LOGI(TAG, "MCP endpoint registered: POST/GET/DELETE /mcp");
     return 0;

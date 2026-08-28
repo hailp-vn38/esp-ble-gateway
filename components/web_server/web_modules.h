@@ -19,4 +19,6 @@ esp_err_t web_wifi_api_register(httpd_handle_t server);
 esp_err_t web_ble_api_init(void);
 esp_err_t web_ble_api_register(httpd_handle_t server);
 
+esp_err_t web_exposure_api_register(httpd_handle_t server);
+
 #endif // WEB_MODULES_H

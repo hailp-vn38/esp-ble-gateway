@@ -49,4 +49,13 @@ menu "MCP Endpoint"
         help
             Token bucket refill rate; bucket capacity is fixed at 10 requests.
 
+    config MCP_TOOLS_CACHE_TTL_MS
+        int "tools/list cache TTL in milliseconds"
+        range 0 60000
+        default 60000
+        help
+            Cache TTL sent in MCP 2026 tools/list responses. Applies to both
+            static and dynamic tools/list. Default 60000 preserves existing
+            behavior.
+
 endmenu

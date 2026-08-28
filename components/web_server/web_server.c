@@ -7,12 +7,13 @@
 #include "freertos/task.h"
 
 #include "web_modules.h"
+#include "web_admin_auth.h"
 
 static const char *TAG = "web_server";
 
-// Route budget (Plan v2 §36-§40): current routes vs configured slots.
-// Gateway: assets 5 + gateway API 7 + system API 3 + BLE API 3 + MCP 1 = 19.
-#define WEB_GATEWAY_MAX_URI_HANDLERS 21
+// Route budget: assets 5 + gateway API 7 + system API 3 + BLE API 3
+// + MCP POST/GET/DELETE 3 + exposure GET/PUT 2 = 23; headroom for future.
+#define WEB_GATEWAY_MAX_URI_HANDLERS 28
 #define WEB_GATEWAY_STACK_SIZE       12288
 
 // Provisioning: assets 6 + system API 2 + Wi-Fi API 4 = 12.
@@ -65,6 +66,8 @@ httpd_handle_t web_server_start(void)
         return NULL;
     }
 
+    web_admin_auth_init();
+
     static const route_registrar_t registrars[] = {
         web_assets_register_gateway,
         web_gateway_api_register,
@@ -82,6 +85,8 @@ httpd_handle_t web_server_start_provisioning(void)
         ESP_LOGE(TAG, "Could not initialize provisioning web API state");
         return NULL;
     }
+
+    web_admin_auth_init();
 
     static const route_registrar_t registrars[] = {
         web_assets_register_provisioning,
