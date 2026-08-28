@@ -21,6 +21,13 @@
 
 #define MAX_LEN_OF(field) ((int)(sizeof(((gw_message_t *)0)->field) - 1))
 
+#define SCHEMA_FAIL(schema)       \
+    do {                          \
+        cJSON_Delete(schema);     \
+        return NULL;              \
+    } while (0)
+
+#if CONFIG_MCP_EXPOSE_FULL_CAPABILITY_TOOL || CONFIG_MCP_KEEP_GENERIC_DEVICE_COMMAND
 static bool add_string_field(cJSON *properties, const char *name, int max_length,
                              const char *description)
 {
@@ -34,6 +41,7 @@ static bool add_string_field(cJSON *properties, const char *name, int max_length
     cJSON_AddItemToObject(properties, name, field);
     return true;
 }
+#endif
 
 static cJSON *new_object_schema(void)
 {
@@ -61,6 +69,7 @@ static cJSON *schema_empty(void)
     return new_object_schema();
 }
 
+#if CONFIG_MCP_EXPOSE_FULL_CAPABILITY_TOOL
 static cJSON *schema_device_id(void)
 {
     cJSON *schema = new_object_schema();
@@ -76,7 +85,9 @@ static cJSON *schema_device_id(void)
     cJSON_AddItemToObject(schema, "required", required);
     return schema;
 }
+#endif
 
+#if CONFIG_MCP_KEEP_GENERIC_DEVICE_COMMAND
 static cJSON *schema_device_command(void)
 {
     cJSON *schema = new_object_schema();
@@ -126,6 +137,7 @@ static cJSON *schema_device_command(void)
 
     return schema;
 }
+#endif
 
 #undef SCHEMA_FAIL
 

@@ -21,6 +21,24 @@
         .animate-radar {
             animation: radar-ping 2s cubic-bezier(0, 0, 0.2, 1) infinite;
         }
+        .mcp-chip-list { display: flex; flex-wrap: wrap; gap: 0.5rem; }
+        .mcp-chip {
+            display: inline-flex; align-items: center; padding: 0.375rem 0.75rem;
+            border: 1px solid; border-radius: 9999px; font-size: 0.75rem;
+            line-height: 1rem; font-weight: 500; transition: color 150ms,
+            background-color 150ms, border-color 150ms, opacity 150ms;
+        }
+        .mcp-chip-selected {
+            color: white; background: #0284c7; border-color: #0284c7;
+            box-shadow: 0 1px 2px rgb(0 0 0 / 0.08);
+        }
+        .mcp-chip-unselected {
+            color: #4b5563; background: white; border-color: #d1d5db;
+        }
+        .mcp-chip-unselected:hover { color: #0284c7; border-color: #7dd3fc; }
+        .mcp-chip:disabled { opacity: 0.65; cursor: wait; }
+        .mcp-capacity { white-space: nowrap; }
+        .mcp-tool-error { color: #b45309; }
     </style>
 </head>
 <body class="bg-gray-50 text-gray-900 font-sans h-screen flex overflow-hidden selection:bg-brand-500 selection:text-white">
@@ -40,9 +58,6 @@
             </button>
             <button onclick="nav.switchTab('scanner')" id="nav-scanner" class="w-full flex items-center px-4 py-3 text-sm font-medium rounded-lg transition-colors hover:bg-dark-surface hover:text-white text-gray-300">
                 <i class="ph ph-broadcast text-lg mr-3"></i> Add Device
-            </button>
-            <button onclick="nav.switchTab('mcp-tools')" id="nav-mcp-tools" class="w-full flex items-center px-4 py-3 text-sm font-medium rounded-lg transition-colors hover:bg-dark-surface hover:text-white text-gray-300">
-                <i class="ph ph-plugs text-lg mr-3"></i> MCP Tools
             </button>
             <button onclick="nav.switchTab('settings')" id="nav-settings" class="w-full flex items-center px-4 py-3 text-sm font-medium rounded-lg transition-colors hover:bg-dark-surface hover:text-white text-gray-300">
                 <i class="ph ph-gear text-lg mr-3"></i> Gateway Settings
@@ -182,6 +197,20 @@
                         </div>
                         <div>
                             <p id="capability-state" class="inline-flex px-2 py-1 bg-gray-100 rounded text-xs text-gray-600 mb-4">Capabilities unknown</p>
+                            <div class="mb-5 rounded-lg border border-gray-200 bg-gray-50 p-4">
+                                <div class="flex items-start justify-between gap-4 mb-3">
+                                    <div>
+                                        <h4 class="text-sm font-semibold text-gray-800 flex items-center">
+                                            <i class="ph ph-plugs text-brand-600 mr-1.5"></i> MCP tools
+                                        </h4>
+                                        <p class="text-xs text-gray-500 mt-1">Select commands exposed to connected MCP clients</p>
+                                    </div>
+                                    <span id="mcp-capacity-text" class="mcp-capacity text-xs text-gray-500 font-mono"></span>
+                                </div>
+                                <div id="mcp-tool-chips" class="mcp-chip-list" aria-live="polite">
+                                    <span class="text-xs text-gray-400">Loading MCP tools…</span>
+                                </div>
+                            </div>
                             <div id="capability-controls" class="grid grid-cols-1 lg:grid-cols-2 gap-3"></div>
                             <div id="legacy-command-controls" class="flex gap-2 pt-4">
                                 <input id="input-device-command" type="text" value="toggle" maxlength="31" class="min-w-0 flex-1 px-3 py-2 border border-gray-300 rounded-lg text-sm" aria-label="Custom command">
@@ -238,46 +267,6 @@
 
                         <!-- Dynamic results are isolated so loading/empty states stay in the DOM. -->
                         <div id="scan-items" class="divide-y divide-gray-100"></div>
-                    </div>
-                </div>
-            </section>
-
-            <!-- VIEW: MCP TOOLS -->
-            <section id="view-mcp-tools" class="max-w-5xl mx-auto hidden pb-20">
-                <div class="mb-8">
-                    <h2 class="text-2xl font-bold text-gray-900">MCP Tool Exposure</h2>
-                    <p class="text-gray-500 text-sm mt-1">Control which device commands are exposed as MCP tools for LLM clients.</p>
-                </div>
-
-                <!-- Capacity bar -->
-                <div class="bg-white rounded-xl border border-gray-200 p-4 shadow-sm mb-6">
-                    <div class="flex items-center justify-between mb-2">
-                        <span class="text-sm font-medium text-gray-700">Tool Slots</span>
-                        <span id="mcp-capacity-text" class="text-xs text-gray-500 font-mono">0 / 32 enabled</span>
-                    </div>
-                    <div class="w-full bg-gray-200 rounded-full h-2">
-                        <div id="mcp-capacity-bar" class="bg-brand-500 h-2 rounded-full transition-all" style="width: 0%"></div>
-                    </div>
-                </div>
-
-                <!-- Device selector -->
-                <div class="bg-white rounded-xl border border-gray-200 p-5 shadow-sm mb-6">
-                    <div class="flex items-center gap-3">
-                        <label for="mcp-device-select" class="text-sm font-medium text-gray-700 whitespace-nowrap">Device</label>
-                        <select id="mcp-device-select" class="flex-1 px-4 py-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-brand-500 focus:border-brand-500 outline-none bg-white text-sm" onchange="mcpTools.loadDevice(this.value)">
-                            <option value="">Select a device…</option>
-                        </select>
-                        <button onclick="mcpTools.loadDevice(document.getElementById('mcp-device-select').value)" class="px-3 py-2.5 bg-gray-100 text-gray-600 rounded-lg hover:bg-gray-200 transition-colors text-sm" title="Refresh">
-                            <i class="ph ph-arrows-clockwise"></i>
-                        </button>
-                    </div>
-                </div>
-
-                <!-- Tool list -->
-                <div id="mcp-tools-list" class="space-y-3">
-                    <div class="bg-white rounded-xl border border-gray-200 p-8 shadow-sm text-center text-gray-400">
-                        <i class="ph ph-plugs text-4xl mb-3 block"></i>
-                        <p class="text-sm">Select a device to view its available tools.</p>
                     </div>
                 </div>
             </section>
@@ -705,13 +694,13 @@
                 saveTab(tabId);
                 
                 // Hide all views
-                ['devices', 'scanner', 'device-detail', 'settings', 'mcp-tools'].forEach(id => {
+                ['devices', 'scanner', 'device-detail', 'settings'].forEach(id => {
                     const el = document.getElementById(`view-${id}`);
                     if(el) el.classList.add('hidden');
                 });
                 
                 // Reset nav button styling
-                ['devices', 'scanner', 'settings', 'mcp-tools'].forEach(id => {
+                ['devices', 'scanner', 'settings'].forEach(id => {
                     const btn = document.getElementById(`nav-${id}`);
                     if(btn) {
                         btn.className = 'w-full flex items-center px-4 py-3 text-sm font-medium rounded-lg transition-colors hover:bg-dark-surface hover:text-white text-gray-300';
@@ -739,7 +728,6 @@
 
                 // Trigger specific view logic
                 if(tabId === 'devices') devices.renderGrid();
-                if(tabId === 'mcp-tools') { mcpTools.populateDeviceList(); mcpTools.updateCapacity(); }
                 if(tabId === 'scanner') {
                     if(!state.isScanning && state.scannedDevices.length === 0) {
                         // Optional: auto-start scan on view open
@@ -878,15 +866,10 @@
         
         // --- MCP Tools Logic ---
         const mcpTools = {
+            loadId: 0,
+
             async loadExposures(deviceId) {
-                if (!deviceId) return [];
-                try {
-                    const data = await api.request(`/api/mcp/exposures?device_id=${encodeURIComponent(deviceId)}`);
-                    return data.commands || [];
-                } catch (e) {
-                    console.error('Failed to load exposures:', e);
-                    return [];
-                }
+                return api.request(`/api/mcp/exposures?device_id=${encodeURIComponent(deviceId)}`);
             },
 
             async toggleExposure(deviceId, command, enable) {
@@ -896,98 +879,80 @@
                 return api.request('/api/mcp/exposures', {method: 'PUT', headers, body: JSON.stringify(payload)});
             },
 
+            renderChip(deviceId, command) {
+                const selected = command.state === 'enabled';
+                const chip = document.createElement('button');
+                chip.type = 'button';
+                chip.setAttribute('aria-pressed', String(selected));
+                chip.title = command.tool_name || command.command;
+                chip.className = selected
+                    ? 'mcp-chip mcp-chip-selected'
+                    : 'mcp-chip mcp-chip-unselected';
+
+                const icon = document.createElement('i');
+                icon.className = `ph ${selected ? 'ph-check-circle' : 'ph-plus'} mr-1.5`;
+                const label = document.createElement('span');
+                label.textContent = command.label || command.command;
+                chip.append(icon, label);
+                chip.onclick = () => this.onToggle(deviceId, command, chip);
+                return chip;
+            },
+
             async loadDevice(deviceId) {
-                const list = document.getElementById('mcp-tools-list');
-                if (!deviceId) {
-                    list.innerHTML = '<div class="bg-white rounded-xl border border-gray-200 p-8 shadow-sm text-center text-gray-400"><i class="ph ph-plugs text-4xl mb-3 block"></i><p class="text-sm">Select a device to view its available tools.</p></div>';
-                    return;
-                }
-                list.innerHTML = '<div class="bg-white rounded-xl border border-gray-200 p-8 shadow-sm text-center text-gray-400"><i class="ph ph-spinner animate-spin text-2xl mb-2 block"></i><p class="text-sm">Loading tools…</p></div>';
+                const requestId = ++this.loadId;
+                const chips = document.getElementById('mcp-tool-chips');
+                const capacityText = document.getElementById('mcp-capacity-text');
+                chips.innerHTML = '<span class="text-xs text-gray-400"><i class="ph ph-spinner animate-spin mr-1"></i>Loading MCP tools…</span>';
+                capacityText.textContent = '';
 
-                const commands = await this.loadExposures(deviceId);
-                this.updateCapacity();
-
-                if (commands.length === 0) {
-                    list.innerHTML = '<div class="bg-white rounded-xl border border-gray-200 p-8 shadow-sm text-center text-gray-400"><i class="ph ph-magnifying-glass text-4xl mb-3 block"></i><p class="text-sm">No capabilities discovered yet. Click Refresh on the device detail page first.</p></div>';
-                    return;
-                }
-
-                let html = '';
-                for (const cmd of commands) {
-                    const isDestructive = cmd.destructive;
-                    const isOn = cmd.enabled;
-                    const stateColor = cmd.state === 'enabled' ? 'text-green-600 bg-green-50' : cmd.state === 'needs_review' ? 'text-amber-600 bg-amber-50' : isOn ? 'text-blue-600 bg-blue-50' : 'text-gray-500 bg-gray-50';
-                    const stateLabel = cmd.state === 'enabled' ? 'Enabled' : cmd.state === 'needs_review' ? 'Needs Review' : isOn ? 'Active' : 'Disabled';
-                    const valueInfo = cmd.value_type === 'integer' ? `Integer (${cmd.minimum}–${cmd.maximum}, step ${cmd.step})` : cmd.value_type === 'boolean' ? 'Boolean' : 'No value';
-                    const toggleId = `toggle-${cmd.command.replace(/[^a-z0-9]/gi, '_')}`;
-
-                    html += `
-                    <div class="bg-white rounded-xl border border-gray-200 p-5 shadow-sm hover:shadow-md transition-all">
-                        <div class="flex items-start justify-between gap-4">
-                            <div class="min-w-0 flex-1">
-                                <div class="flex items-center gap-2 mb-1">
-                                    <span class="font-semibold text-gray-900 text-sm">${cmd.command}</span>
-                                    ${isDestructive ? '<span class="px-1.5 py-0.5 bg-red-50 text-red-600 text-[10px] font-semibold rounded uppercase tracking-wide">Destructive</span>' : ''}
-                                    ${cmd.idempotent ? '<span class="px-1.5 py-0.5 bg-blue-50 text-blue-600 text-[10px] font-semibold rounded uppercase tracking-wide">Idempotent</span>' : ''}
-                                </div>
-                                <p class="text-xs text-gray-500 mb-2">${cmd.label || ''}</p>
-                                <div class="flex flex-wrap gap-x-4 gap-y-1 text-xs text-gray-400">
-                                    <span><i class="ph ph-tag mr-1"></i>${cmd.tool_name || '—'}</span>
-                                    <span><i class="ph ph-sliders mr-1"></i>${valueInfo}</span>
-                                </div>
-                            </div>
-                            <div class="flex items-center gap-3 flex-shrink-0">
-                                <span class="text-xs font-medium px-2 py-1 rounded-full ${stateColor}">${stateLabel}</span>
-                                <label class="relative inline-flex items-center cursor-pointer" title="${isOn ? 'Disable tool' : 'Enable tool'}">
-                                    <input type="checkbox" id="${toggleId}" class="sr-only peer" ${isOn ? 'checked' : ''} onchange="mcpTools.onToggle('${deviceId}', '${cmd.command}', this.checked)">
-                                    <div class="w-9 h-5 bg-gray-200 peer-focus:ring-2 peer-focus:ring-brand-300 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:start-[2px] after:bg-white after:border after:border-gray-300 after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-brand-600"></div>
-                                </label>
-                            </div>
-                        </div>
-                    </div>`;
-                }
-                list.innerHTML = html;
-            },
-
-            async onToggle(deviceId, command, checked) {
                 try {
-                    await this.toggleExposure(deviceId, command, checked);
-                    this.updateCapacity();
-                } catch (e) {
-                    alert('Failed to toggle: ' + e.message);
-                    this.loadDevice(deviceId);
-                }
-            },
+                    const data = await this.loadExposures(deviceId);
+                    if (requestId !== this.loadId ||
+                        state.selectedDeviceDetail?.id !== deviceId) return;
 
-            async updateCapacity() {
-                const devId = document.getElementById('mcp-device-select').value;
-                if (!devId) return;
-                try {
-                    const data = await api.request(`/api/mcp/exposures?device_id=${encodeURIComponent(devId)}`);
                     const cap = data.capacity || {};
                     const used = cap.enabled || 0;
                     const max = cap.max_enabled || 32;
-                    const pct = Math.round((used / max) * 100);
-                    document.getElementById('mcp-capacity-text').textContent = `${used} / ${max} enabled`;
-                    document.getElementById('mcp-capacity-bar').style.width = pct + '%';
-                } catch (_) {}
+                    capacityText.textContent = `${used} / ${max} tool slots`;
+                    chips.replaceChildren();
+
+                    const commands = Array.isArray(data.commands) ? data.commands : [];
+                    if (commands.length === 0) {
+                        chips.innerHTML = '<span class="text-xs text-gray-400">No commands available. Refresh device capabilities first.</span>';
+                        return;
+                    }
+                    commands.forEach(command =>
+                        chips.appendChild(this.renderChip(deviceId, command)));
+                } catch (error) {
+                    if (requestId !== this.loadId ||
+                        state.selectedDeviceDetail?.id !== deviceId) return;
+                    chips.replaceChildren();
+                    const message = document.createElement('span');
+                    message.className = 'mcp-tool-error text-xs';
+                    message.textContent = `${error.message}. Set the MCP admin token in Gateway Settings.`;
+                    chips.appendChild(message);
+                }
             },
 
-            async populateDeviceList() {
-                const select = document.getElementById('mcp-device-select');
+            async onToggle(deviceId, command, chip) {
+                const selected = command.state === 'enabled';
+                if (!selected && command.destructive &&
+                    !confirm(`Expose destructive command ${command.command} to MCP clients?`)) {
+                    return;
+                }
+
+                chip.disabled = true;
                 try {
-                    const devices = await api.getDevices();
-                    const current = select.value;
-                    select.innerHTML = '<option value="">Select a device…</option>';
-                    for (const dev of devices) {
-                        const opt = document.createElement('option');
-                        opt.value = dev.id;
-                        opt.textContent = dev.customName || dev.id;
-                        select.appendChild(opt);
+                    await this.toggleExposure(deviceId, command.command, !selected);
+                    ui.showToast(
+                        `${command.label || command.command} ${selected ? 'removed from' : 'added to'} MCP tools`,
+                        'success');
+                } catch (error) {
+                    ui.showToast(error.message, 'error');
+                } finally {
+                    if (state.selectedDeviceDetail?.id === deviceId) {
+                        this.loadDevice(deviceId);
                     }
-                    if (current) select.value = current;
-                } catch (e) {
-                    console.error('Failed to populate devices:', e);
                 }
             }
         };
@@ -1391,6 +1356,7 @@
 
             async loadCapabilities(device) {
                 const loadId = ++this.capabilitiesLoadId;
+                mcpTools.loadDevice(device.id);
                 const stateText = document.getElementById('capability-state');
                 const controls = document.getElementById('capability-controls');
                 const legacy = document.getElementById('legacy-command-controls');

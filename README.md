@@ -21,8 +21,11 @@ thiết bị DIY và cung cấp Web UI, REST API cùng endpoint JSON-RPC qua Wi-
 - Web UI quản lý Wi-Fi, quét BLE, CRUD thiết bị, gửi lệnh và xem log/status.
 - Dashboard không chồng request định kỳ: trạng thái/thiết bị cập nhật mỗi 5 giây,
   log mỗi 10 giây; lệnh thiết bị chạy trên worker riêng để không khóa HTTP task.
-- `POST /mcp` hỗ trợ subset JSON-RPC 2.0 gồm `list_tools`/`tools/list` và
-  `call_tool`/`tools/call`, bao gồm notification không có `id`.
+- `POST /mcp` hỗ trợ subset JSON-RPC 2.0 gồm `tools/list` và `tools/call`
+  theo MCP 2026-07-28, bao gồm notification không có `id`.
+- **MCP Dynamic Tool Exposure**: mỗi command của thiết bị có thể được expose
+  như một MCP tool riêng (ví dụ `fan_01.set_speed`), quản lý qua Admin API
+  hoặc dashboard, persist trong NVS, tự reconcile khi boot.
 
 ## Giao thức BLE
 
@@ -41,7 +44,7 @@ có key số để giảm kích thước; schema nằm trong
 
 ## Build và flash
 
-Project được kiểm tra với ESP-IDF 5.4.4, target ESP32-S3 và flash 16 MiB.
+Project được kiểm tra với ESP-IDF v6.1-rc1, target ESP32-S3 và flash 16 MiB.
 QCBOR được ghim bằng Git submodule; cJSON được ESP-IDF Component Manager tải
 theo manifest.
 
@@ -94,6 +97,8 @@ curl http://192.168.4.1/api/wifi
 
 ## REST API
 
+### API thiết bị
+
 | Method | Path | Mục đích |
 |---|---|---|
 | `GET` | `/` | Web UI theo boot mode |
@@ -105,15 +110,51 @@ curl http://192.168.4.1/api/wifi
 | `POST` | `/api/command` | Gửi lệnh tới thiết bị và chờ ACK |
 | `GET` | `/api/capabilities?device_id=...` | Capability snapshot của thiết bị |
 | `POST` | `/api/capabilities/refresh` | Yêu cầu discovery lại capability |
-| `POST` | `/api/wifi/scan` | Bắt đầu quét Wi-Fi nền; chỉ provisioning |
+
+### API Wi-Fi (chỉ provisioning mode)
+
+| Method | Path | Mục đích |
+|---|---|---|
+| `POST` | `/api/wifi/scan` | Bắt đầu quét Wi-Fi nền |
 | `GET` | `/api/wifi/scan` | Trạng thái và kết quả Wi-Fi scan đã cache |
-| `POST` | `/api/wifi` | Bắt đầu kiểm tra credentials nền; chỉ provisioning |
+| `POST` | `/api/wifi` | Bắt đầu kiểm tra credentials nền |
 | `GET` | `/api/wifi` | Trạng thái job cấu hình Wi-Fi |
+
+### API BLE
+
+| Method | Path | Mục đích |
+|---|---|---|
 | `GET` | `/api/ble/scan` | Kết quả quét BLE đã cache |
 | `POST` | `/api/ble/scan` | Bắt đầu quét BLE |
-| `POST` | `/mcp` | JSON-RPC cho AI/tool client |
 
-Ví dụ thêm thiết bị:
+### Admin API — MCP Tool Exposure
+
+Yêu cầu header `Authorization: Bearer <admin_token>` (xem Kconfig bên dưới).
+
+| Method | Path | Mục đích |
+|---|---|---|
+| `GET` | `/api/mcp/exposures?device_id=...` | Danh sách command + trạng thái exposure |
+| `PUT` | `/api/mcp/exposures` | Bật/tắt một hoặc nhiều command |
+
+```sh
+# Xem exposure của thiết bị
+curl http://<GATEWAY_IP>/api/mcp/exposures?device_id=fan_01 \
+  -H "Authorization: Bearer gw-admin-token-2026"
+
+# Bật tool
+curl -X PUT http://<GATEWAY_IP>/api/mcp/exposures \
+  -H "Authorization: Bearer gw-admin-token-2026" \
+  -H "Content-Type: application/json" \
+  -d '{"device_id":"fan_01","command":"set_speed","enabled":true}'
+
+# Tắt tool
+curl -X PUT http://<GATEWAY_IP>/api/mcp/exposures \
+  -H "Authorization: Bearer gw-admin-token-2026" \
+  -H "Content-Type: application/json" \
+  -d '{"device_id":"fan_01","command":"set_speed","enabled":false}'
+```
+
+### Ví dụ thêm thiết bị
 
 ```sh
 curl -X POST http://<GATEWAY_IP>/api/devices \
@@ -121,40 +162,74 @@ curl -X POST http://<GATEWAY_IP>/api/devices \
   -d '{"device_id":"lamp-1","name":"Đèn bàn","type":"light","ble_addr":"11:22:33:44:55:66","ble_addr_type":0}'
 ```
 
-## JSON-RPC
+## MCP Endpoint (JSON-RPC)
 
-Liệt kê tool động từ command registry:
+Endpoint `POST /mcp` hỗ trợ MCP 2026-07-28, bao gồm `server/discover`,
+`tools/list` và `tools/call`. Chi tiết đầy đủ xem [`docs/MCP_API.md`](docs/MCP_API.md).
+
+### Static tools
+
+Luôn có sẵn: `get_status`, `list_devices`, và tùy chọn `device_command` /
+`list_device_capabilities` (tắt mặc định).
+
+### Dynamic device tools
+
+Mỗi command của thiết bị có thể được expose như MCP tool riêng. Ví dụ thiết bị
+`fan_01` có command `set_speed` sẽ xuất hiện dưới tên `fan_01.set_speed`:
+
+```sh
+# Liệt kê tools (bao gồm static + dynamic)
+curl -X POST http://<GATEWAY_IP>/mcp \
+  -H 'Content-Type: application/json' \
+  -H 'MCP-Protocol-Version: 2026-07-28' \
+  -H 'Mcp-Method: tools/list' \
+  -d '{"jsonrpc":"2.0","id":1,"method":"tools/list","params":{"_meta":{"io.modelcontextprotocol/protocolVersion":"2026-07-28","io.modelcontextprotocol/clientCapabilities":{}}}}'
+
+# Gọi dynamic tool trực tiếp
+curl -X POST http://<GATEWAY_IP>/mcp \
+  -H 'Content-Type: application/json' \
+  -H 'MCP-Protocol-Version: 2026-07-28' \
+  -H 'Mcp-Method: tools/call' \
+  -H 'Mcp-Name: fan_01.set_speed' \
+  -d '{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"fan_01.set_speed","arguments":{"value":60},"_meta":{"io.modelcontextprotocol/protocolVersion":"2026-07-28","io.modelcontextprotocol/clientCapabilities":{}}}}'
+```
+
+### Legacy `device_command`
 
 ```sh
 curl -X POST http://<GATEWAY_IP>/mcp \
   -H 'Content-Type: application/json' \
-  -d '{"jsonrpc":"2.0","method":"list_tools","id":1}'
+  -d '{"jsonrpc":"2.0","method":"tools/call","params":{"name":"device_command","arguments":{"device_id":"lamp-1","command":"toggle","bool_value":true}},"id":2}'
 ```
 
-Gọi theo dạng tương thích cũ:
+Endpoint này là JSON-RPC/MCP subset cho LAN. Không nên expose trực tiếp ra Internet.
 
-```sh
-curl -X POST http://<GATEWAY_IP>/mcp \
-  -H 'Content-Type: application/json' \
-  -d '{"jsonrpc":"2.0","method":"call_tool","params":{"device_id":"lamp-1","command":"toggle","bool_value":true},"id":2}'
-```
+## Cấu hình
 
-Hoặc theo dạng `name` + `arguments`:
+### Kconfig quan trọng
 
-```json
-{
-  "jsonrpc": "2.0",
-  "method": "tools/call",
-  "params": {
-    "name": "get_status",
-    "arguments": {}
-  },
-  "id": "status-1"
-}
-```
+| Tùy chọn | Mặc định | Mô tả |
+|---|---|---|
+| `CONFIG_MCP_AUTH_TOKEN` | `""` | Bearer token cho `/mcp` (rỗng = dev mode) |
+| `CONFIG_MCP_HOST_ALLOWLIST` | `"gateway.local,192.168.4.1"` | Danh sách Host header hợp lệ |
+| `CONFIG_MCP_DEVICE_COMMAND_ALLOWLIST` | `""` | Command thiết bị được phép (rỗng = deny all) |
+| `CONFIG_WEB_ADMIN_AUTH_TOKEN` | `""` | Bearer token cho Admin API exposure |
+| `CONFIG_MCP_DYNAMIC_TOOLS` | `y` | Bật dynamic tool exposure |
+| `CONFIG_MCP_DYNAMIC_TOOL_MAX_ENABLED` | `32` | Số tool dynamic tối đa đồng thời |
+| `CONFIG_MCP_EXPOSURE_RECORD_MAX` | `96` | Số record exposure NVS tối đa |
+| `CONFIG_MCP_DYNAMIC_ALLOW_DESTRUCTIVE` | `n` | Cho phép expose destructive commands |
 
-Endpoint này là JSON-RPC/MCP subset cho LAN, không phải MCP server đầy đủ và
-chưa có authentication. Không nên expose trực tiếp ra Internet.
+### Dashboard Web UI
+
+Dashboard quản lý thiết bị có sẵn tại `http://<GATEWAY_IP>/`. Các tab:
+
+- **My Devices**: danh sách thiết bị, xem chi tiết, gửi lệnh, refresh capability
+- **Add Device**: quét BLE, thêm thiết bị mới
+- **MCP Tools**: quản lý exposure — chọn device, bật/tắt từng command
+- **Gateway Settings**: system info, network, admin token, restart
+
+Admin token cho MCP Tools lưu trong browser (localStorage). Cần nhập token
+ở tab Settings trước khi sử dụng MCP Tools.
 
 ## Unit test
 
@@ -175,16 +250,26 @@ triển khai service `0xABF0`.
 ## Cấu trúc
 
 ```text
-main/                         Khởi động và nối các module
-components/device_store/      NVS device registry
-components/device_capabilities/ Capability cache, discovery và validation
-components/wifi_provisioning/ Wi-Fi STA/SoftAP và captive DNS
-components/ble_central/       NimBLE Central/GATT Client
-components/cbor_codec/        QCBOR và JSON codec
-components/command_dispatcher/ Command registry, ACK routing
-components/web_server/        Web UI và REST API
-components/mcp_endpoint/      JSON-RPC endpoint
-components/qcbor_lib/         QCBOR 1.6.1 submodule wrapper
-test/                         Unity unit-test application
-docs/                         Thiết kế, kế hoạch module và test plan
+main/                           Khởi động và nối các module
+components/device_store/         NVS device registry
+components/device_capabilities/  Capability cache, discovery và validation
+components/wifi_provisioning/    Wi-Fi STA/SoftAP và captive DNS
+components/ble_central/          NimBLE Central/GATT Client
+components/cbor_codec/           QCBOR và JSON codec
+components/command_dispatcher/   Command registry, ACK routing
+components/web_server/           Web UI, REST API và admin auth
+components/mcp_endpoint/         JSON-RPC/MCP endpoint
+components/mcp_tool_exposure/    Dynamic tool exposure, catalog, naming, digest
+components/board_io/             Button FSM và LED status
+components/gateway_status/       Gateway status tracking
+components/qcbor_lib/            QCBOR 1.6.1 submodule wrapper
+test/                            Unity unit-test application
+docs/                            Thiết kế, spec và API documentation
 ```
+
+## Tài liệu
+
+- [`docs/MCP_API.md`](docs/MCP_API.md) — MCP endpoint API reference (static + dynamic tools)
+- [`docs/MCP_DYNAMIC_DEVICE_TOOLS_DASHBOARD_EXPOSURE_SPEC_v1.1.md`](docs/MCP_DYNAMIC_DEVICE_TOOLS_DASHBOARD_EXPOSURE_SPEC_v1.1.md) — Spec thiết kế dynamic tool exposure
+- [`docs/MCP_ENDPOINT_DUAL_ERA_UPDATE_PLAN_v1.1.md`](docs/MCP_ENDPOINT_DUAL_ERA_UPDATE_PLAN_v1.1.md) — Kế hoạch cập nhật dual-era MCP
+- [`docs/MCP_MINIMAL_TOOLS_SERVER_REFACTOR_SPEC_V3_1.md`](docs/MCP_MINIMAL_TOOLS_SERVER_REFACTOR_SPEC_V3_1.md) — Spec refactor minimal tools server

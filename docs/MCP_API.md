@@ -524,6 +524,10 @@ Each enabled command becomes a first-class MCP tool:
 Admin-protected REST endpoints for managing which device commands are
 exposed as MCP tools. Requires `CONFIG_WEB_ADMIN_AUTH_TOKEN`.
 
+The dashboard exposes this selection directly in each device detail view as
+two-state command chips (selected or not selected). The admin token remains
+configured under Gateway Settings.
+
 ### 7.1 `GET /api/mcp/exposures`
 
 Returns exposure state, capacity, and catalog info for a device.
