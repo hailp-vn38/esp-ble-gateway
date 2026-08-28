@@ -120,6 +120,50 @@ TEST_CASE("tools/list exposes annotations from the registry", "[mcp_endpoint]")
     cJSON_Delete(response);
 }
 
+TEST_CASE("dynamic tools expose a command-first display title",
+          "[mcp_endpoint]")
+{
+    device_entry_t existing;
+    device_store_result_t stored =
+        device_store_get("AC:27:6E:CC:F2:26", &existing);
+    if (stored == DEVICE_STORE_OK) {
+        TEST_ASSERT_EQUAL_INT(
+            DEVICE_STORE_OK,
+            device_store_edit("AC:27:6E:CC:F2:26", "Kitchen LED", "light"));
+    } else {
+        TEST_ASSERT_EQUAL_INT(
+            DEVICE_STORE_ERR_NOT_FOUND, stored);
+        TEST_ASSERT_EQUAL_INT(
+            DEVICE_STORE_OK,
+            device_store_add("AC:27:6E:CC:F2:26", "Kitchen LED", "light"));
+    }
+
+    mcp_tool_binding_t binding = {0};
+    strlcpy(binding.tool_name,
+            "AC_27_6E_CC_F2_26_a2a1adff7f95b5e0.set_led",
+            sizeof(binding.tool_name));
+    strlcpy(binding.device_id, "AC:27:6E:CC:F2:26",
+            sizeof(binding.device_id));
+    strlcpy(binding.command, "set_led", sizeof(binding.command));
+
+    cJSON *tool = mcp_dynamic_tool_build_json(&binding);
+    TEST_ASSERT_NOT_NULL(tool);
+    TEST_ASSERT_EQUAL_STRING(
+        "AC_27_6E_CC_F2_26_a2a1adff7f95b5e0.set_led",
+        cJSON_GetStringValue(cJSON_GetObjectItemCaseSensitive(tool, "name")));
+    TEST_ASSERT_EQUAL_STRING(
+        "set_led on Kitchen LED",
+        cJSON_GetStringValue(cJSON_GetObjectItemCaseSensitive(tool, "title")));
+
+    cJSON *annotations =
+        cJSON_GetObjectItemCaseSensitive(tool, "annotations");
+    TEST_ASSERT_EQUAL_STRING(
+        "set_led on Kitchen LED",
+        cJSON_GetStringValue(
+            cJSON_GetObjectItemCaseSensitive(annotations, "title")));
+    cJSON_Delete(tool);
+}
+
 // ---------------------------------------------------------------------------
 // tools/call — gateway commands (2026)
 // ---------------------------------------------------------------------------

@@ -1179,6 +1179,8 @@
         
         // --- Connected Devices Logic ---
         const devices = {
+            capabilitiesLoadId: 0,
+
             async load() {
                 try {
                     state.connectedDevices = await api.getDevices();
@@ -1388,6 +1390,7 @@
             },
 
             async loadCapabilities(device) {
+                const loadId = ++this.capabilitiesLoadId;
                 const stateText = document.getElementById('capability-state');
                 const controls = document.getElementById('capability-controls');
                 const legacy = document.getElementById('legacy-command-controls');
@@ -1395,6 +1398,12 @@
                 stateText.textContent = 'Loading capabilities...';
                 try {
                     const response = await api.getCapabilities(device.id);
+                    // Opening a detail view also updates the URL hash, which
+                    // can trigger a second route restore and request. Only the
+                    // latest request may render, otherwise both responses
+                    // append the same command controls.
+                    if (loadId !== this.capabilitiesLoadId ||
+                        state.selectedDeviceDetail?.id !== device.id) return;
                     const snapshot = response.data || {};
                     stateText.textContent = `Capability state: ${snapshot.state || 'unknown'}`;
                     const commands = Array.isArray(snapshot.commands) ? snapshot.commands : [];
@@ -1448,6 +1457,8 @@
                         controls.appendChild(row);
                     });
                 } catch (error) {
+                    if (loadId !== this.capabilitiesLoadId ||
+                        state.selectedDeviceDetail?.id !== device.id) return;
                     stateText.textContent = `Capabilities unavailable: ${error.message}`;
                     legacy.classList.remove('hidden');
                 }

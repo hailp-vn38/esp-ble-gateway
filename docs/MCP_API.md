@@ -363,6 +363,11 @@ always has the same name across reboots.
 - Fast path: `{device_id}.{command}` (e.g. `fan_01.set_speed`)
 - Sanitized (non-ASCII device_id): `{slug}_{hash16}.{command}`
 - Max 128 characters, registered at enable time, never changes
+- Dynamic tools also expose the command-first display title
+  `{command} on {device_name}` in both `title` and `annotations.title` for
+  compatibility with new and legacy MCP clients. It falls back to
+  `{device_id}` if the stored device name is unavailable. Calls continue to
+  use the stable `name` field.
 
 ---
 
