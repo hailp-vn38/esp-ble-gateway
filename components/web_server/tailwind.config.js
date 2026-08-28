@@ -1,5 +1,8 @@
 module.exports = {
-    content: ['./components/web_server/www/dashboard.html'],
+    content: [
+        './components/web_server/www_src/**/*.html',
+        './components/web_server/www_src/**/*.js'
+    ],
     theme: {
         extend: {
             fontFamily: {

@@ -1,0 +1,49 @@
+            <!-- VIEW: SCANNER -->
+            <section id="view-scanner" class="max-w-4xl mx-auto hidden pb-20">
+                <div class="mb-8">
+                    <h2 class="text-2xl font-bold text-gray-900">BLE Scanner</h2>
+                    <p class="text-gray-500 text-sm mt-1">Discover nearby Bluetooth Low Energy devices.</p>
+                </div>
+
+                <div class="bg-white rounded-2xl border border-gray-200 shadow-sm overflow-hidden mb-6">
+                    <div class="p-6 border-b border-gray-100 flex flex-col sm:flex-row items-center justify-between gap-4">
+                        <div class="flex items-center">
+                            <div class="relative w-12 h-12 flex items-center justify-center mr-4">
+                                <div id="scan-radar" class="absolute inset-0 bg-brand-100 rounded-full hidden"></div>
+                                <div id="scan-radar-ring" class="absolute inset-0 border-2 border-brand-500 rounded-full hidden"></div>
+                                <div class="w-10 h-10 bg-brand-50 text-brand-600 rounded-full flex items-center justify-center relative z-10">
+                                    <i class="ph ph-broadcast text-xl"></i>
+                                </div>
+                            </div>
+                            <div>
+                                <h3 class="font-semibold text-gray-900" id="scan-status-text">Ready to scan</h3>
+                                <p class="text-xs text-gray-500" id="scan-status-sub">Ensure target devices are in pairing mode.</p>
+                            </div>
+                        </div>
+                        <button id="btn-toggle-scan" onclick="scanner.toggleScan()" class="w-full sm:w-auto px-6 py-2.5 bg-brand-600 text-white rounded-lg hover:bg-brand-700 transition-colors shadow-sm font-medium flex items-center justify-center">
+                            <i class="ph ph-play-circle mr-2 text-lg"></i> 
+                            <span id="btn-scan-text">Start Scan</span>
+                        </button>
+                    </div>
+
+                    <!-- Scan Results List -->
+                    <div class="max-h-[500px] overflow-y-auto relative min-h-[200px]" id="scan-results">
+                    
+                        <!-- Initial State -->
+                        <div id="scan-initial" class="absolute inset-0 flex flex-col items-center justify-center text-gray-400 p-8 text-center bg-gray-50/50">
+                            <i class="ph ph-magnifying-glass text-4xl mb-3 opacity-50"></i>
+                            <p class="text-sm">Click "Start Scan" to discover devices.</p>
+                        </div>
+                        
+                        <!-- Scanning State (Empty initially) -->
+                        <div id="scan-loading" class="hidden absolute inset-0 flex flex-col items-center justify-center text-brand-600 bg-white z-10 p-8 text-center">
+                            <i class="ph ph-spinner animate-spin text-3xl mb-3"></i>
+                            <p class="text-sm font-medium">Scanning for devices...</p>
+                            <p class="text-xs text-gray-500 mt-1">This may take a few seconds.</p>
+                        </div>
+
+                        <!-- Dynamic results are isolated so loading/empty states stay in the DOM. -->
+                        <div id="scan-items" class="divide-y divide-gray-100"></div>
+                    </div>
+                </div>
+            </section>

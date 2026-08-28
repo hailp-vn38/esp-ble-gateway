@@ -1,0 +1,108 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ESP32 BLE Gateway</title>
+    <link href="/dashboard.css" rel="stylesheet">
+    <link href="/icons.css" rel="stylesheet">
+    <style>
+        /* Modal transition */
+        .modal-enter { opacity: 0; transform: scale(0.95); }
+        .modal-enter-active { opacity: 1; transform: scale(1); transition: opacity 0.2s, transform 0.2s; }
+        .modal-leave { opacity: 1; transform: scale(1); }
+        .modal-leave-active { opacity: 0; transform: scale(0.95); transition: opacity 0.2s, transform 0.2s; }
+        
+        /* Pulse animation for scanning */
+        @keyframes radar-ping {
+            0% { transform: scale(0.5); opacity: 0.8; }
+            100% { transform: scale(2); opacity: 0; }
+        }
+        .animate-radar {
+            animation: radar-ping 2s cubic-bezier(0, 0, 0.2, 1) infinite;
+        }
+        .mcp-chip-list { display: flex; flex-wrap: wrap; gap: 0.5rem; }
+        .mcp-chip {
+            display: inline-flex; align-items: center; padding: 0.375rem 0.75rem;
+            border: 1px solid; border-radius: 9999px; font-size: 0.75rem;
+            line-height: 1rem; font-weight: 500; transition: color 150ms,
+            background-color 150ms, border-color 150ms, opacity 150ms;
+        }
+        .mcp-chip-selected {
+            color: white; background: #0284c7; border-color: #0284c7;
+            box-shadow: 0 1px 2px rgb(0 0 0 / 0.08);
+        }
+        .mcp-chip-unselected {
+            color: #4b5563; background: white; border-color: #d1d5db;
+        }
+        .mcp-chip-unselected:hover { color: #0284c7; border-color: #7dd3fc; }
+        .mcp-chip:disabled { opacity: 0.65; cursor: wait; }
+        .mcp-capacity { white-space: nowrap; }
+        .mcp-tool-error { color: #b45309; }
+    </style>
+</head>
+<body class="bg-gray-50 text-gray-900 font-sans h-screen flex overflow-hidden selection:bg-brand-500 selection:text-white">
+
+    <!-- @include partials/sidebar.html -->
+    <!-- @include partials/modals.html -->
+
+    <!-- Main Content Area -->
+    <main class="flex-1 flex flex-col h-full overflow-hidden relative w-full">
+        <!-- Mobile Header (Visible only on small screens) -->
+        <header class="md:hidden h-16 bg-white border-b border-gray-200 flex items-center justify-between px-4 z-10 flex-shrink-0">
+            <div class="flex items-center">
+                <i class="ph ph-cpu text-brand-600 text-xl mr-2"></i>
+                <span class="font-bold text-gray-800">ESP32 Gateway</span>
+            </div>
+            <button onclick="nav.toggleSidebar()" class="text-gray-600 hover:text-brand-600 focus:outline-none p-2 bg-gray-100 rounded-md">
+                <i class="ph ph-list text-2xl"></i>
+            </button>
+        </header>
+
+        <!-- Overlay for mobile sidebar -->
+        <div id="mobile-overlay" onclick="nav.toggleSidebar()" class="fixed inset-0 bg-gray-900/50 z-10 hidden md:hidden backdrop-blur-sm transition-opacity"></div>
+
+        <!-- Scrollable View Container -->
+        <div class="flex-1 overflow-y-auto bg-gray-50/50 p-4 md:p-8 relative w-full">
+            <!-- @include views/devices.html -->
+            <!-- @include views/device_detail.html -->
+            <!-- @include views/scanner.html -->
+            <!-- @include views/settings.html -->
+        </div>
+    </main>
+
+    <!-- @include partials/restart_overlay.html -->
+
+    <!-- Toast Notifications Container -->
+    <div id="toast-container" class="fixed bottom-4 right-4 z-50 flex flex-col gap-2 pointer-events-none"></div>
+
+    <script>
+    <!-- @js core/state.js -->
+    <!-- @js core/ui.js -->
+    <!-- @js core/i18n.js -->
+    <!-- @js core/api.js -->
+    <!-- @js core/nav.js -->
+    <!-- @js features/devices.js -->
+    <!-- @js features/scanner.js -->
+    <!-- @js features/mcp_exposure.js -->
+    <!-- @js features/settings.js -->
+
+    // --- Initialization ---
+    const initialRoute = nav.getRoute();
+    const initialTab = initialRoute
+        ? (initialRoute.tab === 'device-detail' ? 'devices' : initialRoute.tab)
+        : state.activeTab;
+    nav.switchTab(initialTab, false);
+
+    window.addEventListener('hashchange', () => {
+        if (state.devicesLoaded) nav.restoreRoute();
+    });
+
+    window.addEventListener('DOMContentLoaded', async () => {
+        await Promise.all([devices.load(), settings.load()]);
+        if (state.activeTab === 'settings') settings.loadMcpTokenStatus();
+        if (state.devicesLoaded) nav.restoreRoute();
+    });
+    </script>
+</body>
+</html>

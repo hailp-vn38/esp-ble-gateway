@@ -7,13 +7,14 @@
 #include "freertos/task.h"
 
 #include "web_modules.h"
-#include "web_admin_auth.h"
+#include "web_auth.h"
 
 static const char *TAG = "web_server";
 
-// Route budget: assets 5 + gateway API 7 + system API 3 + BLE API 3
-// + MCP POST/GET/DELETE 3 + exposure GET/PUT 2 = 23; headroom for future.
-#define WEB_GATEWAY_MAX_URI_HANDLERS 28
+// Route budget: assets 6 (dashboard + login + css + icons + font + favicon)
+// + auth API 4 + mcp-token API 4 + device API 4 + command API 1 + capability API 2 + exposure API 2
+// + system API 3 + BLE API 3 = 29; headroom for future.
+#define WEB_GATEWAY_MAX_URI_HANDLERS 32
 #define WEB_GATEWAY_STACK_SIZE       12288
 
 // Provisioning: assets 6 + system API 2 + Wi-Fi API 4 = 12.
@@ -66,10 +67,16 @@ httpd_handle_t web_server_start(void)
         return NULL;
     }
 
-    web_admin_auth_init();
+    esp_err_t auth_err = web_auth_init();
+    if (auth_err != ESP_OK) {
+        ESP_LOGW(TAG, "Web auth init failed: %s (continuing without auth)",
+                 esp_err_to_name(auth_err));
+    }
 
     static const route_registrar_t registrars[] = {
         web_assets_register_gateway,
+        web_auth_api_register,
+        web_mcp_token_api_register,
         web_gateway_api_register,
         web_system_api_register_gateway,
         web_ble_api_register,
@@ -85,8 +92,6 @@ httpd_handle_t web_server_start_provisioning(void)
         ESP_LOGE(TAG, "Could not initialize provisioning web API state");
         return NULL;
     }
-
-    web_admin_auth_init();
 
     static const route_registrar_t registrars[] = {
         web_assets_register_provisioning,

@@ -1,0 +1,32 @@
+    <!-- Sidebar -->
+    <aside class="w-64 bg-dark-bg text-gray-300 flex flex-col shadow-xl z-20 flex-shrink-0 transition-transform duration-300 ease-in-out absolute md:relative -translate-x-full md:translate-x-0 h-full" id="sidebar">
+        <!-- Logo/Header -->
+        <div class="h-16 flex items-center px-6 border-b border-dark-border bg-gray-900">
+            <i class="ph ph-cpu text-brand-500 text-2xl mr-3"></i>
+            <h1 class="text-white font-bold tracking-wide">ESP32 Gateway</h1>
+        </div>
+
+        <!-- Navigation Links -->
+        <nav class="flex-1 px-4 py-6 space-y-2 overflow-y-auto">
+            <button onclick="nav.switchTab('devices')" id="nav-devices" class="w-full flex items-center px-4 py-3 text-sm font-medium rounded-lg transition-colors hover:bg-dark-surface hover:text-white text-gray-300">
+                <i class="ph ph-devices text-lg mr-3"></i> My Devices
+            </button>
+            <button onclick="nav.switchTab('scanner')" id="nav-scanner" class="w-full flex items-center px-4 py-3 text-sm font-medium rounded-lg transition-colors hover:bg-dark-surface hover:text-white text-gray-300">
+                <i class="ph ph-broadcast text-lg mr-3"></i> Add Device
+            </button>
+            <button onclick="nav.switchTab('settings')" id="nav-settings" class="w-full flex items-center px-4 py-3 text-sm font-medium rounded-lg transition-colors hover:bg-dark-surface hover:text-white text-gray-300">
+                <i class="ph ph-gear text-lg mr-3"></i> Gateway Settings
+            </button>
+        </nav>
+
+        <!-- Status Area -->
+        <div class="p-4 border-t border-dark-border bg-dark-surface/50">
+            <div class="flex items-center justify-between text-xs">
+                <span class="flex items-center">
+                    <span id="sidebar-status-dot" class="w-2 h-2 rounded-full bg-gray-500 mr-2"></span>
+                    <span id="sidebar-status-text">Checking gateway…</span>
+                </span>
+                <span id="sidebar-ip" class="text-gray-500 font-mono">0.0.0.0</span>
+            </div>
+        </div>
+    </aside>
