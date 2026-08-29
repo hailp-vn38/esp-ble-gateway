@@ -37,6 +37,8 @@ typedef struct {
 
 typedef struct {
     bool enabled;
+    bool runtime_enabled;
+    bool restart_required;
     bool endpoint_configured;
     mcp_ws_state_t state;
     uint32_t generation;
@@ -46,6 +48,8 @@ typedef struct {
     int last_ws_close_code;
     char negotiated_protocol_version[16];
 } mcp_ws_status_t;
+
+bool mcp_ws_bridge_is_supported(void);
 
 esp_err_t mcp_ws_bridge_init(void);
 esp_err_t mcp_ws_bridge_start(void);
@@ -59,6 +63,7 @@ esp_err_t mcp_ws_bridge_config_update(bool has_enabled, bool enabled,
                                       const char *endpoint);
 esp_err_t mcp_ws_bridge_config_get_public(mcp_ws_public_config_t *out);
 esp_err_t mcp_ws_bridge_config_clear(void);
+esp_err_t mcp_ws_bridge_config_load(mcp_ws_config_t *out);
 
 const char *mcp_ws_bridge_state_name(mcp_ws_state_t state);
 

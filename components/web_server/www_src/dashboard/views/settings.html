@@ -107,6 +107,11 @@
                                 <span data-i18n="settings.xiaozhi_enabled" class="text-sm text-gray-600">Enable bridge</span>
                                 <input id="xiaozhi-enabled" type="checkbox" class="h-4 w-4 rounded border-gray-300 text-brand-600">
                             </div>
+                            <div id="xiaozhi-restart-warning" class="hidden mb-3 p-2 rounded-lg bg-amber-50 border border-amber-200">
+                                <p data-i18n="settings.xiaozhi_restart_required" class="text-xs text-amber-700 font-medium">
+                                    Restart required to apply enable/disable change.
+                                </p>
+                            </div>
                             <div class="mb-3 rounded-lg bg-gray-50 px-3 py-2">
                                 <div class="flex justify-between gap-3 text-xs">
                                     <span data-i18n="settings.xiaozhi_state" class="text-gray-500">State</span>
@@ -116,19 +121,25 @@
                                     <span data-i18n="settings.xiaozhi_endpoint_saved" class="text-gray-500">Saved endpoint</span>
                                     <span id="xiaozhi-endpoint-display" class="font-mono text-gray-700 truncate max-w-[16rem]">—</span>
                                 </div>
+                                <div id="xiaozhi-protocol-row" class="hidden flex justify-between gap-3 text-xs mt-1">
+                                    <span data-i18n="settings.xiaozhi_protocol" class="text-gray-500">Protocol</span>
+                                    <span id="xiaozhi-protocol" class="font-mono text-gray-700"></span>
+                                </div>
                                 <div id="xiaozhi-error-row" class="hidden flex justify-between gap-3 text-xs mt-1">
                                     <span data-i18n="settings.xiaozhi_last_error" class="text-gray-500">Last error</span>
                                     <span id="xiaozhi-last-error" class="font-mono text-red-600"></span>
                                 </div>
                             </div>
                             <label data-i18n="settings.xiaozhi_endpoint" class="block text-sm text-gray-500 mb-1">WebSocket endpoint</label>
-                            <input id="xiaozhi-endpoint" type="password" autocomplete="new-password" class="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm font-mono mb-2" placeholder="wss://api.xiaozhi.me/mcp/?token=…">
+                            <input id="xiaozhi-endpoint" type="password" autocomplete="new-password" class="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm font-mono mb-2" placeholder="wss://api.xiaozhi.me/mcp/?token=...">
                             <p data-i18n="settings.xiaozhi_endpoint_hint" class="text-xs text-gray-500 mb-2">Leave blank to keep the saved endpoint.</p>
                             <p data-i18n="settings.xiaozhi_secret_warning" class="text-xs text-amber-600 mb-3">The endpoint contains a credential and is stored in NVS as plaintext. Protect physical access to the device.</p>
-                            <div class="flex gap-2">
-                                <button id="xiaozhi-save" onclick="settings.saveXiaozhi()" data-i18n="settings.xiaozhi_save" class="px-3 py-1.5 bg-brand-600 text-white rounded-lg hover:bg-brand-700 transition-colors text-xs font-medium">Save &amp; reconnect</button>
+                            <div class="flex gap-2 mb-2">
+                                <button id="xiaozhi-save" onclick="settings.saveXiaozhi()" data-i18n="settings.xiaozhi_save" class="px-3 py-1.5 bg-brand-600 text-white rounded-lg hover:bg-brand-700 transition-colors text-xs font-medium">Save</button>
                                 <button onclick="settings.clearXiaozhi()" data-i18n="settings.xiaozhi_clear" class="px-3 py-1.5 bg-red-50 text-red-600 rounded-lg hover:bg-red-100 transition-colors text-xs font-medium">Clear</button>
+                                <button id="xiaozhi-reconnect" onclick="settings.reconnectXiaozhi()" data-i18n="settings.xiaozhi_reconnect" class="px-3 py-1.5 bg-gray-100 text-gray-700 rounded-lg hover:bg-gray-200 transition-colors text-xs font-medium">Reconnect</button>
                             </div>
+                            <p data-i18n="settings.xiaozhi_toggle_hint" class="text-xs text-gray-400">Changing enable/disable requires a gateway restart.</p>
                         </div>
                     </div>
                 </div>

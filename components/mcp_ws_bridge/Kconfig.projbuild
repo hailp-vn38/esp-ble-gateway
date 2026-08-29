@@ -8,6 +8,16 @@ menu "External MCP WebSocket Bridge"
             connection remains disabled until an endpoint is configured and
             enabled through Settings.
 
+    config MCP_WS_DEFAULT_ENABLED
+        bool "Enable Xiaozhi by default"
+        default n
+        depends on MCP_WS_BRIDGE
+        help
+            When enabled, the MCP WebSocket bridge starts automatically at boot
+            if no user configuration is stored in NVS.  Factory firmware should
+            keep this disabled so the bridge only runs when the user explicitly
+            enables it through Settings.
+
     config MCP_WS_ALLOW_INSECURE
         bool "Allow plaintext ws:// endpoints"
         default n

@@ -1,7 +1,7 @@
 // --- Settings Logic ---
 const settings = {
     mcpState: { configured: false, preview: '' },
-    xiaozhiState: { enabled: false, endpoint_configured: false, state: 'disabled' },
+    xiaozhiState: { enabled: false, runtime_enabled: false, restart_required: false, endpoint_configured: false, state: 'disabled' },
 
     formatUptime(milliseconds) {
         const seconds = Math.floor(milliseconds / 1000);
@@ -157,6 +157,10 @@ const settings = {
         const endpointEl = document.getElementById('xiaozhi-endpoint-display');
         const errorRow = document.getElementById('xiaozhi-error-row');
         const errorEl = document.getElementById('xiaozhi-last-error');
+        const restartWarning = document.getElementById('xiaozhi-restart-warning');
+        const protocolRow = document.getElementById('xiaozhi-protocol-row');
+        const protocolEl = document.getElementById('xiaozhi-protocol');
+        const reconnectBtn = document.getElementById('xiaozhi-reconnect');
         if (!enabled || !stateEl || !endpointEl) return;
 
         enabled.checked = Boolean(state.enabled);
@@ -167,6 +171,29 @@ const settings = {
         endpointEl.textContent = state.endpoint_display ||
             i18n.t('settings.xiaozhi_not_configured');
         endpointEl.title = state.endpoint_display || '';
+
+        // Restart required warning
+        const needsRestart = Boolean(state.restart_required);
+        if (restartWarning) {
+            restartWarning.classList.toggle('hidden', !needsRestart);
+        }
+
+        // Protocol version
+        const hasProtocol = Boolean(state.protocol_version);
+        if (protocolRow) protocolRow.classList.toggle('hidden', !hasProtocol);
+        if (protocolEl && state.protocol_version) {
+            protocolEl.textContent = state.protocol_version;
+        }
+
+        // Reconnect button: active only when runtime enabled, endpoint configured, not busy, no restart pending
+        const canReconnect = Boolean(state.runtime_enabled) &&
+                             Boolean(state.endpoint_configured) &&
+                             !needsRestart &&
+                             state.state !== 'connecting' &&
+                             state.state !== 'handshaking';
+        if (reconnectBtn) {
+            reconnectBtn.disabled = !canReconnect;
+        }
 
         const errorParts = [];
         if (state.last_error) errorParts.push(`ESP ${state.last_error}`);
@@ -197,7 +224,11 @@ const settings = {
             endpointInput.value = '';
             this.xiaozhiState = result.xiaozhi || this.xiaozhiState;
             this.renderXiaozhiStatus();
-            ui.showToast(i18n.t('settings.xiaozhi_saved'), 'success');
+            if (this.xiaozhiState.restart_required) {
+                ui.showToast(i18n.t('settings.xiaozhi_restart_required_toast'), 'warning');
+            } else {
+                ui.showToast(i18n.t('settings.xiaozhi_saved'), 'success');
+            }
         } catch (e) {
             ui.showToast(e.message || i18n.t('settings.xiaozhi_save_failed'), 'error');
         } finally {
@@ -215,12 +246,29 @@ const settings = {
             });
             document.getElementById('xiaozhi-endpoint').value = '';
             this.xiaozhiState = result.xiaozhi || {
-                enabled: false, endpoint_configured: false, state: 'disabled'
+                enabled: false, runtime_enabled: false, restart_required: false,
+                endpoint_configured: false, state: 'disabled'
             };
             this.renderXiaozhiStatus();
             ui.showToast(i18n.t('settings.xiaozhi_cleared'), 'success');
         } catch (e) {
             ui.showToast(e.message || i18n.t('settings.xiaozhi_save_failed'), 'error');
+        }
+    },
+
+    async reconnectXiaozhi() {
+        const reconnectBtn = document.getElementById('xiaozhi-reconnect');
+        if (reconnectBtn) reconnectBtn.disabled = true;
+        try {
+            const result = await api.request('/api/settings/xiaozhi/reconnect', {
+                method: 'POST'
+            });
+            this.xiaozhiState.state = result.state || 'connecting';
+            this.renderXiaozhiStatus();
+            ui.showToast(i18n.t('settings.xiaozhi_reconnecting'), 'success');
+        } catch (e) {
+            ui.showToast(e.message || i18n.t('settings.xiaozhi_reconnect_failed'), 'error');
+            this.renderXiaozhiStatus();
         }
     },
 };

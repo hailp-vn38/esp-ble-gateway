@@ -27,8 +27,17 @@ static void add_xiaozhi_status(cJSON *response)
     esp_err_t config_result = mcp_ws_bridge_config_get_public(&config);
     esp_err_t status_result = mcp_ws_bridge_get_status(&status);
     cJSON *xiaozhi = cJSON_AddObjectToObject(response, "xiaozhi");
+    cJSON_AddBoolToObject(xiaozhi, "supported", mcp_ws_bridge_is_supported());
     cJSON_AddBoolToObject(xiaozhi, "enabled",
                           config_result == ESP_OK && config.enabled);
+    if (status_result == ESP_OK) {
+        cJSON_AddBoolToObject(xiaozhi, "runtime_enabled", status.runtime_enabled);
+        cJSON_AddBoolToObject(xiaozhi, "restart_required",
+                              status.restart_required);
+    } else {
+        cJSON_AddBoolToObject(xiaozhi, "runtime_enabled", false);
+        cJSON_AddBoolToObject(xiaozhi, "restart_required", false);
+    }
     cJSON_AddBoolToObject(xiaozhi, "endpoint_configured",
                           config_result == ESP_OK && config.endpoint_configured);
     if (config_result == ESP_OK && config.endpoint_display[0] != '\0') {
@@ -38,7 +47,7 @@ static void add_xiaozhi_status(cJSON *response)
     cJSON_AddStringToObject(
         xiaozhi, "state",
         status_result == ESP_OK ? mcp_ws_bridge_state_name(status.state)
-                                : "unavailable");
+                                : "unsupported");
     cJSON_AddNumberToObject(xiaozhi, "retry_count",
                             status_result == ESP_OK ? status.retry_count : 0);
     cJSON_AddNumberToObject(xiaozhi, "last_error",
@@ -113,6 +122,12 @@ static esp_err_t settings_get_handler(httpd_req_t *request)
 
 static esp_err_t xiaozhi_put_handler(httpd_req_t *request)
 {
+    if (!mcp_ws_bridge_is_supported()) {
+        return web_send_api_error_code(request, "501 Not Implemented",
+                                       "Xiaozhi is not supported by this firmware",
+                                       "xiaozhi_unsupported");
+    }
+
     char body[MCP_WS_ENDPOINT_MAX_LEN + 160];
     web_body_status_t body_status;
     cJSON *json = web_parse_request_json(request, body, sizeof(body),
@@ -172,11 +187,72 @@ static esp_err_t xiaozhi_put_handler(httpd_req_t *request)
     return web_send_json(request, response);
 }
 
+static esp_err_t xiaozhi_reconnect_handler(httpd_req_t *request)
+{
+    if (!mcp_ws_bridge_is_supported()) {
+        return web_send_api_error_code(request, "501 Not Implemented",
+                                       "Xiaozhi is not supported by this firmware",
+                                       "xiaozhi_unsupported");
+    }
+
+    mcp_ws_status_t status = {0};
+    esp_err_t result = mcp_ws_bridge_get_status(&status);
+    if (result != ESP_OK) {
+        return web_send_api_error_code(request, "500 Internal Server Error",
+                                       "Could not read Xiaozhi status",
+                                       "internal_error");
+    }
+
+    if (!status.runtime_enabled) {
+        if (status.restart_required) {
+            return web_send_api_error_code(
+                request, "409 Conflict",
+                "Gateway restart is required before reconnecting Xiaozhi",
+                "restart_required");
+        }
+        return web_send_api_error_code(request, "409 Conflict",
+                                       "Xiaozhi is disabled",
+                                       "xiaozhi_disabled");
+    }
+
+    if (!status.endpoint_configured) {
+        return web_send_api_error_code(
+            request, "409 Conflict",
+            "Xiaozhi endpoint is not configured",
+            "xiaozhi_not_configured");
+    }
+
+    if (status.state == MCP_WS_CONNECTING ||
+        status.state == MCP_WS_HANDSHAKING) {
+        return web_send_api_error_code(request, "409 Conflict",
+                                       "Xiaozhi is currently connecting",
+                                       "xiaozhi_busy");
+    }
+
+    result = mcp_ws_bridge_reload();
+    if (result != ESP_OK) {
+        ESP_LOGE(TAG, "Xiaozhi reconnect failed: %s", esp_err_to_name(result));
+        return web_send_api_error_code(request, "500 Internal Server Error",
+                                       "Xiaozhi reconnect failed",
+                                       "internal_error");
+    }
+
+    mcp_ws_status_t new_status = {0};
+    mcp_ws_bridge_get_status(&new_status);
+    cJSON *response = cJSON_CreateObject();
+    cJSON_AddBoolToObject(response, "success", true);
+    cJSON_AddStringToObject(response, "state",
+                            mcp_ws_bridge_state_name(new_status.state));
+    return web_send_json(request, response);
+}
+
 esp_err_t web_settings_api_register(httpd_handle_t server)
 {
     static const httpd_uri_t routes[] = {
         {"/api/settings", HTTP_GET, settings_get_handler, NULL},
         {"/api/settings/xiaozhi", HTTP_PUT, xiaozhi_put_handler, NULL},
+        {"/api/settings/xiaozhi/reconnect", HTTP_POST,
+         xiaozhi_reconnect_handler, NULL},
     };
 
     esp_err_t err = ESP_OK;

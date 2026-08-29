@@ -80,5 +80,9 @@ CONFIG_MCP_HOST_ALLOWLIST="gateway.local,192.168.4.1,192.168.1.114"
 # ==== Web admin auth ====
 CONFIG_WEB_ADMIN_AUTH_TOKEN="gw-admin-token-2026"
 
+# ==== Xiaozhi MCP WebSocket Bridge ====
+CONFIG_MCP_WS_BRIDGE=y
+CONFIG_MCP_WS_DEFAULT_ENABLED=n
+
 # ==== RTOS ====
 CONFIG_FREERTOS_HZ=1000

@@ -25,6 +25,7 @@
 
 #ifndef CONFIG_MCP_WS_BRIDGE
 
+bool mcp_ws_bridge_is_supported(void) { return false; }
 esp_err_t mcp_ws_bridge_init(void) { return ESP_ERR_NOT_SUPPORTED; }
 esp_err_t mcp_ws_bridge_start(void) { return ESP_ERR_NOT_SUPPORTED; }
 esp_err_t mcp_ws_bridge_stop(void) { return ESP_ERR_NOT_SUPPORTED; }
@@ -57,6 +58,11 @@ esp_err_t mcp_ws_bridge_config_get_public(mcp_ws_public_config_t *out)
     return ESP_ERR_NOT_SUPPORTED;
 }
 esp_err_t mcp_ws_bridge_config_clear(void) { return ESP_ERR_NOT_SUPPORTED; }
+esp_err_t mcp_ws_bridge_config_load(mcp_ws_config_t *out)
+{
+    (void)out;
+    return ESP_ERR_NOT_SUPPORTED;
+}
 const char *mcp_ws_bridge_state_name(mcp_ws_state_t state)
 {
     (void)state;
@@ -124,6 +130,17 @@ typedef struct {
 
 static bridge_state_t s_bridge;
 
+static bool default_enabled(void)
+{
+#ifdef CONFIG_MCP_WS_DEFAULT_ENABLED
+    return true;
+#else
+    return false;
+#endif
+}
+
+bool mcp_ws_bridge_is_supported(void) { return true; }
+
 static bool queue_event(const bridge_event_t *event)
 {
     return s_bridge.queue != NULL &&
@@ -179,21 +196,22 @@ static esp_err_t config_load(mcp_ws_config_t *config)
     memset(config, 0, sizeof(*config));
     nvs_handle_t nvs;
     esp_err_t result = nvs_open(MCP_WS_NVS_NAMESPACE, NVS_READONLY, &nvs);
-    if (result == ESP_ERR_NVS_NOT_FOUND) return ESP_OK;
+    if (result == ESP_ERR_NVS_NOT_FOUND) {
+        config->enabled = default_enabled();
+        return ESP_OK;
+    }
     if (result != ESP_OK) return result;
     uint8_t enabled = 0;
-    result = nvs_get_u8(nvs, MCP_WS_NVS_ENABLED, &enabled);
-    if (result == ESP_ERR_NVS_NOT_FOUND) result = ESP_OK;
-    if (result == ESP_OK) {
-        size_t size = sizeof(config->endpoint);
-        esp_err_t endpoint_result =
-            nvs_get_str(nvs, MCP_WS_NVS_ENDPOINT, config->endpoint, &size);
-        if (endpoint_result != ESP_OK && endpoint_result != ESP_ERR_NVS_NOT_FOUND) {
-            result = endpoint_result;
-        }
+    bool has_enabled_key =
+        nvs_get_u8(nvs, MCP_WS_NVS_ENABLED, &enabled) == ESP_OK;
+    size_t size = sizeof(config->endpoint);
+    esp_err_t endpoint_result =
+        nvs_get_str(nvs, MCP_WS_NVS_ENDPOINT, config->endpoint, &size);
+    if (endpoint_result != ESP_OK && endpoint_result != ESP_ERR_NVS_NOT_FOUND) {
+        result = endpoint_result;
     }
     nvs_close(nvs);
-    config->enabled = enabled != 0;
+    config->enabled = has_enabled_key ? (enabled != 0) : default_enabled();
     if (config->endpoint[0] != '\0' && !endpoint_valid(config->endpoint)) {
         ESP_LOGW(TAG, "Stored endpoint is invalid; bridge disabled");
         config->enabled = false;
@@ -784,23 +802,27 @@ esp_err_t mcp_ws_bridge_init(void)
 {
     if (s_bridge.initialized) return ESP_ERR_INVALID_STATE;
     memset(&s_bridge, 0, sizeof(s_bridge));
+
     s_bridge.lock = xSemaphoreCreateMutex();
+    if (s_bridge.lock == NULL) goto fail;
+
     s_bridge.queue = xQueueCreate(CONFIG_MCP_WS_EVENT_QUEUE_DEPTH,
                                   sizeof(bridge_event_t));
+    if (s_bridge.queue == NULL) goto fail;
+
     s_bridge.rx_buffer = malloc(CONFIG_MCP_WS_MAX_RX_MESSAGE + 1);
-    if (s_bridge.lock == NULL || s_bridge.queue == NULL ||
-        s_bridge.rx_buffer == NULL) {
-        return ESP_ERR_NO_MEM;
-    }
+    if (s_bridge.rx_buffer == NULL) goto fail;
+
     esp_err_t result = config_load(&s_bridge.config);
-    if (result != ESP_OK) return result;
+    if (result != ESP_OK) goto fail;
+
     s_bridge.status.enabled = s_bridge.config.enabled;
+    s_bridge.status.runtime_enabled = true;
+    s_bridge.status.restart_required = false;
     s_bridge.status.endpoint_configured = s_bridge.config.endpoint[0] != '\0';
     s_bridge.status.state = MCP_WS_DISABLED;
     s_bridge.network_up = wifi_prov_is_connected();
 
-    // The upstream client logs complete redirect/invalid URIs, which would
-    // disclose Xiaozhi's query token. Bridge status retains actionable errors.
     esp_log_level_set("websocket_client", ESP_LOG_NONE);
 
     const esp_timer_create_args_t reconnect_args = {
@@ -815,19 +837,21 @@ esp_err_t mcp_ws_bridge_init(void)
     };
     if (esp_timer_create(&reconnect_args, &s_bridge.reconnect_timer) != ESP_OK ||
         esp_timer_create(&handshake_args, &s_bridge.handshake_timer) != ESP_OK) {
-        return ESP_ERR_NO_MEM;
+        goto fail;
     }
+
     result = esp_event_handler_register(IP_EVENT, IP_EVENT_STA_GOT_IP,
                                         wifi_event_handler, NULL);
-    if (result != ESP_OK) return result;
+    if (result != ESP_OK) goto fail;
     result = esp_event_handler_register(WIFI_EVENT,
                                         WIFI_EVENT_STA_DISCONNECTED,
                                         wifi_event_handler, NULL);
     if (result != ESP_OK) {
         esp_event_handler_unregister(IP_EVENT, IP_EVENT_STA_GOT_IP,
                                      wifi_event_handler);
-        return result;
+        goto fail;
     }
+
     if (xTaskCreate(bridge_task, "mcp_ws_bridge", CONFIG_MCP_WS_TASK_STACK,
                     NULL, tskIDLE_PRIORITY + 4, &s_bridge.task) != pdPASS) {
         esp_event_handler_unregister(IP_EVENT, IP_EVENT_STA_GOT_IP,
@@ -835,10 +859,19 @@ esp_err_t mcp_ws_bridge_init(void)
         esp_event_handler_unregister(WIFI_EVENT,
                                      WIFI_EVENT_STA_DISCONNECTED,
                                      wifi_event_handler);
-        return ESP_ERR_NO_MEM;
+        goto fail;
     }
+
     s_bridge.initialized = true;
     return ESP_OK;
+
+fail:
+    if (s_bridge.rx_buffer != NULL) { free(s_bridge.rx_buffer); s_bridge.rx_buffer = NULL; }
+    if (s_bridge.queue != NULL) { vQueueDelete(s_bridge.queue); s_bridge.queue = NULL; }
+    if (s_bridge.lock != NULL) { vSemaphoreDelete(s_bridge.lock); s_bridge.lock = NULL; }
+    if (s_bridge.reconnect_timer != NULL) { esp_timer_delete(s_bridge.reconnect_timer); s_bridge.reconnect_timer = NULL; }
+    if (s_bridge.handshake_timer != NULL) { esp_timer_delete(s_bridge.handshake_timer); s_bridge.handshake_timer = NULL; }
+    return ESP_ERR_NO_MEM;
 }
 
 esp_err_t mcp_ws_bridge_start(void)
@@ -890,10 +923,25 @@ esp_err_t mcp_ws_bridge_reload(void)
 
 esp_err_t mcp_ws_bridge_get_status(mcp_ws_status_t *out)
 {
-    if (!s_bridge.initialized || out == NULL) return ESP_ERR_INVALID_ARG;
+    if (out == NULL) return ESP_ERR_INVALID_ARG;
+    memset(out, 0, sizeof(*out));
+    if (!s_bridge.initialized) {
+        mcp_ws_config_t config = {0};
+        esp_err_t result = config_load(&config);
+        if (result != ESP_OK) return result;
+        out->enabled = config.enabled;
+        out->runtime_enabled = false;
+        out->restart_required = config.enabled;
+        out->endpoint_configured = config.endpoint[0] != '\0';
+        out->state = MCP_WS_DISABLED;
+        memset(&config, 0, sizeof(config));
+        return ESP_OK;
+    }
     xSemaphoreTake(s_bridge.lock, portMAX_DELAY);
     *out = s_bridge.status;
     out->enabled = s_bridge.config.enabled;
+    out->runtime_enabled = true;
+    out->restart_required = false;
     out->endpoint_configured = s_bridge.config.endpoint[0] != '\0';
     xSemaphoreGive(s_bridge.lock);
     return ESP_OK;
@@ -957,6 +1005,11 @@ esp_err_t mcp_ws_bridge_config_update(bool has_enabled, bool enabled,
         strnlen(endpoint, MCP_WS_ENDPOINT_MAX_LEN) >= MCP_WS_ENDPOINT_MAX_LEN) {
         return ESP_ERR_INVALID_ARG;
     }
+    if (has_endpoint && endpoint[0] != '\0' &&
+        strncmp(endpoint, "ws://", 5) != 0 &&
+        strncmp(endpoint, "wss://", 6) != 0) {
+        return ESP_ERR_INVALID_ARG;
+    }
     mcp_ws_config_t config = {0};
     if (s_bridge.initialized) {
         xSemaphoreTake(s_bridge.lock, portMAX_DELAY);
@@ -966,11 +1019,48 @@ esp_err_t mcp_ws_bridge_config_update(bool has_enabled, bool enabled,
         esp_err_t result = config_load(&config);
         if (result != ESP_OK) return result;
     }
+
+    bool changed_enabled = has_enabled && (enabled != config.enabled);
     if (has_enabled) config.enabled = enabled;
     if (has_endpoint) {
         strlcpy(config.endpoint, endpoint, sizeof(config.endpoint));
     }
-    esp_err_t result = mcp_ws_bridge_config_set(&config);
+
+    esp_err_t result = config_store(&config);
+    if (result != ESP_OK) {
+        memset(&config, 0, sizeof(config));
+        return result;
+    }
+
+    if (s_bridge.initialized) {
+        xSemaphoreTake(s_bridge.lock, portMAX_DELAY);
+        if (has_endpoint) {
+            strlcpy(s_bridge.config.endpoint, config.endpoint,
+                    sizeof(s_bridge.config.endpoint));
+            s_bridge.status.endpoint_configured =
+                config.endpoint[0] != '\0';
+        }
+        if (has_enabled) {
+            s_bridge.config.enabled = config.enabled;
+            s_bridge.status.enabled = config.enabled;
+        }
+        xSemaphoreGive(s_bridge.lock);
+
+        if (changed_enabled) {
+            ESP_LOGI(TAG, "Enable state changed; restart required to apply");
+        } else if (has_endpoint && s_bridge.started && s_bridge.config.enabled) {
+            xSemaphoreTake(s_bridge.lock, portMAX_DELAY);
+            invalidate_connection_locked();
+            bool reconnect = s_bridge.network_up &&
+                             s_bridge.config.endpoint[0] != '\0';
+            set_state_locked(reconnect ? MCP_WS_CONNECTING
+                                       : MCP_WS_WAIT_NETWORK);
+            xSemaphoreGive(s_bridge.lock);
+            bridge_event_t event = {.type = BRIDGE_EVENT_RELOAD};
+            result = queue_event(&event) ? ESP_OK : ESP_ERR_NO_MEM;
+        }
+    }
+
     memset(&config, 0, sizeof(config));
     return result;
 }
@@ -979,6 +1069,12 @@ esp_err_t mcp_ws_bridge_config_clear(void)
 {
     const mcp_ws_config_t config = {0};
     return mcp_ws_bridge_config_set(&config);
+}
+
+esp_err_t mcp_ws_bridge_config_load(mcp_ws_config_t *out)
+{
+    if (out == NULL) return ESP_ERR_INVALID_ARG;
+    return config_load(out);
 }
 
 const char *mcp_ws_bridge_state_name(mcp_ws_state_t state)
