@@ -62,7 +62,7 @@ và dung lượng partition.
 
 Khi chưa có credentials hợp lệ, gateway tạo mạng provisioning:
 
-- SSID: `ESP32-Gateway-Setup`
+- SSID: `ESP-GW-<MAC>` (prefix `ESP-GW` + last 4 hex của MAC)
 - Password: `gateway123`
 - URL: `http://192.168.4.1/`
 
@@ -212,12 +212,18 @@ Endpoint này là JSON-RPC/MCP subset cho LAN. Không nên expose trực tiếp 
 |---|---|---|
 | `CONFIG_MCP_AUTH_TOKEN` | `""` | Bearer token cho `/mcp` (rỗng = dev mode) |
 | `CONFIG_MCP_HOST_ALLOWLIST` | `"gateway.local,192.168.4.1"` | Danh sách Host header hợp lệ |
-| `CONFIG_MCP_DEVICE_COMMAND_ALLOWLIST` | `""` | Command thiết bị được phép (rỗng = deny all) |
-| `CONFIG_WEB_ADMIN_AUTH_TOKEN` | `""` | Bearer token cho Admin API exposure |
+| `CONFIG_MCP_DEVICE_COMMAND_ALLOWLIST` | `""` | Command thiết bị được phép qua `device_command` (rỗng = deny all) |
+| `CONFIG_MCP_COMPAT_2025` | `y` | Hỗ trợ initialize flow MCP 2024/2025 cũ |
+| `CONFIG_MCP_RATE_LIMIT_RPS` | `10` | Giới hạn request/giây cho `/mcp` (token bucket, capacity 10) |
+| `CONFIG_MCP_TOOLS_CACHE_TTL_MS` | `60000` | TTL cache `tools/list` trả về cho client |
 | `CONFIG_MCP_DYNAMIC_TOOLS` | `y` | Bật dynamic tool exposure |
 | `CONFIG_MCP_DYNAMIC_TOOL_MAX_ENABLED` | `32` | Số tool dynamic tối đa đồng thời |
 | `CONFIG_MCP_EXPOSURE_RECORD_MAX` | `96` | Số record exposure NVS tối đa |
 | `CONFIG_MCP_DYNAMIC_ALLOW_DESTRUCTIVE` | `n` | Cho phép expose destructive commands |
+| `CONFIG_WEB_ADMIN_AUTH_TOKEN` | `""` | Bearer token cho Admin API exposure |
+| `CONFIG_CMD_EXEC_WORKER_COUNT` | `2` | Số persistent command worker |
+| `CONFIG_CMD_EXEC_JOB_TIMEOUT_MS` | `3000` | Deadline end-to-end của một command |
+| `CONFIG_MCP_WS_BRIDGE` | `y` | Bật WebSocket bridge tới external MCP broker |
 
 ### Dashboard Web UI
 
@@ -233,8 +239,10 @@ Admin token cho MCP Tools lưu trong browser (localStorage). Cần nhập token
 
 ## Unit test
 
-Test app riêng bao phủ Device Store/NVS, CBOR-QCBOR/JSON, Dispatcher và truy
-vấn circular log gần nhất. Test được compile tách biệt khỏi firmware production:
+Test app riêng bao phủ 13 component: Device Store, Device Capabilities, CBOR,
+Command Dispatcher, Command Executor, MCP Endpoint, MCP Tool Exposure, MCP WS
+Bridge, Wi-Fi Provisioning, BLE Central, Web Server, Board I/O, Memory Policy.
+Test được compile tách biệt khỏi firmware production:
 
 ```sh
 cd test
@@ -257,9 +265,12 @@ components/wifi_provisioning/    Wi-Fi STA/SoftAP và captive DNS
 components/ble_central/          NimBLE Central/GATT Client
 components/cbor_codec/           QCBOR và JSON codec
 components/command_dispatcher/   Command registry, ACK routing
+components/command_executor/     Worker task chạy command offline
 components/web_server/           Web UI, REST API và admin auth
 components/mcp_endpoint/         JSON-RPC/MCP endpoint
 components/mcp_tool_exposure/    Dynamic tool exposure, catalog, naming, digest
+components/mcp_ws_bridge/        WebSocket bridge tới external MCP broker
+components/memory_policy/        PSRAM/internal allocation policy
 components/board_io/             Button FSM và LED status
 components/gateway_status/       Gateway status tracking
 components/qcbor_lib/            QCBOR 1.6.1 submodule wrapper
@@ -273,3 +284,7 @@ docs/                            Thiết kế, spec và API documentation
 - [`docs/MCP_DYNAMIC_DEVICE_TOOLS_DASHBOARD_EXPOSURE_SPEC_v1.1.md`](docs/MCP_DYNAMIC_DEVICE_TOOLS_DASHBOARD_EXPOSURE_SPEC_v1.1.md) — Spec thiết kế dynamic tool exposure
 - [`docs/MCP_ENDPOINT_DUAL_ERA_UPDATE_PLAN_v1.1.md`](docs/MCP_ENDPOINT_DUAL_ERA_UPDATE_PLAN_v1.1.md) — Kế hoạch cập nhật dual-era MCP
 - [`docs/MCP_MINIMAL_TOOLS_SERVER_REFACTOR_SPEC_V3_1.md`](docs/MCP_MINIMAL_TOOLS_SERVER_REFACTOR_SPEC_V3_1.md) — Spec refactor minimal tools server
+- [`docs/ESP_BLE_GATEWAY_XIAOZHI_DIRECT_MCP_BRIDGE_DEVELOPMENT_SPEC_v1.1.md`](docs/ESP_BLE_GATEWAY_XIAOZHI_DIRECT_MCP_BRIDGE_DEVELOPMENT_SPEC_v1.1.md) — Spec WebSocket bridge tới Xiaozhi MCP broker
+- [`docs/ESP32_S3_Gateway_Memory_Resource_Implementation_Guide_IDF_6_1_rc1_v2_1.md`](docs/ESP32_S3_Gateway_Memory_Resource_Implementation_Guide_IDF_6_1_rc1_v2_1.md) — Hướng dẫn quản lý PSRAM/internal memory
+- [`docs/Board_IO_Development_Spec_v2.0.md`](docs/Board_IO_Development_Spec_v2.0.md) — Spec button FSM, LED, display
+- [`docs/WEB_DASHBOARD_SETTINGS_DEVELOPMENT_SPEC_v1.1.md`](docs/WEB_DASHBOARD_SETTINGS_DEVELOPMENT_SPEC_v1.1.md) — Spec tab Settings trên dashboard
