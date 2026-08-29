@@ -7,6 +7,7 @@
 #include "cJSON.h"
 #include "esp_crt_bundle.h"
 #include "esp_event.h"
+#include "esp_heap_caps.h"
 #include "esp_log.h"
 #include "esp_netif.h"
 #include "esp_random.h"
@@ -21,6 +22,7 @@
 #include "nvs_flash.h"
 
 #include "mcp_core.h"
+#include "memory_policy.h"
 #include "wifi_prov.h"
 
 #ifndef CONFIG_MCP_WS_BRIDGE
@@ -129,6 +131,30 @@ typedef struct {
 } bridge_state_t;
 
 static bridge_state_t s_bridge;
+
+static void log_memory_snapshot(const char *label)
+{
+#ifdef CONFIG_MCP_WS_MEMORY_DIAGNOSTICS
+    ESP_LOGI(TAG,
+             "[MEM:%s] INT free=%u largest=%u | DMA free=%u largest=%u | "
+             "PSRAM free=%u largest=%u",
+             label,
+             (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL |
+                                                MALLOC_CAP_8BIT),
+             (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL |
+                                                         MALLOC_CAP_8BIT),
+             (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL |
+                                                MALLOC_CAP_DMA),
+             (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL |
+                                                         MALLOC_CAP_DMA),
+             (unsigned)heap_caps_get_free_size(MALLOC_CAP_SPIRAM |
+                                                MALLOC_CAP_8BIT),
+             (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_SPIRAM |
+                                                         MALLOC_CAP_8BIT));
+#else
+    (void)label;
+#endif
+}
 
 static bool default_enabled(void)
 {
@@ -305,6 +331,7 @@ static void schedule_reconnect(void)
 static void destroy_client(void)
 {
     esp_websocket_client_handle_t client = NULL;
+    log_memory_snapshot("before_destroy");
     xSemaphoreTake(s_bridge.lock, portMAX_DELAY);
     client = s_bridge.client;
     s_bridge.client = NULL;
@@ -315,6 +342,7 @@ static void destroy_client(void)
         esp_websocket_client_stop(client);
         esp_websocket_client_destroy(client);
     }
+    log_memory_snapshot("after_destroy");
 }
 
 static void websocket_event_handler(void *handler_args, esp_event_base_t base,
@@ -357,6 +385,10 @@ static void websocket_event_handler(void *handler_args, esp_event_base_t base,
     }
 
     xSemaphoreTake(s_bridge.lock, portMAX_DELAY);
+    if (data->client != s_bridge.client) {
+        xSemaphoreGive(s_bridge.lock);
+        return;
+    }
     bool start = data->op_code == WS_TRANSPORT_OPCODES_TEXT &&
                  data->payload_offset == 0;
     bool continuation = data->op_code == WS_TRANSPORT_OPCODES_CONT;
@@ -429,6 +461,7 @@ static esp_err_t connect_client(void)
     char display[MCP_WS_ENDPOINT_DISPLAY_MAX_LEN];
     endpoint_display(endpoint, display, sizeof(display));
     ESP_LOGI(TAG, "Connecting external MCP endpoint %s", display);
+    log_memory_snapshot("before_connect");
     const esp_websocket_client_config_t config = {
         .uri = endpoint,
         .disable_auto_reconnect = true,
@@ -486,7 +519,10 @@ static esp_err_t ws_responder_send_json(void *context, const char *json,
         !ws_responder_is_alive(context)) {
         return ESP_ERR_INVALID_STATE;
     }
-    char *copy = malloc(len + 1);
+    gw_mem_class_t mem_class = len > CONFIG_MCP_WS_PSRAM_TX_THRESHOLD
+                                   ? GW_MEM_EXTERNAL_PREFERRED
+                                   : GW_MEM_DEFAULT;
+    char *copy = gw_mem_alloc(len + 1, mem_class);
     if (copy == NULL) return ESP_ERR_NO_MEM;
     memcpy(copy, json, len);
     copy[len] = '\0';
@@ -497,7 +533,7 @@ static esp_err_t ws_responder_send_json(void *context, const char *json,
         .payload_len = len,
     };
     if (!queue_event(&event)) {
-        free(copy);
+        gw_mem_free(copy);
         return ESP_ERR_NO_MEM;
     }
     return ESP_OK;
@@ -622,6 +658,7 @@ static void handle_rx_message(bridge_event_t *event)
         }
         xSemaphoreGive(s_bridge.lock);
     } else if (result == ESP_OK && initialized) {
+        bool became_ready = false;
         xSemaphoreTake(s_bridge.lock, portMAX_DELAY);
         if (event->generation == s_bridge.status.generation &&
             s_bridge.initialize_response_sent) {
@@ -629,8 +666,10 @@ static void handle_rx_message(bridge_event_t *event)
             s_bridge.status.retry_count = 0;
             stop_timer(s_bridge.handshake_timer);
             ESP_LOGI(TAG, "External MCP session ready (2024-11-05)");
+            became_ready = true;
         }
         xSemaphoreGive(s_bridge.lock);
+        if (became_ready) log_memory_snapshot("mcp_ready");
     }
     cJSON_Delete(root);
 }
@@ -638,20 +677,86 @@ static void handle_rx_message(bridge_event_t *event)
 static void handle_tx_message(bridge_event_t *event)
 {
     esp_websocket_client_handle_t client;
+    mcp_ws_state_t state;
     xSemaphoreTake(s_bridge.lock, portMAX_DELAY);
     bool current = event->generation == s_bridge.status.generation &&
                    s_bridge.client != NULL &&
                    (s_bridge.status.state == MCP_WS_HANDSHAKING ||
                     s_bridge.status.state == MCP_WS_READY);
     client = s_bridge.client;
+    state = s_bridge.status.state;
     xSemaphoreGive(s_bridge.lock);
-    if (!current || !esp_websocket_client_is_connected(client)) return;
-    int sent = esp_websocket_client_send_text(
-        client, event->payload, (int)event->payload_len,
-        pdMS_TO_TICKS(MCP_WS_TX_TIMEOUT_MS));
-    if (sent != (int)event->payload_len) {
-        ESP_LOGW(TAG, "WebSocket TX failed");
+    if (!current) return;
+
+    ESP_LOGD(TAG, "WS TX len=%u generation=%u state=%s",
+             (unsigned)event->payload_len, (unsigned)event->generation,
+             mcp_ws_bridge_state_name(state));
+    if (event->payload_len > 8192) {
+        ESP_LOGW(TAG, "Large MCP WebSocket response: %u bytes",
+                 (unsigned)event->payload_len);
     }
+    log_memory_snapshot("before_tx");
+
+    const TickType_t timeout = pdMS_TO_TICKS(MCP_WS_TX_TIMEOUT_MS);
+    int sent = -1;
+    if (!esp_websocket_client_is_connected(client)) {
+        ESP_LOGW(TAG, "WebSocket disconnected before TX");
+    } else if (event->payload_len <= CONFIG_MCP_WS_TX_FRAGMENT_SIZE) {
+        sent = esp_websocket_client_send_text(
+            client, event->payload, (int)event->payload_len, timeout);
+    } else {
+        size_t offset = 0;
+        size_t chunk = CONFIG_MCP_WS_TX_FRAGMENT_SIZE;
+        int frame_sent = esp_websocket_client_send_text_partial(
+            client, event->payload, (int)chunk, timeout);
+        if (frame_sent == (int)chunk) {
+            offset = chunk;
+            sent = frame_sent;
+        } else {
+            sent = frame_sent;
+        }
+
+        while (offset > 0 && offset < event->payload_len) {
+            size_t remaining = event->payload_len - offset;
+            chunk = remaining < CONFIG_MCP_WS_TX_FRAGMENT_SIZE
+                        ? remaining
+                        : CONFIG_MCP_WS_TX_FRAGMENT_SIZE;
+            frame_sent = esp_websocket_client_send_cont_msg(
+                client, event->payload + offset, (int)chunk, timeout);
+            if (frame_sent != (int)chunk) {
+                sent = frame_sent < 0 ? frame_sent : sent + frame_sent;
+                offset = 0;
+                break;
+            }
+            offset += chunk;
+            sent += frame_sent;
+        }
+        if (offset == event->payload_len &&
+            esp_websocket_client_send_fin(client, timeout) < 0) {
+            sent = -1;
+        }
+    }
+
+    if (sent != (int)event->payload_len) {
+        ESP_LOGW(TAG, "WebSocket TX failed: sent=%d expected=%u", sent,
+                 (unsigned)event->payload_len);
+        log_memory_snapshot("tx_fail");
+
+        xSemaphoreTake(s_bridge.lock, portMAX_DELAY);
+        bool still_current = event->generation == s_bridge.status.generation &&
+                             client == s_bridge.client;
+        if (still_current) {
+            s_bridge.status.last_error = ESP_FAIL;
+            invalidate_connection_locked();
+        }
+        xSemaphoreGive(s_bridge.lock);
+        if (still_current) {
+            destroy_client();
+            schedule_reconnect();
+        }
+        return;
+    }
+    log_memory_snapshot("after_tx");
 }
 
 static void handle_connected(const bridge_event_t *event)
@@ -674,6 +779,7 @@ static void handle_connected(const bridge_event_t *event)
     esp_timer_start_once(s_bridge.handshake_timer,
                          CONFIG_MCP_WS_HANDSHAKE_TIMEOUT_MS * 1000ULL);
     ESP_LOGI(TAG, "WebSocket connected; waiting for MCP initialize");
+    log_memory_snapshot("ws_connected");
 }
 
 static void handle_disconnected(const bridge_event_t *event)
@@ -748,8 +854,14 @@ static void bridge_task(void *arg)
             s_bridge.status.retry_count = 0;
             xSemaphoreGive(s_bridge.lock);
             if (reconnect) {
-                bridge_event_t connect = {.type = BRIDGE_EVENT_CONNECT};
-                queue_event(&connect);
+                if (CONFIG_MCP_WS_RELOAD_COOLDOWN_MS == 0) {
+                    bridge_event_t connect = {.type = BRIDGE_EVENT_CONNECT};
+                    queue_event(&connect);
+                } else {
+                    esp_timer_start_once(
+                        s_bridge.reconnect_timer,
+                        CONFIG_MCP_WS_RELOAD_COOLDOWN_MS * 1000ULL);
+                }
             }
             break;
         case BRIDGE_EVENT_STOP:
@@ -767,7 +879,7 @@ static void bridge_task(void *arg)
             if (timed_out) handle_disconnected(&event);
             break;
         }
-        free(event.payload);
+        gw_mem_free(event.payload);
     }
 }
 
@@ -810,7 +922,8 @@ esp_err_t mcp_ws_bridge_init(void)
                                   sizeof(bridge_event_t));
     if (s_bridge.queue == NULL) goto fail;
 
-    s_bridge.rx_buffer = malloc(CONFIG_MCP_WS_MAX_RX_MESSAGE + 1);
+    s_bridge.rx_buffer = gw_mem_alloc(CONFIG_MCP_WS_MAX_RX_MESSAGE + 1,
+                                      GW_MEM_EXTERNAL_PREFERRED);
     if (s_bridge.rx_buffer == NULL) goto fail;
 
     esp_err_t result = config_load(&s_bridge.config);
@@ -863,10 +976,11 @@ esp_err_t mcp_ws_bridge_init(void)
     }
 
     s_bridge.initialized = true;
+    log_memory_snapshot("bridge_init");
     return ESP_OK;
 
 fail:
-    if (s_bridge.rx_buffer != NULL) { free(s_bridge.rx_buffer); s_bridge.rx_buffer = NULL; }
+    if (s_bridge.rx_buffer != NULL) { gw_mem_free(s_bridge.rx_buffer); s_bridge.rx_buffer = NULL; }
     if (s_bridge.queue != NULL) { vQueueDelete(s_bridge.queue); s_bridge.queue = NULL; }
     if (s_bridge.lock != NULL) { vSemaphoreDelete(s_bridge.lock); s_bridge.lock = NULL; }
     if (s_bridge.reconnect_timer != NULL) { esp_timer_delete(s_bridge.reconnect_timer); s_bridge.reconnect_timer = NULL; }

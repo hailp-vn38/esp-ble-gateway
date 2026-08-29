@@ -39,6 +39,29 @@
         .mcp-chip:disabled { opacity: 0.65; cursor: wait; }
         .mcp-capacity { white-space: nowrap; }
         .mcp-tool-error { color: #b45309; }
+        .settings-switch {
+            position: relative; display: inline-flex; width: 2.75rem; height: 1.5rem;
+            cursor: pointer;
+        }
+        .settings-switch input {
+            position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px;
+            overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0;
+        }
+        .settings-switch-track {
+            width: 100%; height: 100%; border-radius: 9999px; background: #d1d5db;
+            transition: background-color 150ms ease;
+        }
+        .settings-switch-track::after {
+            content: ''; position: absolute; width: 1.125rem; height: 1.125rem;
+            top: 0.1875rem; left: 0.1875rem; border-radius: 9999px; background: white;
+            box-shadow: 0 1px 3px rgb(0 0 0 / 0.2); transition: transform 150ms ease;
+        }
+        .settings-switch input:checked + .settings-switch-track { background: #0284c7; }
+        .settings-switch input:checked + .settings-switch-track::after { transform: translateX(1.25rem); }
+        .settings-switch input:focus-visible + .settings-switch-track {
+            outline: 2px solid #0ea5e9; outline-offset: 2px;
+        }
+        .settings-switch input:disabled + .settings-switch-track { opacity: 0.55; cursor: not-allowed; }
     </style>
 </head>
 <body class="bg-gray-50 text-gray-900 font-sans h-screen flex overflow-hidden selection:bg-brand-500 selection:text-white">

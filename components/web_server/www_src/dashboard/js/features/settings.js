@@ -165,9 +165,17 @@ const settings = {
 
         enabled.checked = Boolean(state.enabled);
         stateEl.textContent = i18n.t(`settings.xiaozhi_state_${state.state || 'disabled'}`);
-        stateEl.className = state.state === 'connected'
-            ? 'font-medium text-green-600'
-            : (state.state === 'error' ? 'font-medium text-red-600' : 'font-medium text-amber-600');
+        const stateTone = {
+            connected: 'bg-green-50 text-green-700',
+            error: 'bg-red-50 text-red-700',
+            connecting: 'bg-brand-50 text-brand-700',
+            handshaking: 'bg-brand-50 text-brand-700',
+            wait_network: 'bg-amber-50 text-amber-700',
+            backoff: 'bg-amber-50 text-amber-700',
+            disabled: 'bg-gray-100 text-gray-600',
+            unavailable: 'bg-gray-100 text-gray-600'
+        };
+        stateEl.className = `inline-flex self-start items-center rounded-full px-2.5 py-1 text-xs font-semibold whitespace-nowrap ${stateTone[state.state] || stateTone.disabled}`;
         endpointEl.textContent = state.endpoint_display ||
             i18n.t('settings.xiaozhi_not_configured');
         endpointEl.title = state.endpoint_display || '';

@@ -1,146 +1,188 @@
             <!-- VIEW: SETTINGS -->
-            <section id="view-settings" class="max-w-5xl mx-auto hidden pb-20">
-                <div class="mb-8 flex justify-between items-center">
+            <section id="view-settings" class="max-w-6xl mx-auto hidden pb-20">
+                <div class="mb-6 md:mb-8 flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
                     <div>
                         <h2 data-i18n="settings.title" class="text-2xl font-bold text-gray-900">Gateway Settings</h2>
-                        <p data-i18n="settings.subtitle" class="text-gray-500 text-sm mt-1">View system and network status.</p>
+                        <p data-i18n="settings.subtitle" class="text-gray-500 text-sm mt-1">Manage gateway status, access and external connections.</p>
                     </div>
-                    <select id="lang-selector" onchange="i18n.setLang(this.value); settings.renderMcpTokenStatus(); settings.renderXiaozhiStatus();" class="px-3 py-2 border border-gray-300 rounded-lg text-sm bg-white">
-                        <option value="en">English</option>
-                        <option value="vi">Tiếng Việt</option>
-                    </select>
+                    <div class="flex items-center gap-2 self-start sm:self-auto">
+                        <i class="ph ph-translate text-lg text-gray-400" aria-hidden="true"></i>
+                        <select id="lang-selector" aria-label="Language" onchange="i18n.setLang(this.value); settings.renderMcpTokenStatus(); settings.renderXiaozhiStatus();" class="px-3 py-2 border border-gray-300 rounded-lg text-sm bg-white shadow-sm focus:outline-none focus:ring-2 focus:ring-brand-500 focus:border-brand-500">
+                            <option value="en">English</option>
+                            <option value="vi">Tiếng Việt</option>
+                        </select>
+                    </div>
                 </div>
 
-                <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
-                    <!-- Column 1 -->
-                    <div class="space-y-6">
+                <div class="space-y-6">
+                    <!-- Gateway overview -->
+                    <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
                         <!-- System Info -->
-                        <div class="bg-white rounded-xl border border-gray-200 p-6 shadow-sm">
-                            <h3 data-i18n="settings.system_info" class="font-semibold text-gray-900 mb-4 flex items-center border-b border-gray-100 pb-3">
-                                <i class="ph ph-cpu text-brand-600 text-xl mr-2"></i> System Information
-                            </h3>
-                            <div class="space-y-3">
-                                <div class="flex justify-between items-center py-1">
-                                    <span data-i18n="settings.firmware_version" class="text-sm text-gray-500">Firmware Version</span>
-                                    <span id="set-fw-version" class="text-sm font-medium text-gray-900 font-mono">Checking…</span>
-                                </div>
-                                <div class="flex justify-between items-center py-1">
-                                    <span data-i18n="settings.uptime" class="text-sm text-gray-500">Uptime</span>
-                                    <span id="set-uptime" class="text-sm font-medium text-gray-900">0h 0m</span>
-                                </div>
-                                <div class="flex justify-between items-center py-1">
-                                    <span data-i18n="settings.free_heap" class="text-sm text-gray-500">Free Heap Memory</span>
-                                    <span id="set-heap" class="text-sm font-medium text-gray-900 font-mono">0 KB</span>
-                                </div>
+                        <article class="bg-white rounded-xl border border-gray-200 p-5 md:p-6 shadow-sm">
+                            <div class="flex items-center gap-3 border-b border-gray-100 pb-4 mb-4">
+                                <span class="w-10 h-10 rounded-lg bg-brand-50 text-brand-600 flex items-center justify-center flex-shrink-0">
+                                    <i class="ph ph-cpu text-xl" aria-hidden="true"></i>
+                                </span>
+                                <h3 data-i18n="settings.system_info" class="font-semibold text-gray-900">System Information</h3>
                             </div>
-                        </div>
+                            <dl class="divide-y divide-gray-100">
+                                <div class="flex items-start justify-between gap-4 py-3 first:pt-0">
+                                    <dt data-i18n="settings.firmware_version" class="text-sm text-gray-500">Firmware Version</dt>
+                                    <dd id="set-fw-version" class="min-w-0 text-right text-sm font-medium text-gray-900 font-mono break-all">Checking…</dd>
+                                </div>
+                                <div class="flex items-start justify-between gap-4 py-3">
+                                    <dt data-i18n="settings.uptime" class="text-sm text-gray-500">Uptime</dt>
+                                    <dd id="set-uptime" class="text-right text-sm font-medium text-gray-900">0h 0m</dd>
+                                </div>
+                                <div class="flex items-start justify-between gap-4 pt-3">
+                                    <dt data-i18n="settings.free_heap" class="text-sm text-gray-500">Free Heap Memory</dt>
+                                    <dd id="set-heap" class="text-right text-sm font-medium text-gray-900 font-mono">0 KB</dd>
+                                </div>
+                            </dl>
+                        </article>
 
-                        <!-- Actions -->
-                        <div class="bg-white rounded-xl border border-gray-200 p-6 shadow-sm">
-                            <h3 class="font-semibold text-red-600 mb-4 flex items-center border-b border-gray-100 pb-3">
-                                <i class="ph ph-warning-circle text-red-600 text-xl mr-2"></i> <span data-i18n="settings.danger_zone">Danger Zone</span>
-                            </h3>
-                            <p data-i18n="settings.restart_desc" class="text-sm text-gray-500 mb-4">Rebooting the gateway will temporarily drop all active BLE connections.</p>
-                            <button onclick="settings.restartGateway()" class="w-full px-4 py-2.5 bg-red-50 text-red-600 border border-red-200 rounded-lg hover:bg-red-100 transition-colors font-medium text-sm flex items-center justify-center">
-                                <i class="ph ph-power mr-2 text-lg"></i> <span data-i18n="settings.restart">Restart Gateway</span>
-                            </button>
-                        </div>
+                        <!-- Network Status -->
+                        <article class="bg-white rounded-xl border border-gray-200 p-5 md:p-6 shadow-sm">
+                            <div class="flex items-center gap-3 border-b border-gray-100 pb-4 mb-4">
+                                <span class="w-10 h-10 rounded-lg bg-brand-50 text-brand-600 flex items-center justify-center flex-shrink-0">
+                                    <i class="ph ph-wifi-high text-xl" aria-hidden="true"></i>
+                                </span>
+                                <h3 data-i18n="settings.network_status" class="font-semibold text-gray-900">Network Status</h3>
+                            </div>
+                            <dl class="divide-y divide-gray-100">
+                                <div class="flex items-start justify-between gap-4 py-3 first:pt-0">
+                                    <dt data-i18n="settings.current_ssid" class="text-sm text-gray-500">Current SSID</dt>
+                                    <dd id="set-ssid" class="min-w-0 text-right text-sm font-medium text-gray-900 break-all">Disconnected</dd>
+                                </div>
+                                <div class="flex items-start justify-between gap-4 py-3">
+                                    <dt data-i18n="settings.ip_address" class="text-sm text-gray-500">IP Address</dt>
+                                    <dd id="set-ip" class="min-w-0 text-right text-sm font-medium text-gray-900 font-mono break-all">0.0.0.0</dd>
+                                </div>
+                                <div class="flex items-start justify-between gap-4 py-3">
+                                    <dt data-i18n="settings.mac_address" class="text-sm text-gray-500">MAC Address</dt>
+                                    <dd id="set-mac" class="min-w-0 text-right text-sm font-medium text-gray-900 font-mono break-all">00:00:00:00:00:00</dd>
+                                </div>
+                                <div class="flex items-start justify-between gap-4 pt-3">
+                                    <dt data-i18n="settings.signal_strength" class="text-sm text-gray-500">Signal Strength</dt>
+                                    <dd id="set-wifi-rssi" class="text-right text-sm font-medium text-gray-900">- dBm</dd>
+                                </div>
+                            </dl>
+                        </article>
                     </div>
 
-                    <!-- Column 2 -->
-                    <div class="space-y-6">
-                        <!-- Network Status -->
-                        <div class="bg-white rounded-xl border border-gray-200 p-6 shadow-sm">
-                            <h3 data-i18n="settings.network_status" class="font-semibold text-gray-900 mb-4 flex items-center border-b border-gray-100 pb-3">
-                                <i class="ph ph-wifi-high text-brand-600 text-xl mr-2"></i> Network Status
-                            </h3>
-                            <div class="space-y-3">
-                                <div class="flex justify-between items-center py-1">
-                                    <span data-i18n="settings.current_ssid" class="text-sm text-gray-500">Current SSID</span>
-                                    <span id="set-ssid" class="text-sm font-medium text-gray-900">Disconnected</span>
-                                </div>
-                                <div class="flex justify-between items-center py-1">
-                                    <span data-i18n="settings.ip_address" class="text-sm text-gray-500">IP Address</span>
-                                    <span id="set-ip" class="text-sm font-medium text-gray-900 font-mono">0.0.0.0</span>
-                                </div>
-                                <div class="flex justify-between items-center py-1">
-                                    <span data-i18n="settings.mac_address" class="text-sm text-gray-500">MAC Address</span>
-                                    <span id="set-mac" class="text-sm font-medium text-gray-900 font-mono">00:00:00:00:00:00</span>
-                                </div>
-                                <div class="flex justify-between items-center py-1">
-                                    <span data-i18n="settings.signal_strength" class="text-sm text-gray-500">Signal Strength</span>
-                                    <span id="set-wifi-rssi" class="text-sm font-medium text-gray-900">- dBm</span>
+                    <!-- Access and integrations -->
+                    <div class="grid grid-cols-1 lg:grid-cols-3 gap-6 items-start">
+                        <!-- MCP Access -->
+                        <article class="bg-white rounded-xl border border-gray-200 p-5 md:p-6 shadow-sm">
+                            <div class="flex items-center gap-3 border-b border-gray-100 pb-4 mb-4">
+                                <span class="w-10 h-10 rounded-lg bg-brand-50 text-brand-600 flex items-center justify-center flex-shrink-0">
+                                    <i class="ph ph-key text-xl" aria-hidden="true"></i>
+                                </span>
+                                <div class="min-w-0">
+                                    <h3 data-i18n="settings.mcp_access" class="font-semibold text-gray-900">MCP Access</h3>
+                                    <p data-i18n="settings.mcp_access_desc" class="text-xs text-gray-500 mt-0.5">Manage the Bearer token used by AI agents.</p>
                                 </div>
                             </div>
-                        </div>
-
-                        <!-- MCP Access -->
-                        <div class="bg-white rounded-xl border border-gray-200 p-6 shadow-sm">
-                            <h3 data-i18n="settings.mcp_access" class="font-semibold text-gray-900 mb-4 flex items-center border-b border-gray-100 pb-3">
-                                <i class="ph ph-plugs text-brand-600 text-xl mr-2"></i> MCP Access
-                            </h3>
-                            <p data-i18n="settings.mcp_access_desc" class="text-xs text-gray-500 mb-3">Manage the Bearer token used by AI agents to access the MCP endpoint.</p>
-                            <div id="mcp-token-status" class="mb-3">
+                            <div id="mcp-token-status" class="rounded-lg bg-gray-50 border border-gray-100 p-3 mb-4 min-h-[3rem] flex items-center">
                                 <p class="text-sm text-gray-500">Loading...</p>
                             </div>
-                            <div id="mcp-token-actions" class="flex gap-2">
-                                <button onclick="settings.generateMcpToken()" data-i18n="settings.mcp_generate" class="px-3 py-1.5 bg-brand-600 text-white rounded-lg hover:bg-brand-700 transition-colors text-xs font-medium">Generate Token</button>
+                            <div id="mcp-token-actions" class="flex flex-wrap gap-2">
+                                <button onclick="settings.generateMcpToken()" data-i18n="settings.mcp_generate" class="px-3 py-2 bg-brand-600 text-white rounded-lg hover:bg-brand-700 transition-colors text-xs font-medium">Generate Token</button>
                             </div>
-                            <div id="mcp-token-new" class="hidden mt-3">
-                                <p data-i18n="settings.mcp_new_token_hint" class="text-xs text-green-600 font-medium mb-1">New token (copy it now, it won't be shown again):</p>
+                            <div id="mcp-token-new" class="hidden mt-4 rounded-lg bg-green-50 border border-green-200 p-3">
+                                <p data-i18n="settings.mcp_new_token_hint" class="text-xs text-green-700 font-medium mb-2">New token (copy it now, it won't be shown again):</p>
                                 <div class="flex gap-2">
-                                    <input id="mcp-new-token-value" type="text" readonly class="flex-1 px-3 py-2 bg-gray-50 border border-gray-200 rounded-lg text-sm font-mono">
-                                    <button onclick="settings.copyMcpToken()" class="px-3 py-2 bg-gray-100 text-gray-600 rounded-lg hover:bg-gray-200 transition-colors text-sm" title="Copy">
-                                        <i class="ph ph-copy"></i>
+                                    <input id="mcp-new-token-value" type="text" readonly class="min-w-0 flex-1 px-3 py-2 bg-white border border-green-200 rounded-lg text-sm font-mono focus:outline-none focus:ring-2 focus:ring-green-500">
+                                    <button onclick="settings.copyMcpToken()" class="w-10 flex-shrink-0 bg-white text-gray-600 border border-green-200 rounded-lg hover:bg-green-100 transition-colors text-sm" title="Copy">
+                                        <i class="ph ph-copy" aria-hidden="true"></i>
                                     </button>
                                 </div>
                             </div>
-                        </div>
+                        </article>
 
                         <!-- Xiaozhi Direct MCP Bridge -->
-                        <div class="bg-white rounded-xl border border-gray-200 p-6 shadow-sm">
-                            <h3 data-i18n="settings.xiaozhi_bridge" class="font-semibold text-gray-900 mb-4 flex items-center border-b border-gray-100 pb-3">
-                                <i class="ph ph-cloud-arrow-up text-brand-600 text-xl mr-2"></i> Xiaozhi Direct MCP Bridge
-                            </h3>
-                            <p data-i18n="settings.xiaozhi_desc" class="text-xs text-gray-500 mb-3">Connect this gateway directly to a Xiaozhi MCP WebSocket endpoint.</p>
-                            <div class="flex justify-between items-center mb-3">
-                                <span data-i18n="settings.xiaozhi_enabled" class="text-sm text-gray-600">Enable bridge</span>
-                                <input id="xiaozhi-enabled" type="checkbox" class="h-4 w-4 rounded border-gray-300 text-brand-600">
-                            </div>
-                            <div id="xiaozhi-restart-warning" class="hidden mb-3 p-2 rounded-lg bg-amber-50 border border-amber-200">
-                                <p data-i18n="settings.xiaozhi_restart_required" class="text-xs text-amber-700 font-medium">
-                                    Restart required to apply enable/disable change.
-                                </p>
-                            </div>
-                            <div class="mb-3 rounded-lg bg-gray-50 px-3 py-2">
-                                <div class="flex justify-between gap-3 text-xs">
-                                    <span data-i18n="settings.xiaozhi_state" class="text-gray-500">State</span>
-                                    <span id="xiaozhi-state" class="font-medium text-gray-700">disabled</span>
+                        <article class="lg:col-span-2 bg-white rounded-xl border border-gray-200 p-5 md:p-6 shadow-sm">
+                            <div class="flex flex-col gap-4 border-b border-gray-100 pb-4 mb-5 sm:flex-row sm:items-start sm:justify-between">
+                                <div class="flex items-start gap-3 min-w-0">
+                                    <span class="w-10 h-10 rounded-lg bg-brand-50 text-brand-600 flex items-center justify-center flex-shrink-0">
+                                        <i class="ph ph-cloud-arrow-up text-xl" aria-hidden="true"></i>
+                                    </span>
+                                    <div class="min-w-0">
+                                        <h3 data-i18n="settings.xiaozhi_bridge" class="font-semibold text-gray-900">Xiaozhi Direct MCP Bridge</h3>
+                                        <p data-i18n="settings.xiaozhi_desc" class="text-xs text-gray-500 mt-1">Connect this gateway directly to a Xiaozhi MCP WebSocket endpoint.</p>
+                                    </div>
                                 </div>
-                                <div class="flex justify-between gap-3 text-xs mt-1">
-                                    <span data-i18n="settings.xiaozhi_endpoint_saved" class="text-gray-500">Saved endpoint</span>
-                                    <span id="xiaozhi-endpoint-display" class="font-mono text-gray-700 truncate max-w-[16rem]">—</span>
+                                <span id="xiaozhi-state" class="inline-flex self-start items-center rounded-full bg-gray-100 px-2.5 py-1 text-xs font-semibold text-gray-600 whitespace-nowrap">Disabled</span>
+                            </div>
+
+                            <div class="rounded-xl bg-gray-50 border border-gray-100 p-4 mb-5">
+                                <div class="flex items-start justify-between gap-4">
+                                    <div>
+                                        <p data-i18n="settings.xiaozhi_enabled" class="text-sm font-medium text-gray-800">Enable bridge</p>
+                                        <p data-i18n="settings.xiaozhi_toggle_hint" class="text-xs text-gray-500 mt-1">Changing enable/disable requires a gateway restart.</p>
+                                    </div>
+                                    <label class="settings-switch flex-shrink-0" aria-label="Enable Xiaozhi bridge">
+                                        <input id="xiaozhi-enabled" type="checkbox">
+                                        <span class="settings-switch-track" aria-hidden="true"></span>
+                                    </label>
                                 </div>
-                                <div id="xiaozhi-protocol-row" class="hidden flex justify-between gap-3 text-xs mt-1">
-                                    <span data-i18n="settings.xiaozhi_protocol" class="text-gray-500">Protocol</span>
-                                    <span id="xiaozhi-protocol" class="font-mono text-gray-700"></span>
-                                </div>
-                                <div id="xiaozhi-error-row" class="hidden flex justify-between gap-3 text-xs mt-1">
-                                    <span data-i18n="settings.xiaozhi_last_error" class="text-gray-500">Last error</span>
-                                    <span id="xiaozhi-last-error" class="font-mono text-red-600"></span>
+                                <div id="xiaozhi-restart-warning" class="hidden mt-3 p-3 rounded-lg bg-amber-50 border border-amber-200 flex items-start gap-2">
+                                    <i class="ph ph-warning-circle text-amber-600 text-base flex-shrink-0 mt-0.5" aria-hidden="true"></i>
+                                    <p data-i18n="settings.xiaozhi_restart_required" class="text-xs text-amber-700 font-medium">
+                                        Restart required to apply enable/disable change.
+                                    </p>
                                 </div>
                             </div>
-                            <label data-i18n="settings.xiaozhi_endpoint" class="block text-sm text-gray-500 mb-1">WebSocket endpoint</label>
-                            <input id="xiaozhi-endpoint" type="password" autocomplete="new-password" class="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm font-mono mb-2" placeholder="wss://api.xiaozhi.me/mcp/?token=...">
-                            <p data-i18n="settings.xiaozhi_endpoint_hint" class="text-xs text-gray-500 mb-2">Leave blank to keep the saved endpoint.</p>
-                            <p data-i18n="settings.xiaozhi_secret_warning" class="text-xs text-amber-600 mb-3">The endpoint contains a credential and is stored in NVS as plaintext. Protect physical access to the device.</p>
-                            <div class="flex gap-2 mb-2">
-                                <button id="xiaozhi-save" onclick="settings.saveXiaozhi()" data-i18n="settings.xiaozhi_save" class="px-3 py-1.5 bg-brand-600 text-white rounded-lg hover:bg-brand-700 transition-colors text-xs font-medium">Save</button>
-                                <button onclick="settings.clearXiaozhi()" data-i18n="settings.xiaozhi_clear" class="px-3 py-1.5 bg-red-50 text-red-600 rounded-lg hover:bg-red-100 transition-colors text-xs font-medium">Clear</button>
-                                <button id="xiaozhi-reconnect" onclick="settings.reconnectXiaozhi()" data-i18n="settings.xiaozhi_reconnect" class="px-3 py-1.5 bg-gray-100 text-gray-700 rounded-lg hover:bg-gray-200 transition-colors text-xs font-medium">Reconnect</button>
+
+                            <dl class="grid grid-cols-1 sm:grid-cols-2 gap-3 mb-5">
+                                <div class="sm:col-span-2 rounded-lg border border-gray-100 p-3">
+                                    <dt data-i18n="settings.xiaozhi_endpoint_saved" class="text-xs text-gray-500 mb-1">Saved endpoint</dt>
+                                    <dd id="xiaozhi-endpoint-display" class="font-mono text-sm font-medium text-gray-800 break-all">—</dd>
+                                </div>
+                                <div id="xiaozhi-protocol-row" class="hidden rounded-lg border border-gray-100 p-3">
+                                    <dt data-i18n="settings.xiaozhi_protocol" class="text-xs text-gray-500 mb-1">Protocol</dt>
+                                    <dd id="xiaozhi-protocol" class="font-mono text-sm font-medium text-gray-800"></dd>
+                                </div>
+                                <div id="xiaozhi-error-row" class="hidden sm:col-span-2 rounded-lg bg-red-50 border border-red-100 p-3">
+                                    <dt data-i18n="settings.xiaozhi_last_error" class="text-xs text-red-600 mb-1">Last error</dt>
+                                    <dd id="xiaozhi-last-error" class="font-mono text-sm font-medium text-red-700 break-all"></dd>
+                                </div>
+                            </dl>
+
+                            <div>
+                                <label for="xiaozhi-endpoint" data-i18n="settings.xiaozhi_endpoint" class="block text-sm font-medium text-gray-700 mb-1.5">WebSocket endpoint</label>
+                                <input id="xiaozhi-endpoint" type="password" autocomplete="new-password" class="w-full px-3 py-2.5 border border-gray-300 rounded-lg text-sm font-mono focus:outline-none focus:ring-2 focus:ring-brand-500 focus:border-brand-500" placeholder="wss://api.xiaozhi.me/mcp/?token=...">
+                                <p data-i18n="settings.xiaozhi_endpoint_hint" class="text-xs text-gray-500 mt-2">Leave blank to keep the saved endpoint.</p>
+                                <div class="flex items-start gap-2 mt-3 text-amber-700">
+                                    <i class="ph ph-lock-key text-base flex-shrink-0 mt-0.5" aria-hidden="true"></i>
+                                    <p data-i18n="settings.xiaozhi_secret_warning" class="text-xs">The endpoint contains a credential and is stored in NVS as plaintext. Protect physical access to the device.</p>
+                                </div>
                             </div>
-                            <p data-i18n="settings.xiaozhi_toggle_hint" class="text-xs text-gray-400">Changing enable/disable requires a gateway restart.</p>
-                        </div>
+
+                            <div class="flex flex-col gap-2 mt-5 sm:flex-row">
+                                <button id="xiaozhi-save" onclick="settings.saveXiaozhi()" data-i18n="settings.xiaozhi_save" class="px-4 py-2.5 bg-brand-600 text-white rounded-lg hover:bg-brand-700 transition-colors text-sm font-medium disabled:opacity-50 disabled:cursor-not-allowed">Save</button>
+                                <button id="xiaozhi-reconnect" onclick="settings.reconnectXiaozhi()" data-i18n="settings.xiaozhi_reconnect" class="px-4 py-2.5 bg-gray-100 text-gray-700 rounded-lg hover:bg-gray-200 transition-colors text-sm font-medium disabled:opacity-50 disabled:cursor-not-allowed">Reconnect</button>
+                                <button onclick="settings.clearXiaozhi()" data-i18n="settings.xiaozhi_clear" class="px-4 py-2.5 text-red-600 rounded-lg hover:bg-red-50 transition-colors text-sm font-medium sm:ml-auto">Clear</button>
+                            </div>
+                        </article>
                     </div>
+
+                    <!-- Danger zone -->
+                    <article class="rounded-xl border border-red-200 bg-red-50/50 p-5 md:p-6">
+                        <div class="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+                            <div class="flex items-start gap-3">
+                                <span class="w-10 h-10 rounded-lg bg-red-100 text-red-600 flex items-center justify-center flex-shrink-0">
+                                    <i class="ph ph-warning-circle text-xl" aria-hidden="true"></i>
+                                </span>
+                                <div>
+                                    <h3 data-i18n="settings.danger_zone" class="font-semibold text-red-700">Danger Zone</h3>
+                                    <p data-i18n="settings.restart_desc" class="text-sm text-gray-600 mt-1">Rebooting the gateway will temporarily drop all active BLE connections.</p>
+                                </div>
+                            </div>
+                            <button onclick="settings.restartGateway()" class="px-4 py-2.5 bg-white text-red-600 border border-red-200 rounded-lg hover:bg-red-100 transition-colors font-medium text-sm flex items-center justify-center flex-shrink-0">
+                                <i class="ph ph-power mr-2 text-lg" aria-hidden="true"></i> <span data-i18n="settings.restart">Restart Gateway</span>
+                            </button>
+                        </div>
+                    </article>
                 </div>
             </section>

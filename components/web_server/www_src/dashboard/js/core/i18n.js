@@ -4,7 +4,7 @@ const i18n = {
     translations: {
         en: {
             'settings.title': 'Gateway Settings',
-            'settings.subtitle': 'View system and network status.',
+            'settings.subtitle': 'Manage gateway status, access and external connections.',
             'settings.system_info': 'System Information',
             'settings.firmware_version': 'Firmware Version',
             'settings.uptime': 'Uptime',
@@ -15,7 +15,7 @@ const i18n = {
             'settings.mac_address': 'MAC Address',
             'settings.signal_strength': 'Signal Strength',
             'settings.mcp_access': 'MCP Access',
-            'settings.mcp_access_desc': 'Manage the Bearer token used by AI agents to access the MCP endpoint.',
+            'settings.mcp_access_desc': 'Manage the Bearer token used by AI agents.',
             'settings.mcp_no_token': 'No token configured. MCP endpoint is in dev mode (no auth).',
             'settings.mcp_token_set': 'Token set',
             'settings.mcp_generate': 'Generate Token',
@@ -68,7 +68,7 @@ const i18n = {
         },
         vi: {
             'settings.title': 'Cài đặt Gateway',
-            'settings.subtitle': 'Xem trạng thái hệ thống và mạng.',
+            'settings.subtitle': 'Quản lý trạng thái, quyền truy cập và kết nối ngoài.',
             'settings.system_info': 'Thông tin hệ thống',
             'settings.firmware_version': 'Phiên bản Firmware',
             'settings.uptime': 'Thời gian chạy',
@@ -79,7 +79,7 @@ const i18n = {
             'settings.mac_address': 'Địa chỉ MAC',
             'settings.signal_strength': 'Cường độ tín hiệu',
             'settings.mcp_access': 'Truy cập MCP',
-            'settings.mcp_access_desc': 'Quản lý Bearer token mà AI sử dụng để truy cập endpoint MCP.',
+            'settings.mcp_access_desc': 'Quản lý Bearer token mà AI sử dụng để truy cập MCP.',
             'settings.mcp_no_token': 'Chưa cấu hình token. MCP đang ở chế độ dev (không cần auth).',
             'settings.mcp_token_set': 'Đã cấu hình token',
             'settings.mcp_generate': 'Tạo Token',

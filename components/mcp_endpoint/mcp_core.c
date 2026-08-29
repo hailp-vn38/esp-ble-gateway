@@ -5,8 +5,11 @@
 
 #include "cJSON.h"
 #include "command_executor.h"
+#include "esp_log.h"
 
 #include "mcp_endpoint_internal.h"
+
+static const char *TAG = "mcp_core";
 
 typedef struct {
     cJSON *id;
@@ -42,15 +45,22 @@ static cJSON *duplicate_id(const cJSON *id)
 
 static esp_err_t send_envelope(const mcp_responder_t *responder,
                                cJSON *envelope,
-                               const mcp_response_meta_t *meta)
+                               const mcp_response_meta_t *meta,
+                               const char *diagnostic_method,
+                               size_t diagnostic_item_count)
 {
     if (envelope == NULL) return ESP_ERR_NO_MEM;
     char *json = cJSON_PrintUnformatted(envelope);
     cJSON_Delete(envelope);
     if (json == NULL) return ESP_ERR_NO_MEM;
+    size_t json_len = strlen(json);
+    if (diagnostic_method != NULL) {
+        ESP_LOGD(TAG, "MCP %s: tools=%u json=%u bytes", diagnostic_method,
+                 (unsigned)diagnostic_item_count, (unsigned)json_len);
+    }
     esp_err_t result = responder_alive(responder)
                            ? responder->send_json(responder->context, json,
-                                                  strlen(json), meta)
+                                                  json_len, meta)
                            : ESP_ERR_INVALID_STATE;
     cJSON_free(json);
     return result;
@@ -79,7 +89,26 @@ static esp_err_t send_result(const mcp_responder_t *responder, cJSON *result,
         cJSON_Delete(envelope);
         return ESP_ERR_NO_MEM;
     }
-    return send_envelope(responder, envelope, NULL);
+    return send_envelope(responder, envelope, NULL, NULL, 0);
+}
+
+static esp_err_t send_tools_list_result(const mcp_responder_t *responder,
+                                        cJSON *result, const cJSON *id)
+{
+    cJSON *tools = result != NULL
+                       ? cJSON_GetObjectItemCaseSensitive(result, "tools")
+                       : NULL;
+    size_t tool_count = cJSON_IsArray(tools)
+                            ? (size_t)cJSON_GetArraySize(tools)
+                            : 0;
+    cJSON *envelope = build_envelope(id);
+    if (envelope == NULL || result == NULL ||
+        !cJSON_AddItemToObject(envelope, "result", result)) {
+        cJSON_Delete(result);
+        cJSON_Delete(envelope);
+        return ESP_ERR_NO_MEM;
+    }
+    return send_envelope(responder, envelope, NULL, "tools/list", tool_count);
 }
 
 static esp_err_t send_error_detail(const mcp_responder_t *responder,
@@ -104,7 +133,7 @@ static esp_err_t send_error_detail(const mcp_responder_t *responder,
     }
     cJSON_AddItemToObject(envelope, "error", error);
     const mcp_response_meta_t meta = {.http_status = http_status};
-    return send_envelope(responder, envelope, &meta);
+    return send_envelope(responder, envelope, &meta, NULL, 0);
 }
 
 static esp_err_t send_error(const mcp_responder_t *responder, int code,
@@ -285,7 +314,7 @@ static esp_err_t route_request(const mcp_responder_t *responder, cJSON *root,
             cJSON_Delete(result);
             return send_none(responder);
         }
-        return send_result(responder, result, id);
+        return send_tools_list_result(responder, result, id);
     }
 
     if (strcmp(method, "tools/call") == 0) {

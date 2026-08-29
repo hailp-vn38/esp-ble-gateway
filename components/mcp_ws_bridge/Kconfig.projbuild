@@ -37,6 +37,38 @@ menu "External MCP WebSocket Bridge"
         default 32768
         depends on MCP_WS_BRIDGE
 
+    config MCP_WS_TX_FRAGMENT_SIZE
+        int "WebSocket TX fragment size"
+        range 512 4096
+        default 1536
+        depends on MCP_WS_BRIDGE
+        help
+            Fragment large MCP responses into bounded WebSocket frames while
+            preserving one JSON-RPC response as one WebSocket message.
+
+    config MCP_WS_PSRAM_TX_THRESHOLD
+        int "Prefer PSRAM for TX payloads above this size"
+        range 512 8192
+        default 1024
+        depends on MCP_WS_BRIDGE
+
+    config MCP_WS_RELOAD_COOLDOWN_MS
+        int "Manual reload cooldown milliseconds"
+        range 0 2000
+        default 250
+        depends on MCP_WS_BRIDGE
+        help
+            Delay reconnect after destroying the old client so its TLS,
+            TCP/IP, and task allocations can be released first.
+
+    config MCP_WS_MEMORY_DIAGNOSTICS
+        bool "Log bridge internal/DMA/PSRAM memory snapshots"
+        default n
+        depends on MCP_WS_BRIDGE
+        help
+            Development-only diagnostics around connect, destroy, READY, and
+            TX. Keep disabled in production to avoid heap queries on hot paths.
+
     config MCP_WS_EVENT_QUEUE_DEPTH
         int "Bridge event queue depth"
         range 4 32

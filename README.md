@@ -55,6 +55,17 @@ idf.py build
 idf.py -p <PORT> flash monitor
 ```
 
+Hoặc dùng script để tự kích hoạt đúng ESP-IDF environment, build và flash:
+
+```sh
+./build_flash.sh /dev/cu.usbmodem2101
+./build_flash.sh --port /dev/cu.usbmodem2101 --monitor
+./build_flash.sh --build-only
+```
+
+Chạy `./build_flash.sh --help` để xem tùy chọn port, baud, clean và các biến
+môi trường dùng để override đường dẫn ESP-IDF/Python environment.
+
 Nếu đổi target, cần kiểm tra lại giới hạn `CONFIG_BT_NIMBLE_MAX_CONNECTIONS`
 và dung lượng partition.
 
