@@ -25,13 +25,28 @@ menu "MCP Endpoint"
             tool may send (e.g. "toggle,set_power"). Empty denies all device
             commands. Gateway tools are not affected by this list.
 
+    config MCP_EXPOSE_FULL_CAPABILITY_TOOL
+        bool "Expose the full device capability tool"
+        default n
+        help
+            Adds the capability-oriented device control tool to tools/list.
+            Keep disabled unless the MCP client needs this broader surface.
+
+    config MCP_KEEP_GENERIC_DEVICE_COMMAND
+        bool "Expose the legacy generic device_command tool"
+        default n
+        help
+            Keeps the generic device_command tool for compatibility. Commands
+            remain restricted by MCP_DEVICE_COMMAND_ALLOWLIST.
+
     config MCP_COMPAT_2025
-        bool "Enable MCP 2025-11-25 initialize compatibility"
+        bool "Enable MCP 2024/2025 initialize compatibility"
         default y
         help
-            Accept MCP 2025-11-25 initialize/initialized flow and subsequent
-            tools/list and tools/call requests. The server does not create an
-            MCP-Session-Id and keeps no per-client protocol session state.
+            Accept MCP 2024-11-05 and 2025-11-25 initialize/initialized flows
+            and subsequent tools/list and tools/call requests. The server does
+            not create an MCP-Session-Id and keeps no per-client protocol
+            session state.
 
     config MCP_STRICT_ACCEPT_HEADER
         bool "Require both MCP Streamable HTTP Accept media types"

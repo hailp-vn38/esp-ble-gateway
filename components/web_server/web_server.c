@@ -12,8 +12,8 @@
 static const char *TAG = "web_server";
 
 // Route budget: assets 6 (dashboard + login + css + icons + font + favicon)
-// + auth API 4 + mcp-token API 3 + settings API 1 + device API 4 + command API 1 + capability API 2 + exposure API 2
-// + system API 3 + BLE API 3 = 29; headroom for future.
+// + auth API 4 + mcp-token API 3 + settings API 2 + device API 4 + command API 1 + capability API 2 + exposure API 2
+// + system API 3 + BLE API 3 = 30; headroom for future.
 #define WEB_GATEWAY_MAX_URI_HANDLERS 34
 #define WEB_GATEWAY_STACK_SIZE       12288
 

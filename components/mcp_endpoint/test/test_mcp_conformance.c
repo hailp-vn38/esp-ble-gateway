@@ -27,7 +27,9 @@ TEST_CASE("supported protocol version header enables the 2026 wire mode",
           "[mcp_conformance]")
 {
     mcp_setup();
-    io_reset("{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"tools/list\"}");
+    io_reset("{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"tools/list\"," 
+             "\"params\":{\"_meta\":{\"io.modelcontextprotocol/protocolVersion\":\"2026-07-28\"," 
+             "\"io.modelcontextprotocol/clientCapabilities\":{}}}}");
     io_set_header("MCP-Protocol-Version", "2026-07-28");
     io_set_header("Mcp-Method", "tools/list");
     install_transport();
@@ -67,7 +69,7 @@ TEST_CASE("unsupported protocol version is -32022 with HTTP 400",
           "[mcp_conformance]")
 {
     mcp_setup();
-    io_reset("{}");
+    io_reset("{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"tools/list\"}");
     io_set_header("MCP-Protocol-Version", "2025-06-18");
     install_transport();
     memset(&g_req, 0, sizeof(g_req));
@@ -90,24 +92,28 @@ TEST_CASE("unsupported protocol version is -32022 with HTTP 400",
     cJSON_Delete(response);
 }
 
-TEST_CASE("version header missing rejects when compat disabled",
+TEST_CASE("version header missing follows configured compatibility mode",
           "[mcp_conformance]")
 {
     mcp_setup();
-    // No version header -> should be rejected as unsupported
+    // A versionless request uses the legacy path only when compatibility is
+    // enabled; otherwise it is rejected as an unsupported protocol version.
     esp_err_t outcome = run_request(
         "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"tools/list\"}");
     TEST_ASSERT_EQUAL_INT(0, outcome);
 
-    TEST_ASSERT_EQUAL_STRING("400 Bad Request", g_io.status_line);
     cJSON *response = io_response_json();
+#if CONFIG_MCP_COMPAT_2025
+    TEST_ASSERT_NOT_NULL(cJSON_GetObjectItemCaseSensitive(response, "result"));
+    TEST_ASSERT_NULL(cJSON_GetObjectItemCaseSensitive(response, "error"));
+#else
+    TEST_ASSERT_EQUAL_STRING("400 Bad Request", g_io.status_line);
     cJSON *error = cJSON_GetObjectItemCaseSensitive(response, "error");
     TEST_ASSERT_NOT_NULL(error);
     int code = (int)cJSON_GetNumberValue(
         cJSON_GetObjectItemCaseSensitive(error, "code"));
-    // Without compat: -32022 UnsupportedProtocolVersion
-    // With compat: 2025 path may be used
-    TEST_ASSERT_TRUE(code == -32022 || code == -32020);
+    TEST_ASSERT_EQUAL_INT(-32022, code);
+#endif
     cJSON_Delete(response);
 }
 
@@ -391,7 +397,9 @@ TEST_CASE("unknown method returns HTTP 404 and -32601",
           "[mcp_conformance]")
 {
     mcp_setup();
-    io_reset("{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"nonexistent/method\"}");
+    io_reset("{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"nonexistent/method\"," 
+             "\"params\":{\"_meta\":{\"io.modelcontextprotocol/protocolVersion\":\"2026-07-28\"," 
+             "\"io.modelcontextprotocol/clientCapabilities\":{}}}}");
     io_set_header("MCP-Protocol-Version", "2026-07-28");
     io_set_header("Mcp-Method", "nonexistent/method");
     install_transport();

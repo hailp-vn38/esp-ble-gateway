@@ -9,7 +9,7 @@
 ## Điều kiện tiên quyết
 
 - Hardware: ESP32-S3 + thiết bị peripheral quảng bá service `0xABF0` (bắt buộc cho test BLE/ACK).
-- Env: `idf.py` từ `/Users/lamphuchai/.espressif/v5.4.4/esp-idf`,
+- Env: `idf.py` từ `/Users/lamphuchai/.espressif/v6.1.0/esp-idf`,
   `git submodule update --init --recursive`.
 - Nhớ: project `test/` phải `set-target esp32s3` + build riêng; `MINIMAL_BUILD` →
   module mới phải nằm trong chuỗi `REQUIRES`.

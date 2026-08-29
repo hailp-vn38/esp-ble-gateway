@@ -1,0 +1,54 @@
+menu "External MCP WebSocket Bridge"
+
+    config MCP_WS_BRIDGE
+        bool "Enable external MCP WebSocket bridge"
+        default y
+        help
+            Connect the gateway to an external MCP WebSocket broker. Runtime
+            connection remains disabled until an endpoint is configured and
+            enabled through Settings.
+
+    config MCP_WS_ALLOW_INSECURE
+        bool "Allow plaintext ws:// endpoints"
+        default n
+        depends on MCP_WS_BRIDGE
+        help
+            Development/LAN only. Production endpoints should use wss://.
+
+    config MCP_WS_MAX_RX_MESSAGE
+        int "Maximum received MCP message bytes"
+        range 1024 32768
+        default 8192
+        depends on MCP_WS_BRIDGE
+
+    config MCP_WS_MAX_TX_MESSAGE
+        int "Maximum transmitted MCP message bytes"
+        range 4096 65536
+        default 32768
+        depends on MCP_WS_BRIDGE
+
+    config MCP_WS_EVENT_QUEUE_DEPTH
+        int "Bridge event queue depth"
+        range 4 32
+        default 8
+        depends on MCP_WS_BRIDGE
+
+    config MCP_WS_TASK_STACK
+        int "Bridge worker stack bytes"
+        range 4096 16384
+        default 8192
+        depends on MCP_WS_BRIDGE
+
+    config MCP_WS_MAX_BACKOFF_MS
+        int "Maximum reconnect backoff milliseconds"
+        range 1000 300000
+        default 60000
+        depends on MCP_WS_BRIDGE
+
+    config MCP_WS_HANDSHAKE_TIMEOUT_MS
+        int "MCP handshake timeout milliseconds"
+        range 1000 60000
+        default 10000
+        depends on MCP_WS_BRIDGE
+
+endmenu

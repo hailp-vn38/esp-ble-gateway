@@ -2,6 +2,7 @@
 const settings = {
     authState: { enabled: false, configured: false, username: '' },
     mcpState: { configured: false, preview: '' },
+    xiaozhiState: { enabled: false, endpoint_configured: false, state: 'disabled' },
 
     formatUptime(milliseconds) {
         const seconds = Math.floor(milliseconds / 1000);
@@ -41,8 +42,10 @@ const settings = {
 
             this.authState = data.auth || this.authState;
             this.mcpState = data.mcp || this.mcpState;
+            this.xiaozhiState = data.xiaozhi || this.xiaozhiState;
             this.renderAuthStatus();
             this.renderMcpTokenStatus();
+            this.renderXiaozhiStatus();
         } catch(e) {
             document.getElementById('sidebar-status-text').innerText = 'Gateway Offline';
             document.getElementById('sidebar-status-dot').className =
@@ -52,6 +55,8 @@ const settings = {
                 `<p class="text-sm text-red-500">${i18n.t('settings.auth_load_failed')}</p>`;
             document.getElementById('mcp-token-status').innerHTML =
                 '<p class="text-sm text-red-500">Failed to load token status</p>';
+            document.getElementById('xiaozhi-state').textContent =
+                i18n.t('settings.xiaozhi_load_failed');
         }
     },
 
@@ -147,6 +152,81 @@ const settings = {
         input.select();
         navigator.clipboard.writeText(input.value);
         ui.showToast(i18n.t('settings.mcp_token_copied'), 'success');
+    },
+
+    // --- Xiaozhi Direct MCP Bridge ---
+    renderXiaozhiStatus() {
+        const state = this.xiaozhiState || {};
+        const enabled = document.getElementById('xiaozhi-enabled');
+        const stateEl = document.getElementById('xiaozhi-state');
+        const endpointEl = document.getElementById('xiaozhi-endpoint-display');
+        const errorRow = document.getElementById('xiaozhi-error-row');
+        const errorEl = document.getElementById('xiaozhi-last-error');
+        if (!enabled || !stateEl || !endpointEl) return;
+
+        enabled.checked = Boolean(state.enabled);
+        stateEl.textContent = i18n.t(`settings.xiaozhi_state_${state.state || 'disabled'}`);
+        stateEl.className = state.state === 'connected'
+            ? 'font-medium text-green-600'
+            : (state.state === 'error' ? 'font-medium text-red-600' : 'font-medium text-amber-600');
+        endpointEl.textContent = state.endpoint_display ||
+            i18n.t('settings.xiaozhi_not_configured');
+        endpointEl.title = state.endpoint_display || '';
+
+        const errorParts = [];
+        if (state.last_error) errorParts.push(`ESP ${state.last_error}`);
+        if (state.last_http_status) errorParts.push(`HTTP ${state.last_http_status}`);
+        if (state.last_ws_close_code) errorParts.push(`WS ${state.last_ws_close_code}`);
+        errorRow.classList.toggle('hidden', errorParts.length === 0);
+        errorEl.textContent = errorParts.join(' · ');
+    },
+
+    async saveXiaozhi() {
+        const enabled = document.getElementById('xiaozhi-enabled').checked;
+        const endpointInput = document.getElementById('xiaozhi-endpoint');
+        const endpoint = endpointInput.value.trim();
+        if (enabled && !endpoint && !this.xiaozhiState.endpoint_configured) {
+            ui.showToast(i18n.t('settings.xiaozhi_endpoint_required'), 'error');
+            return;
+        }
+        const payload = { enabled };
+        if (endpoint) payload.endpoint = endpoint;
+        const saveButton = document.getElementById('xiaozhi-save');
+        saveButton.disabled = true;
+        try {
+            const result = await api.request('/api/settings/xiaozhi', {
+                method: 'PUT',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify(payload)
+            });
+            endpointInput.value = '';
+            this.xiaozhiState = result.xiaozhi || this.xiaozhiState;
+            this.renderXiaozhiStatus();
+            ui.showToast(i18n.t('settings.xiaozhi_saved'), 'success');
+        } catch (e) {
+            ui.showToast(e.message || i18n.t('settings.xiaozhi_save_failed'), 'error');
+        } finally {
+            saveButton.disabled = false;
+        }
+    },
+
+    async clearXiaozhi() {
+        if (!confirm(i18n.t('settings.xiaozhi_clear_confirm'))) return;
+        try {
+            const result = await api.request('/api/settings/xiaozhi', {
+                method: 'PUT',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({ enabled: false, clear_endpoint: true })
+            });
+            document.getElementById('xiaozhi-endpoint').value = '';
+            this.xiaozhiState = result.xiaozhi || {
+                enabled: false, endpoint_configured: false, state: 'disabled'
+            };
+            this.renderXiaozhiStatus();
+            ui.showToast(i18n.t('settings.xiaozhi_cleared'), 'success');
+        } catch (e) {
+            ui.showToast(e.message || i18n.t('settings.xiaozhi_save_failed'), 'error');
+        }
     },
 
     renderAuthStatus() {

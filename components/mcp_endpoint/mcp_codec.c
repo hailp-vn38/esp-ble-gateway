@@ -3,8 +3,6 @@
 #include <string.h>
 
 #include "cJSON.h"
-#include "esp_http_server.h"
-
 #include "mcp_endpoint_internal.h"
 
 // ---------------------------------------------------------------------------
@@ -83,15 +81,6 @@ char *mcp_codec_decode_name(const char *raw_name)
 }
 
 // ---------------------------------------------------------------------------
-// Header helpers
-// ---------------------------------------------------------------------------
-
-static char *request_header(httpd_req_t *req, const char *name)
-{
-    return mcp_transport_get()->get_header(req, name);
-}
-
-// ---------------------------------------------------------------------------
 // Protocol-era detection (§7.2 — body-aware, no silent fallback)
 // ---------------------------------------------------------------------------
 
@@ -127,7 +116,7 @@ static bool has_mcp_name_header(const mcp_request_context_t *ctx)
     return ctx->has_name_header;
 }
 
-int mcp_protocol_detect(httpd_req_t *req, const cJSON *root,
+int mcp_protocol_detect(const cJSON *root, const mcp_wire_context_t *wire,
                         mcp_request_context_t *ctx,
                         mcp_rpc_error_detail_t *error)
 {
@@ -139,35 +128,29 @@ int mcp_protocol_detect(httpd_req_t *req, const cJSON *root,
             ? method_item->valuestring
             : NULL;
 
-    // Read optional headers
-    char *version_header = request_header(req, "MCP-Protocol-Version");
-    char *method_header = request_header(req, "Mcp-Method");
-    char *name_header   = request_header(req, "Mcp-Name");
-
-    if (version_header != NULL) {
-        strlcpy(ctx->protocol_version, version_header,
+    if (wire->has_protocol_version) {
+        strlcpy(ctx->protocol_version, wire->protocol_version,
                 sizeof(ctx->protocol_version));
         ctx->has_protocol_header = true;
     }
-    if (method_header != NULL) {
-        strlcpy(ctx->mcp_method, method_header, sizeof(ctx->mcp_method));
+    if (wire->has_method_metadata) {
+        strlcpy(ctx->mcp_method, wire->method_metadata,
+                sizeof(ctx->mcp_method));
         ctx->has_method_header = true;
     }
-    if (name_header != NULL) {
+    if (wire->has_name_metadata) {
         // Decode potentially Base64-encoded name
-        char *decoded = mcp_codec_decode_name(name_header);
+        char *decoded = mcp_codec_decode_name(wire->name_metadata);
         if (decoded != NULL) {
             strlcpy(ctx->mcp_name, decoded, sizeof(ctx->mcp_name));
             free(decoded);
         } else {
             // Decode failure — store raw for error reporting
-            strlcpy(ctx->mcp_name, name_header, sizeof(ctx->mcp_name));
+            strlcpy(ctx->mcp_name, wire->name_metadata,
+                    sizeof(ctx->mcp_name));
         }
         ctx->has_name_header = true;
-        free(name_header);
     }
-    free(method_header);
-    free(version_header);
 
     // Notification detection: no "id" field
     const cJSON *id = cJSON_GetObjectItemCaseSensitive(root, "id");
@@ -175,23 +158,43 @@ int mcp_protocol_detect(httpd_req_t *req, const cJSON *root,
 
     // --- Detection rules (§7.2) ---
 
-    // Rule 1: method == "initialize" -> 2025 compat entry point
+    // Rule 1: initialize declares the negotiated legacy protocol in params.
     if (method_str != NULL && strcmp(method_str, "initialize") == 0) {
-    if (!CONFIG_MCP_COMPAT_2025) {
-        error->rpc_code = -32601;
-        error->message = "Method not found";
-        error->http_status = "404 Not Found";
-        return -32601;
-    }
-    ctx->era = MCP_ERA_2025_11_25;
-    ctx->initialize_request = true;
-    return 0;
+        if (!CONFIG_MCP_COMPAT_2025) {
+            error->rpc_code = -32601;
+            error->message = "Method not found";
+            error->http_status = "404 Not Found";
+            return -32601;
+        }
+        const cJSON *params = cJSON_GetObjectItemCaseSensitive(root, "params");
+        const char *requested = cJSON_GetStringValue(
+            params != NULL
+                ? cJSON_GetObjectItemCaseSensitive(params, "protocolVersion")
+                : NULL);
+        ctx->era = requested != NULL &&
+                           strcmp(requested, MCP_PROTOCOL_VERSION_2024) == 0
+                       ? MCP_ERA_2024_11_05
+                       : MCP_ERA_2025_11_25;
+        ctx->initialize_request = true;
+        return 0;
     }
 
     // Rule 2: explicit MCP-Protocol-Version header present
     if (ctx->has_protocol_header) {
         if (strcmp(ctx->protocol_version, MCP_PROTOCOL_VERSION_2026) == 0) {
             ctx->era = MCP_ERA_2026_07_28;
+        } else if (strcmp(ctx->protocol_version, MCP_PROTOCOL_VERSION_2024) ==
+                   0) {
+            if (!CONFIG_MCP_COMPAT_2025) {
+                cJSON *data = mcp_protocol_build_unsupported_version_data(
+                    MCP_PROTOCOL_VERSION_2024);
+                error->rpc_code = MCP_ERR_UNSUPPORTED_VERSION;
+                error->message = "Unsupported protocol version";
+                error->http_status = "400 Bad Request";
+                error->data = data;
+                return MCP_ERR_UNSUPPORTED_VERSION;
+            }
+            ctx->era = MCP_ERA_2024_11_05;
         } else if (strcmp(ctx->protocol_version, MCP_PROTOCOL_VERSION_2025) ==
                    0) {
             if (!CONFIG_MCP_COMPAT_2025) {
@@ -385,7 +388,17 @@ cJSON *mcp_protocol_build_initialize_result(const cJSON *params,
         return NULL;
     }
 
-    // Build InitializeResult — always counter-offer 2025-11-25 (§8.1)
+    const char *requested_protocol = cJSON_GetStringValue(
+        cJSON_GetObjectItemCaseSensitive(params, "protocolVersion"));
+
+    // Exact support for the observed Xiaozhi version; preserve the existing
+    // 2025 compatibility counter-offer for unknown legacy proposals.
+    const char *selected_protocol =
+        requested_protocol != NULL &&
+                strcmp(requested_protocol, MCP_PROTOCOL_VERSION_2024) == 0
+            ? MCP_PROTOCOL_VERSION_2024
+            : MCP_PROTOCOL_VERSION_2025;
+
     cJSON *result = cJSON_CreateObject();
     if (result == NULL) {
         error->rpc_code = -32603;
@@ -393,7 +406,7 @@ cJSON *mcp_protocol_build_initialize_result(const cJSON *params,
         return NULL;
     }
 
-    cJSON_AddStringToObject(result, "protocolVersion", MCP_PROTOCOL_VERSION_2025);
+    cJSON_AddStringToObject(result, "protocolVersion", selected_protocol);
 
     cJSON *capabilities = cJSON_CreateObject();
     cJSON *tools = cJSON_CreateObject();
@@ -443,6 +456,8 @@ cJSON *mcp_protocol_build_unsupported_version_data(const char *requested)
     }
     cJSON_AddItemToArray(supported, cJSON_CreateString(MCP_PROTOCOL_VERSION_2026));
     if (CONFIG_MCP_COMPAT_2025) {
+        cJSON_AddItemToArray(supported,
+                             cJSON_CreateString(MCP_PROTOCOL_VERSION_2024));
         cJSON_AddItemToArray(supported,
                              cJSON_CreateString(MCP_PROTOCOL_VERSION_2025));
     }

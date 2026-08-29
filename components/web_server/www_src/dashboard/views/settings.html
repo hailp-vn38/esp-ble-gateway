@@ -5,7 +5,7 @@
                         <h2 data-i18n="settings.title" class="text-2xl font-bold text-gray-900">Gateway Settings</h2>
                         <p data-i18n="settings.subtitle" class="text-gray-500 text-sm mt-1">View system and network status.</p>
                     </div>
-                    <select id="lang-selector" onchange="i18n.setLang(this.value); settings.renderAuthStatus(); settings.renderMcpTokenStatus();" class="px-3 py-2 border border-gray-300 rounded-lg text-sm bg-white">
+                    <select id="lang-selector" onchange="i18n.setLang(this.value); settings.renderAuthStatus(); settings.renderMcpTokenStatus(); settings.renderXiaozhiStatus();" class="px-3 py-2 border border-gray-300 rounded-lg text-sm bg-white">
                         <option value="en">English</option>
                         <option value="vi">Tiếng Việt</option>
                     </select>
@@ -22,19 +22,21 @@
                             <div id="auth-status" class="mb-4">
                                 <p class="text-sm text-gray-500">Loading...</p>
                             </div>
-                            <div id="auth-setup" class="hidden">
-                                <label data-i18n="settings.username" class="block text-sm text-gray-500 mb-1">Username</label>
-                                <input id="auth-username" type="text" class="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm mb-3" placeholder="admin">
-                                <label data-i18n="settings.password" class="block text-sm text-gray-500 mb-1">Password</label>
-                                <input id="auth-password" type="password" class="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm mb-3" placeholder="Min 8 characters">
-                            </div>
-                            <div id="auth-enable-section" class="hidden">
-                                <label data-i18n="settings.current_password" class="block text-sm text-gray-500 mb-1">Current Password</label>
-                                <input id="auth-current-password" type="password" class="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm mb-3">
-                            </div>
-                            <button id="auth-toggle-btn" onclick="settings.toggleAuth()" class="w-full px-4 py-2.5 bg-brand-600 text-white rounded-lg hover:bg-brand-700 transition-colors font-medium text-sm flex items-center justify-center" disabled>
-                                <i class="ph ph-shield mr-2 text-lg"></i> <span id="auth-toggle-text">Enable</span>
-                            </button>
+                            <form id="auth-form" onsubmit="return false;">
+                                <div id="auth-setup" class="hidden">
+                                    <label data-i18n="settings.username" class="block text-sm text-gray-500 mb-1">Username</label>
+                                    <input id="auth-username" type="text" class="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm mb-3" placeholder="admin">
+                                    <label data-i18n="settings.password" class="block text-sm text-gray-500 mb-1">Password</label>
+                                    <input id="auth-password" type="password" class="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm mb-3" placeholder="Min 8 characters">
+                                </div>
+                                <div id="auth-enable-section" class="hidden">
+                                    <label data-i18n="settings.current_password" class="block text-sm text-gray-500 mb-1">Current Password</label>
+                                    <input id="auth-current-password" type="password" class="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm mb-3">
+                                </div>
+                                <button id="auth-toggle-btn" onclick="settings.toggleAuth()" class="w-full px-4 py-2.5 bg-brand-600 text-white rounded-lg hover:bg-brand-700 transition-colors font-medium text-sm flex items-center justify-center" disabled>
+                                    <i class="ph ph-shield mr-2 text-lg"></i> <span id="auth-toggle-text">Enable</span>
+                                </button>
+                            </form>
                         </div>
 
                         <!-- System Info -->
@@ -117,6 +119,40 @@
                                         <i class="ph ph-copy"></i>
                                     </button>
                                 </div>
+                            </div>
+                        </div>
+
+                        <!-- Xiaozhi Direct MCP Bridge -->
+                        <div class="bg-white rounded-xl border border-gray-200 p-6 shadow-sm">
+                            <h3 data-i18n="settings.xiaozhi_bridge" class="font-semibold text-gray-900 mb-4 flex items-center border-b border-gray-100 pb-3">
+                                <i class="ph ph-cloud-arrow-up text-brand-600 text-xl mr-2"></i> Xiaozhi Direct MCP Bridge
+                            </h3>
+                            <p data-i18n="settings.xiaozhi_desc" class="text-xs text-gray-500 mb-3">Connect this gateway directly to a Xiaozhi MCP WebSocket endpoint.</p>
+                            <div class="flex justify-between items-center mb-3">
+                                <span data-i18n="settings.xiaozhi_enabled" class="text-sm text-gray-600">Enable bridge</span>
+                                <input id="xiaozhi-enabled" type="checkbox" class="h-4 w-4 rounded border-gray-300 text-brand-600">
+                            </div>
+                            <div class="mb-3 rounded-lg bg-gray-50 px-3 py-2">
+                                <div class="flex justify-between gap-3 text-xs">
+                                    <span data-i18n="settings.xiaozhi_state" class="text-gray-500">State</span>
+                                    <span id="xiaozhi-state" class="font-medium text-gray-700">disabled</span>
+                                </div>
+                                <div class="flex justify-between gap-3 text-xs mt-1">
+                                    <span data-i18n="settings.xiaozhi_endpoint_saved" class="text-gray-500">Saved endpoint</span>
+                                    <span id="xiaozhi-endpoint-display" class="font-mono text-gray-700 truncate max-w-[16rem]">—</span>
+                                </div>
+                                <div id="xiaozhi-error-row" class="hidden flex justify-between gap-3 text-xs mt-1">
+                                    <span data-i18n="settings.xiaozhi_last_error" class="text-gray-500">Last error</span>
+                                    <span id="xiaozhi-last-error" class="font-mono text-red-600"></span>
+                                </div>
+                            </div>
+                            <label data-i18n="settings.xiaozhi_endpoint" class="block text-sm text-gray-500 mb-1">WebSocket endpoint</label>
+                            <input id="xiaozhi-endpoint" type="password" autocomplete="new-password" class="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm font-mono mb-2" placeholder="wss://api.xiaozhi.me/mcp/?token=…">
+                            <p data-i18n="settings.xiaozhi_endpoint_hint" class="text-xs text-gray-500 mb-2">Leave blank to keep the saved endpoint.</p>
+                            <p data-i18n="settings.xiaozhi_secret_warning" class="text-xs text-amber-600 mb-3">The endpoint contains a credential and is stored in NVS as plaintext. Protect physical access to the device.</p>
+                            <div class="flex gap-2">
+                                <button id="xiaozhi-save" onclick="settings.saveXiaozhi()" data-i18n="settings.xiaozhi_save" class="px-3 py-1.5 bg-brand-600 text-white rounded-lg hover:bg-brand-700 transition-colors text-xs font-medium">Save &amp; reconnect</button>
+                                <button onclick="settings.clearXiaozhi()" data-i18n="settings.xiaozhi_clear" class="px-3 py-1.5 bg-red-50 text-red-600 rounded-lg hover:bg-red-100 transition-colors text-xs font-medium">Clear</button>
                             </div>
                         </div>
                     </div>

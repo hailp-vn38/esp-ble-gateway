@@ -14,6 +14,7 @@
 #include "gateway_ota_validate.h"
 #include "mcp_endpoint.h"
 #include "mcp_tool_exposure.h"
+#include "mcp_ws_bridge.h"
 #include "web_server.h"
 #include "wifi_prov.h"
 
@@ -202,6 +203,15 @@ void app_main(void)
         }
     } else {
         ESP_LOGE(TAG, "Web server failed to start, /mcp endpoint not registered");
+    }
+
+    esp_err_t bridge_result = mcp_ws_bridge_init();
+    if (bridge_result == ESP_OK) {
+        bridge_result = mcp_ws_bridge_start();
+    }
+    if (bridge_result != ESP_OK) {
+        ESP_LOGW(TAG, "External MCP bridge unavailable: %s",
+                 esp_err_to_name(bridge_result));
     }
 
     ESP_LOGI(TAG, "ESP32 BLE Gateway started (Central + Web UI + JSON-RPC)");

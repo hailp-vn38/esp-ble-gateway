@@ -52,7 +52,7 @@ Response được chia thành bốn nhóm ngắn gọn:
   "success": true,
   "system": {
     "firmware": "1.0.0",
-    "idf": "v5.4.4",
+    "idf": "v6.1.0",
     "uptime_ms": 123456,
     "free_heap": 180000
   },

@@ -1,0 +1,43 @@
+
+  Component                  PASS  FAIL  Total  Status
+  ───────────────────────────────────────────────────────
+  ble_central                 215     0    215  [32mALL PASS[0m
+  board_io                    576     0    576  [32mALL PASS[0m
+  cbor_codec                   54     0     54  [32mALL PASS[0m
+  command_dispatcher          279     0    279  [32mALL PASS[0m
+  command_executor             36     0     36  [32mALL PASS[0m
+  device_capabilities         171     0    171  [32mALL PASS[0m
+  device_store                 90     0     90  [32mALL PASS[0m
+  mcp_endpoint                419    16    435  [31m16 FAILED[0m
+  ───────────────────────────────────────────────────────
+  [31mTOTAL                      1840    16   1856[0m
+
+  [31mUnity summary missing: test suite did not finish.[0m
+  [31mFatal runtime errors:[0m
+    assert failed: block_trim_free tlsf_control_functions.h:548 (block_is_free(block) && "block must be free")
+    assert failed: block_trim_free tlsf_control_functions.h:548 (block_is_free(block) && "block must be free")
+    assert failed: block_trim_free tlsf_control_functions.h:548 (block_is_free(block) && "block must be free")
+    assert failed: block_trim_free tlsf_control_functions.h:548 (block_is_free(block) && "block must be free")
+    assert failed: block_trim_free tlsf_control_functions.h:548 (block_is_free(block) && "block must be free")
+    assert failed: block_trim_free tlsf_control_functions.h:548 (block_is_free(block) && "block must be free")
+    assert failed: block_trim_free tlsf_control_functions.h:548 (block_is_free(block) && "block must be free")
+    assert failed: block_trim_free tlsf_control_functions.h:548 (block_is_free(block) && "block must be free")
+
+  [31mFailed tests:[0m
+    line 494: allowlisted device command executes through the dispatcher:Function [mcp_endpoint].  Expected NULL
+    line 184: queue full answers 503 without dropping the socket: Expected 0 Was 1. Function [mcp_stress]
+    line 494: allowlisted device command executes through the dispatcher:Function [mcp_endpoint].  Expected NULL
+    line 184: queue full answers 503 without dropping the socket: Expected 0 Was 1. Function [mcp_stress]
+    line 494: allowlisted device command executes through the dispatcher:Function [mcp_endpoint].  Expected NULL
+    line 184: queue full answers 503 without dropping the socket: Expected 0 Was 1. Function [mcp_stress]
+    line 494: allowlisted device command executes through the dispatcher:Function [mcp_endpoint].  Expected NULL
+    line 184: queue full answers 503 without dropping the socket: Expected 0 Was 1. Function [mcp_stress]
+    line 494: allowlisted device command executes through the dispatcher:Function [mcp_endpoint].  Expected NULL
+    line 184: queue full answers 503 without dropping the socket: Expected 0 Was 1. Function [mcp_stress]
+    line 494: allowlisted device command executes through the dispatcher:Function [mcp_endpoint].  Expected NULL
+    line 184: queue full answers 503 without dropping the socket: Expected 0 Was 1. Function [mcp_stress]
+    line 494: allowlisted device command executes through the dispatcher:Function [mcp_endpoint].  Expected NULL
+    line 184: queue full answers 503 without dropping the socket: Expected 0 Was 1. Function [mcp_stress]
+    line 494: allowlisted device command executes through the dispatcher:Function [mcp_endpoint].  Expected NULL
+    line 184: queue full answers 503 without dropping the socket: Expected 0 Was 1. Function [mcp_stress]
+

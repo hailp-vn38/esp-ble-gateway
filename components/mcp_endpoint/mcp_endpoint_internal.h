@@ -15,11 +15,13 @@
 #include "device_store.h"
 #include "device_capabilities.h"
 #include "mcp_tool_exposure.h"
+#include "mcp_core.h"
 
 // ---------------------------------------------------------------------------
 // Protocol constants
 // ---------------------------------------------------------------------------
 
+#define MCP_PROTOCOL_VERSION_2024  "2024-11-05"
 #define MCP_PROTOCOL_VERSION_2026  "2026-07-28"
 #define MCP_PROTOCOL_VERSION_2025  "2025-11-25"
 #define MCP_SERVER_NAME            "esp32-ble-gateway"
@@ -70,6 +72,7 @@
 
 typedef enum {
     MCP_ERA_UNKNOWN = 0,
+    MCP_ERA_2024_11_05,
     MCP_ERA_2025_11_25,
     MCP_ERA_2026_07_28,
 } mcp_protocol_era_t;
@@ -169,9 +172,9 @@ esp_err_t mcp_http_send_plain_status(httpd_req_t *req, const char *status,
 // Protocol detection (mcp_codec.c)
 // ---------------------------------------------------------------------------
 
-// Detect protocol era from HTTP headers + parsed JSON body.
+// Detect protocol era from transport-neutral wire metadata + parsed JSON body.
 // Returns 0 on success, JSON-RPC error code on failure.
-int mcp_protocol_detect(httpd_req_t *req, const cJSON *root,
+int mcp_protocol_detect(const cJSON *root, const mcp_wire_context_t *wire,
                         mcp_request_context_t *ctx,
                         mcp_rpc_error_detail_t *error);
 

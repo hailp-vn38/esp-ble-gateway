@@ -79,7 +79,7 @@ idf_component_register(
     REQUIRES esp_http_server cbor_codec command_dispatcher command_executor
              device_store gateway_status wifi_provisioning
              ble_central device_capabilities mcp_tool_exposure
-             web_auth
+             web_auth mcp_ws_bridge
              espressif__cjson esp_system esp_timer freertos
              esp_wifi esp_app_format nvs_flash
     EMBED_FILES

@@ -1,5 +1,6 @@
 idf_component_register(
     SRCS "mcp_endpoint.c"
+         "mcp_core.c"
          "mcp_rpc.c"
          "mcp_tools.c"
          "mcp_registry.c"

@@ -64,6 +64,13 @@ CONFIG_ESP_WIFI_SOFTAP_SUPPORT=y
 
 # ==== HTTP server ====
 CONFIG_HTTPD_WS_SUPPORT=n
+CONFIG_WS_TRANSPORT=y
+CONFIG_MBEDTLS_CERTIFICATE_BUNDLE=y
+CONFIG_MBEDTLS_CERTIFICATE_BUNDLE_DEFAULT_FULL=y
+# mbedTLS I/O buffers go to PSRAM — internal RAM (BLE + web server) can't
+# provide a contiguous ~16 KB block for the TLS context (mbedtls_ssl_setup
+# fails with -0x008D = PSA_ERROR_INSUFFICIENT_MEMORY).
+CONFIG_MBEDTLS_EXTERNAL_MEM_ALLOC=y
 
 # ==== MCP endpoint ====
 CONFIG_MCP_HOST_ALLOWLIST="gateway.local,192.168.4.1,192.168.1.114"

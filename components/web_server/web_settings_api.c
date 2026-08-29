@@ -1,14 +1,62 @@
 #include "web_modules.h"
 
+#include <string.h>
+
 #include "cJSON.h"
 #include "esp_log.h"
 #include "gateway_status.h"
+#include "mcp_ws_bridge.h"
 
 #include "web_auth.h"
 #include "web_auth_http.h"
 #include "web_http.h"
 
 static const char *TAG = "web_settings_api";
+
+static void zeroize_endpoint_json(cJSON *endpoint_item, char *body,
+                                  size_t body_size)
+{
+    if (cJSON_IsString(endpoint_item) && endpoint_item->valuestring != NULL) {
+        memset(endpoint_item->valuestring, 0, strlen(endpoint_item->valuestring));
+    }
+    memset(body, 0, body_size);
+}
+
+static void add_xiaozhi_status(cJSON *response)
+{
+    mcp_ws_public_config_t config = {0};
+    mcp_ws_status_t status = {0};
+    esp_err_t config_result = mcp_ws_bridge_config_get_public(&config);
+    esp_err_t status_result = mcp_ws_bridge_get_status(&status);
+    cJSON *xiaozhi = cJSON_AddObjectToObject(response, "xiaozhi");
+    cJSON_AddBoolToObject(xiaozhi, "enabled",
+                          config_result == ESP_OK && config.enabled);
+    cJSON_AddBoolToObject(xiaozhi, "endpoint_configured",
+                          config_result == ESP_OK && config.endpoint_configured);
+    if (config_result == ESP_OK && config.endpoint_display[0] != '\0') {
+        cJSON_AddStringToObject(xiaozhi, "endpoint_display",
+                                config.endpoint_display);
+    }
+    cJSON_AddStringToObject(
+        xiaozhi, "state",
+        status_result == ESP_OK ? mcp_ws_bridge_state_name(status.state)
+                                : "unavailable");
+    cJSON_AddNumberToObject(xiaozhi, "retry_count",
+                            status_result == ESP_OK ? status.retry_count : 0);
+    cJSON_AddNumberToObject(xiaozhi, "last_error",
+                            status_result == ESP_OK ? status.last_error : 0);
+    cJSON_AddNumberToObject(
+        xiaozhi, "last_http_status",
+        status_result == ESP_OK ? status.last_http_status : 0);
+    cJSON_AddNumberToObject(
+        xiaozhi, "last_ws_close_code",
+        status_result == ESP_OK ? status.last_ws_close_code : 0);
+    if (status_result == ESP_OK &&
+        status.negotiated_protocol_version[0] != '\0') {
+        cJSON_AddStringToObject(xiaozhi, "protocol_version",
+                                status.negotiated_protocol_version);
+    }
+}
 
 static esp_err_t settings_get_handler(httpd_req_t *request)
 {
@@ -78,6 +126,76 @@ static esp_err_t settings_get_handler(httpd_req_t *request)
         cJSON_AddStringToObject(mcp, "preview", mcp_token_preview);
     }
 
+    add_xiaozhi_status(response);
+
+    return web_send_json(request, response);
+}
+
+static esp_err_t xiaozhi_put_handler(httpd_req_t *request)
+{
+    web_auth_result_t auth = web_auth_require_request(request);
+    if (auth != WEB_AUTH_OK) {
+        return web_send_api_error_code(request, "401 Unauthorized",
+                                       "Authentication required",
+                                       "auth_required");
+    }
+
+    char body[MCP_WS_ENDPOINT_MAX_LEN + 160];
+    web_body_status_t body_status;
+    cJSON *json = web_parse_request_json(request, body, sizeof(body),
+                                         &body_status);
+    if (json == NULL) return web_send_body_error(request, body_status);
+
+    const cJSON *enabled_item =
+        cJSON_GetObjectItemCaseSensitive(json, "enabled");
+    const cJSON *endpoint_item =
+        cJSON_GetObjectItemCaseSensitive(json, "endpoint");
+    const cJSON *clear_item =
+        cJSON_GetObjectItemCaseSensitive(json, "clear_endpoint");
+    bool has_enabled = enabled_item != NULL;
+    bool has_endpoint = endpoint_item != NULL;
+    bool clear_endpoint = cJSON_IsTrue(clear_item);
+
+    if ((has_enabled && !cJSON_IsBool(enabled_item)) ||
+        (has_endpoint && (!cJSON_IsString(endpoint_item) ||
+                          endpoint_item->valuestring == NULL ||
+                          strnlen(endpoint_item->valuestring,
+                                  MCP_WS_ENDPOINT_MAX_LEN) >=
+                              MCP_WS_ENDPOINT_MAX_LEN)) ||
+        (clear_item != NULL && !cJSON_IsBool(clear_item)) ||
+        (has_endpoint && clear_endpoint) ||
+        (!has_enabled && !has_endpoint && !clear_endpoint)) {
+        zeroize_endpoint_json((cJSON *)endpoint_item, body, sizeof(body));
+        cJSON_Delete(json);
+        return web_send_api_error_code(request, "400 Bad Request",
+                                       "Invalid Xiaozhi settings",
+                                       "invalid_request");
+    }
+
+    const char *endpoint = clear_endpoint ? "" :
+        (has_endpoint ? endpoint_item->valuestring : NULL);
+    esp_err_t result = mcp_ws_bridge_config_update(
+        has_enabled, cJSON_IsTrue(enabled_item),
+        has_endpoint || clear_endpoint, endpoint);
+    zeroize_endpoint_json((cJSON *)endpoint_item, body, sizeof(body));
+    cJSON_Delete(json);
+    if (result == ESP_ERR_INVALID_ARG) {
+        return web_send_api_error_code(
+            request, "400 Bad Request",
+            "Endpoint must be a valid wss:// URL and is required when enabled",
+            "invalid_endpoint");
+    }
+    if (result != ESP_OK) {
+        ESP_LOGE(TAG, "Could not save Xiaozhi settings: %s",
+                 esp_err_to_name(result));
+        return web_send_api_error_code(request, "500 Internal Server Error",
+                                       "Could not save Xiaozhi settings",
+                                       "internal_error");
+    }
+
+    cJSON *response = cJSON_CreateObject();
+    cJSON_AddBoolToObject(response, "success", true);
+    add_xiaozhi_status(response);
     return web_send_json(request, response);
 }
 
@@ -85,6 +203,7 @@ esp_err_t web_settings_api_register(httpd_handle_t server)
 {
     static const httpd_uri_t routes[] = {
         {"/api/settings", HTTP_GET, settings_get_handler, NULL},
+        {"/api/settings/xiaozhi", HTTP_PUT, xiaozhi_put_handler, NULL},
     };
 
     esp_err_t err = ESP_OK;

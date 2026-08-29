@@ -1,0 +1,17 @@
+{
+  "jsonrpc": "2.0",
+  "id": 0,
+  "result": {
+    "protocolVersion": "2024-11-05",
+    "capabilities": {
+      "tools": {
+        "listChanged": false
+      }
+    },
+    "serverInfo": {
+      "name": "esp32-ble-gateway",
+      "version": "1.0.0"
+    },
+    "instructions": "Controls BLE devices managed by this ESP32 gateway."
+  }
+}

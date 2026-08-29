@@ -12,6 +12,9 @@ CONFIG_ESPTOOLPY_FLASHSIZE_16MB=y
 # Unity tests place dispatch_result_t (~4.1 KB) and other fixtures on the
 # main task stack; the 3584-byte default overflows.
 CONFIG_ESP_MAIN_TASK_STACK_SIZE=12288
+CONFIG_WS_TRANSPORT=y
+CONFIG_MBEDTLS_CERTIFICATE_BUNDLE=y
+CONFIG_MBEDTLS_CERTIFICATE_BUNDLE_DEFAULT_FULL=y
 
 # ==== MCP endpoint under test ====
 # Dev mode (empty token); allowlist matches the mock Host header; "toggle"
@@ -19,7 +22,8 @@ CONFIG_ESP_MAIN_TASK_STACK_SIZE=12288
 CONFIG_MCP_AUTH_TOKEN=""
 CONFIG_MCP_HOST_ALLOWLIST="gateway.local"
 CONFIG_MCP_DEVICE_COMMAND_ALLOWLIST="toggle,set_power"
-CONFIG_MCP_LEGACY_MODE=y
+CONFIG_MCP_EXPOSE_FULL_CAPABILITY_TOOL=y
+CONFIG_MCP_KEEP_GENERIC_DEVICE_COMMAND=y
 
 # ==== Command executor under test ====
 # Short deadline so the expiry test finishes quickly on target.
@@ -35,4 +39,3 @@ CONFIG_BOARD_IO_BUTTON_ACTIVE_LOW=y
 CONFIG_BOARD_IO_DISPLAY_ENABLE=y
 CONFIG_BOARD_IO_DISPLAY_BACKEND_NONE=y
 CONFIG_BOARD_IO_DISPLAY_REQUIRED=n
-
