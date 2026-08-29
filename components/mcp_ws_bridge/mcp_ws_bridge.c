@@ -1054,8 +1054,8 @@ esp_err_t mcp_ws_bridge_get_status(mcp_ws_status_t *out)
     xSemaphoreTake(s_bridge.lock, portMAX_DELAY);
     *out = s_bridge.status;
     out->enabled = s_bridge.config.enabled;
-    out->runtime_enabled = true;
-    out->restart_required = false;
+    out->runtime_enabled = s_bridge.status.runtime_enabled;
+    out->restart_required = out->enabled != out->runtime_enabled;
     out->endpoint_configured = s_bridge.config.endpoint[0] != '\0';
     xSemaphoreGive(s_bridge.lock);
     return ESP_OK;
