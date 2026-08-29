@@ -14,6 +14,12 @@
 
 static const char *TAG = "web_assets";
 
+// lwIP copies socket payloads into internal-RAM pbufs.  The gateway can have
+// less than 2 KiB in its largest internal block while BLE and the Xiaozhi TLS
+// connection are active, so sending an entire embedded asset in one call can
+// time out even though several MiB of PSRAM remain free.
+#define WEB_ASSET_SEND_CHUNK_SIZE 512
+
 // Same policy as the provisioning page: the dashboard loads only same-origin
 // CSS/font plus inline script/style blocks (Plan v2 §64).
 #define DASHBOARD_CSP                                                          \
@@ -45,6 +51,34 @@ extern const uint8_t icons_css_end[] asm("_binary_icons_css_end");
 extern const uint8_t phosphor_woff2_start[] asm("_binary_Phosphor_woff2_start");
 extern const uint8_t phosphor_woff2_end[] asm("_binary_Phosphor_woff2_end");
 
+static esp_err_t send_embedded_body(httpd_req_t *request,
+                                    const uint8_t *start,
+                                    const uint8_t *end)
+{
+    if (start == NULL || end == NULL || end < start) {
+        return ESP_ERR_INVALID_ARG;
+    }
+
+    const uint8_t *cursor = start;
+    while (cursor < end) {
+        size_t remaining = (size_t)(end - cursor);
+        size_t chunk_size = remaining < WEB_ASSET_SEND_CHUNK_SIZE
+                                ? remaining
+                                : WEB_ASSET_SEND_CHUNK_SIZE;
+        esp_err_t result = httpd_resp_send_chunk(
+            request, (const char *)cursor, (ssize_t)chunk_size);
+        if (result != ESP_OK) {
+            ESP_LOGW(TAG, "Asset send failed for %s at %u/%u bytes: %s",
+                     request->uri, (unsigned)(cursor - start),
+                     (unsigned)(end - start), esp_err_to_name(result));
+            return result;
+        }
+        cursor += chunk_size;
+    }
+
+    return httpd_resp_send_chunk(request, NULL, 0);
+}
+
 static esp_err_t send_embedded_file(httpd_req_t *request, const uint8_t *start,
                                     const uint8_t *end, const char *content_type,
                                     const char *cache_control, const char *csp)
@@ -55,7 +89,7 @@ static esp_err_t send_embedded_file(httpd_req_t *request, const uint8_t *start,
         httpd_resp_set_hdr(request, "Content-Security-Policy", csp);
     }
     set_security_headers(request);
-    return httpd_resp_send(request, (const char *)start, end - start);
+    return send_embedded_body(request, start, end);
 }
 
 static esp_err_t send_embedded_gzip_file(httpd_req_t *request,
@@ -72,7 +106,7 @@ static esp_err_t send_embedded_gzip_file(httpd_req_t *request,
         httpd_resp_set_hdr(request, "Content-Security-Policy", csp);
     }
     set_security_headers(request);
-    return httpd_resp_send(request, (const char *)start, end - start);
+    return send_embedded_body(request, start, end);
 }
 
 static esp_err_t index_get_handler(httpd_req_t *request)

@@ -53,6 +53,8 @@ typedef struct {
     bool is_303;
     bool location_root;
     bool cache_no_store;
+    bool transfer_chunked;
+    bool content_gzip;
     size_t body_len;
 } captive_response_t;
 
@@ -75,6 +77,9 @@ static void parse_response(const char *raw, captive_response_t *out)
     out->is_303 = strncmp(raw, "HTTP/1.1 303", 12) == 0;
     out->location_root = header_present(raw, "Location: /\r\n");
     out->cache_no_store = header_present(raw, "Cache-Control: no-store\r\n");
+    out->transfer_chunked =
+        header_present(raw, "Transfer-Encoding: chunked\r\n");
+    out->content_gzip = header_present(raw, "Content-Encoding: gzip\r\n");
 
     const char *body = strstr(raw, "\r\n\r\n");
     out->body_len = body != NULL ? strlen(body + 4) : 0;
@@ -112,17 +117,23 @@ static bool fetch(const char *path, captive_response_t *out, char *raw,
         return false;
     }
 
-    size_t total = 0;
-    while (total + 1 < raw_capacity) {
-        ssize_t received = recv(fd, raw + total, raw_capacity - 1 - total, 0);
+    size_t stored = 0;
+    size_t received_total = 0;
+    char discard[256];
+    for (;;) {
+        size_t available = raw_capacity - 1 - stored;
+        char *destination = available > 0 ? raw + stored : discard;
+        size_t receive_size = available > 0 ? available : sizeof(discard);
+        ssize_t received = recv(fd, destination, receive_size, 0);
         if (received <= 0) break;
-        total += (size_t)received;
+        received_total += (size_t)received;
+        if (available > 0) stored += (size_t)received;
     }
     close(fd);
-    raw[total] = '\0';
+    raw[stored] = '\0';
 
     parse_response(raw, out);
-    return total > 0;
+    return received_total > 0;
 }
 
 static httpd_handle_t start_test_server(void)
@@ -188,6 +199,9 @@ TEST_CASE("portal root serves setup page", "[web_server]")
     char raw[RAW_BUF_LEN];
     TEST_ASSERT_TRUE(fetch("/", &response, raw, sizeof(raw)));
     TEST_ASSERT_TRUE(strncmp(raw, "HTTP/1.1 200", 12) == 0);
+    TEST_ASSERT_TRUE(response.transfer_chunked);
+    TEST_ASSERT_TRUE(response.content_gzip);
+    TEST_ASSERT_GREATER_THAN_INT(0, (int)response.body_len);
     TEST_ASSERT_EQUAL(ESP_OK, httpd_stop(server));
     vTaskDelay(pdMS_TO_TICKS(100));
 }

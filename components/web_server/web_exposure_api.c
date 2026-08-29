@@ -8,6 +8,7 @@
 #include "esp_log.h"
 
 #include "device_capabilities.h"
+#include "device_store.h"
 #include "mcp_tool_exposure.h"
 #include "web_http.h"
 #include "web_auth.h"
@@ -39,6 +40,10 @@ static esp_err_t exposure_get_handler(httpd_req_t *request)
     // Get capability snapshot.
     device_capability_snapshot_t cap;
     esp_err_t cap_err = device_capabilities_get(device_id, &cap);
+    device_entry_t device = {0};
+    bool has_display_name =
+        device_store_get(device_id, &device) == DEVICE_STORE_OK &&
+        device.name[0] != '\0' && strcmp(device.name, device.device_id) != 0;
 
     // Get exposure capacity.
     mcp_exposure_capacity_t capacity;
@@ -112,7 +117,8 @@ static esp_err_t exposure_get_handler(httpd_req_t *request)
                 cJSON_AddStringToObject(item, "state", "disabled");
                 // Generate tool name deterministically.
                 char tool_name[MCP_DYNAMIC_TOOL_NAME_MAX + 1];
-                if (mcp_tool_name_generate(device_id, c->command,
+                if (has_display_name &&
+                    mcp_tool_name_generate(device.name, c->command,
                                            tool_name,
                                            sizeof(tool_name)) == ESP_OK) {
                     cJSON_AddStringToObject(item, "tool_name", tool_name);

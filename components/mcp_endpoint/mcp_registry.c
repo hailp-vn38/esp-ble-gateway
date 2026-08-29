@@ -179,6 +179,7 @@ int mcp_registry_build_tools_list(cJSON *tools_array)
             return -1;
         }
         cJSON_AddStringToObject(tool, "name", desc->name);
+        cJSON_AddStringToObject(tool, "title", desc->name);
         cJSON_AddStringToObject(tool, "description", desc->description);
         cJSON_AddItemToObject(tool, "inputSchema", schema);
         cJSON_AddBoolToObject(annotations, "readOnlyHint", desc->read_only);
@@ -186,6 +187,7 @@ int mcp_registry_build_tools_list(cJSON *tools_array)
         if (desc->read_only) {
             cJSON_AddBoolToObject(annotations, "idempotentHint", true);
         }
+        cJSON_AddStringToObject(annotations, "title", desc->name);
         cJSON_AddItemToObject(tool, "annotations", annotations);
         cJSON_AddItemToArray(tools_array, tool);
     }
@@ -265,24 +267,20 @@ cJSON *mcp_dynamic_tool_build_json(const mcp_tool_binding_t *binding)
 
     cJSON_AddStringToObject(tool, "name", binding->tool_name);
 
-    // Keep the deterministic tool name as the protocol identity, but provide
-    // a short, command-first display name using the user-facing device name.
-    // Fall back to the immutable id if the device record is unavailable.
+    // Xiaozhi surfaces both fields in different views. Keep one identity for
+    // name/title and never expose the internal device id as display metadata.
     device_entry_t entry = {0};
-    const char *device_display_name = binding->device_id;
+    const char *device_display_name = "configured device";
     if (device_store_get(binding->device_id, &entry) == DEVICE_STORE_OK &&
         entry.name[0] != '\0') {
         device_display_name = entry.name;
     }
-    char title[sizeof(binding->command) + DEVICE_NAME_MAX_LEN + 4];
-    snprintf(title, sizeof(title), "%s on %s", binding->command,
-             device_display_name);
-    cJSON_AddStringToObject(tool, "title", title);
+    cJSON_AddStringToObject(tool, "title", binding->tool_name);
 
     // Trusted template description — no raw peripheral text (§19.1).
     char desc[192];
     snprintf(desc, sizeof(desc), "Execute command '%s' on device '%s'.",
-             binding->command, binding->device_id);
+             binding->command, device_display_name);
     cJSON_AddStringToObject(tool, "description", desc);
     cJSON_AddItemToObject(tool, "inputSchema", schema);
 
@@ -290,10 +288,8 @@ cJSON *mcp_dynamic_tool_build_json(const mcp_tool_binding_t *binding)
     cJSON_AddBoolToObject(annotations, "readOnlyHint", false);
     bool destructive = (binding->capability.flags & DEVICE_CAP_FLAG_DESTRUCTIVE) != 0;
     bool idempotent = (binding->capability.flags & DEVICE_CAP_FLAG_IDEMPOTENT) != 0;
-    // Older MCP clients read the display title from ToolAnnotations instead
-    // of Tool.title. Emitting both keeps the same identity and works across
-    // both client generations.
-    cJSON_AddStringToObject(annotations, "title", title);
+    // Older MCP clients read ToolAnnotations.title instead of Tool.title.
+    cJSON_AddStringToObject(annotations, "title", binding->tool_name);
     cJSON_AddBoolToObject(annotations, "destructiveHint", destructive);
     cJSON_AddBoolToObject(annotations, "idempotentHint", idempotent);
     cJSON_AddItemToObject(tool, "annotations", annotations);

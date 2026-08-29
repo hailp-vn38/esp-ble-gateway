@@ -113,14 +113,23 @@ TEST_CASE("tools/list exposes annotations from the registry", "[mcp_endpoint]")
 
     cJSON *tool = NULL;
     cJSON_ArrayForEach(tool, tools) {
+        const char *name = cJSON_GetStringValue(
+            cJSON_GetObjectItemCaseSensitive(tool, "name"));
+        const char *title = cJSON_GetStringValue(
+            cJSON_GetObjectItemCaseSensitive(tool, "title"));
         cJSON *annotations =
             cJSON_GetObjectItemCaseSensitive(tool, "annotations");
         TEST_ASSERT_TRUE(cJSON_IsObject(annotations));
+        TEST_ASSERT_EQUAL_STRING(name, title);
+        TEST_ASSERT_EQUAL_STRING(
+            name,
+            cJSON_GetStringValue(
+                cJSON_GetObjectItemCaseSensitive(annotations, "title")));
     }
     cJSON_Delete(response);
 }
 
-TEST_CASE("dynamic tools expose a command-first display title",
+TEST_CASE("dynamic tools use the same command and device name identity",
           "[mcp_endpoint]")
 {
     device_entry_t existing;
@@ -139,29 +148,35 @@ TEST_CASE("dynamic tools expose a command-first display title",
     }
 
     mcp_tool_binding_t binding = {0};
-    strlcpy(binding.tool_name,
-            "AC_27_6E_CC_F2_26_a2a1adff7f95b5e0.set_led",
-            sizeof(binding.tool_name));
+    TEST_ASSERT_EQUAL(
+        ESP_OK,
+        mcp_tool_name_generate("Kitchen LED", "set_led", binding.tool_name,
+                               sizeof(binding.tool_name)));
     strlcpy(binding.device_id, "AC:27:6E:CC:F2:26",
             sizeof(binding.device_id));
     strlcpy(binding.command, "set_led", sizeof(binding.command));
 
     cJSON *tool = mcp_dynamic_tool_build_json(&binding);
     TEST_ASSERT_NOT_NULL(tool);
-    TEST_ASSERT_EQUAL_STRING(
-        "AC_27_6E_CC_F2_26_a2a1adff7f95b5e0.set_led",
+    TEST_ASSERT_EQUAL_STRING("set_led_Kitchen_LED",
         cJSON_GetStringValue(cJSON_GetObjectItemCaseSensitive(tool, "name")));
-    TEST_ASSERT_EQUAL_STRING(
-        "set_led on Kitchen LED",
+    TEST_ASSERT_EQUAL_STRING("set_led_Kitchen_LED",
         cJSON_GetStringValue(cJSON_GetObjectItemCaseSensitive(tool, "title")));
 
     cJSON *annotations =
         cJSON_GetObjectItemCaseSensitive(tool, "annotations");
     TEST_ASSERT_EQUAL_STRING(
-        "set_led on Kitchen LED",
+        "set_led_Kitchen_LED",
         cJSON_GetStringValue(
             cJSON_GetObjectItemCaseSensitive(annotations, "title")));
     cJSON_Delete(tool);
+
+    char vietnamese_name[MCP_DYNAMIC_TOOL_NAME_MAX + 1];
+    TEST_ASSERT_EQUAL(
+        ESP_OK,
+        mcp_tool_name_generate("Đèn bếp", "set_led", vietnamese_name,
+                               sizeof(vietnamese_name)));
+    TEST_ASSERT_EQUAL_STRING("set_led_Den_bep", vietnamese_name);
 }
 
 // ---------------------------------------------------------------------------

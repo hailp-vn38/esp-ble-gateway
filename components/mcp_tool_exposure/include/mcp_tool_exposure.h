@@ -91,10 +91,13 @@ esp_err_t mcp_tool_exposure_reconcile_device_async(
 
 esp_err_t mcp_tool_exposure_forget_device(const char *device_id);
 
+// Rebuild enabled tool identities after the user-facing device name changes.
+esp_err_t mcp_tool_exposure_refresh_device_name(const char *device_id);
+
 esp_err_t mcp_tool_exposure_get_capacity(mcp_exposure_capacity_t *out);
 
-// Tool naming (mcp_tool_name.c).
-esp_err_t mcp_tool_name_generate(const char *device_id, const char *command,
+// Tool naming: command + user-facing device name; never pass a device id.
+esp_err_t mcp_tool_name_generate(const char *device_name, const char *command,
                                  char *out, size_t out_len);
 
 // Capability digest (mcp_tool_digest.c).

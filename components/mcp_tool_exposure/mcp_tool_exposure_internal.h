@@ -13,7 +13,7 @@
 #define MCP_EXP_NVS_NAMESPACE "mcp_exp"
 #define MCP_EXP_NVS_KEY       "catalog"
 #define MCP_EXP_STORE_SCHEMA_VERSION 2
-#define MCP_EXP_NAMING_VERSION 1
+#define MCP_EXP_NAMING_VERSION 2
 
 typedef struct {
     char device_id[GW_MSG_DEVICE_ID_LEN];
@@ -34,7 +34,7 @@ typedef struct {
 } mcp_exposure_store_blob_t;
 
 /* Tool name generation (mcp_tool_name.c) */
-esp_err_t mcp_tool_name_generate(const char *device_id, const char *command,
+esp_err_t mcp_tool_name_generate(const char *device_name, const char *command,
                                  char *out_name, size_t out_len);
 
 /* SHA-256 semantic digest (mcp_tool_digest.c) */

@@ -186,6 +186,14 @@ static void cmd_edit_device(const gw_message_t *msg, dispatch_result_t *result)
                                            "Device %s not found", msg->device_id);
         return;
     }
+    if (name != NULL) {
+        esp_err_t refresh_rc =
+            mcp_tool_exposure_refresh_device_name(msg->device_id);
+        if (refresh_rc != ESP_OK && refresh_rc != ESP_ERR_INVALID_STATE) {
+            ESP_LOGW(TAG, "[DEVICE_EDIT] MCP name refresh failed for %s: %s",
+                     msg->device_id, esp_err_to_name(refresh_rc));
+        }
+    }
     command_dispatcher_set_text_result(result, DISPATCH_STATUS_OK,
                                        "Device %s updated", msg->device_id);
 }
