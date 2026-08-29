@@ -9,6 +9,7 @@
 #include "esp_system.h"
 #include "esp_timer.h"
 #include "esp_wifi.h"
+#include "sdkconfig.h"
 
 #include "ble_central.h"
 #include "device_store.h"
@@ -79,7 +80,11 @@ esp_err_t gateway_status_get(gateway_status_t *status)
             MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
 
     // PSRAM telemetry
+#if CONFIG_SPIRAM
     status->psram_ready = esp_psram_is_initialized();
+#else
+    status->psram_ready = false;
+#endif
     if (status->psram_ready) {
         status->psram_free = (uint32_t)heap_caps_get_free_size(
             MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);

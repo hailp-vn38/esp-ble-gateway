@@ -1,6 +1,9 @@
 #ifndef WEB_MODULES_H
 #define WEB_MODULES_H
 
+#include <stdbool.h>
+#include <stddef.h>
+
 #include "esp_http_server.h"
 #include "command_dispatcher.h"
 
@@ -29,6 +32,10 @@ esp_err_t web_exposure_api_register(httpd_handle_t server);
 esp_err_t web_auth_api_register(httpd_handle_t server);
 
 esp_err_t web_mcp_token_api_register(httpd_handle_t server);
+esp_err_t web_mcp_token_get_status(bool *configured, char *preview,
+                                   size_t preview_size);
+
+esp_err_t web_settings_api_register(httpd_handle_t server);
 
 // Shared helper used by command and device APIs for async dispatch results.
 void web_send_dispatch_result(httpd_req_t *request,

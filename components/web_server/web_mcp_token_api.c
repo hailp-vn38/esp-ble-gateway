@@ -6,6 +6,7 @@
 #include "esp_log.h"
 #include "nvs_flash.h"
 #include "esp_random.h"
+#include "sdkconfig.h"
 
 #include "web_auth.h"
 #include "web_auth_http.h"
@@ -14,6 +15,15 @@
 static const char *TAG = "web_mcp_token_api";
 static const char *NVS_NAMESPACE = "mcp";
 static const char *NVS_TOKEN_KEY = "token";
+
+#define MCP_TOKEN_RANDOM_BYTES 16
+#define MCP_TOKEN_PREFIX       "mcp_"
+#define MCP_TOKEN_LENGTH       (sizeof(MCP_TOKEN_PREFIX) - 1 + \
+                                MCP_TOKEN_RANDOM_BYTES * 2)
+
+#ifndef CONFIG_MCP_AUTH_TOKEN
+#define CONFIG_MCP_AUTH_TOKEN ""
+#endif
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -45,43 +55,46 @@ static esp_err_t nvs_set_token(const char *token)
     return err;
 }
 
-static void generate_random_token(char *buf, size_t len)
+static void generate_random_token(char token[MCP_TOKEN_LENGTH + 1])
 {
-    static const char charset[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
-    for (size_t i = 0; i < len - 1; i++) {
-        buf[i] = charset[esp_random() % (sizeof(charset) - 1)];
+    static const char hex[] = "0123456789abcdef";
+    uint8_t random[MCP_TOKEN_RANDOM_BYTES];
+    esp_fill_random(random, sizeof(random));
+
+    memcpy(token, MCP_TOKEN_PREFIX, sizeof(MCP_TOKEN_PREFIX) - 1);
+    size_t output = sizeof(MCP_TOKEN_PREFIX) - 1;
+    for (size_t i = 0; i < sizeof(random); i++) {
+        token[output++] = hex[random[i] >> 4];
+        token[output++] = hex[random[i] & 0x0f];
     }
-    buf[len - 1] = '\0';
+    token[output] = '\0';
 }
 
-// ---------------------------------------------------------------------------
-// GET /api/mcp-token — Get MCP token status (Web Auth protected)
-// ---------------------------------------------------------------------------
-
-static esp_err_t mcp_token_get_handler(httpd_req_t *request)
+esp_err_t web_mcp_token_get_status(bool *configured, char *preview,
+                                   size_t preview_size)
 {
-    web_auth_result_t auth = web_auth_require_request(request);
-    if (auth != WEB_AUTH_OK) {
-        return web_send_api_error_code(request, "401 Unauthorized",
-                                       "Authentication required",
-                                       "auth_required");
+    if (configured == NULL || preview == NULL || preview_size == 0) {
+        return ESP_ERR_INVALID_ARG;
     }
 
     char token[128] = {0};
     esp_err_t err = nvs_get_token(token, sizeof(token));
-    bool has_token = (err == ESP_OK && token[0] != '\0');
-
-    cJSON *response = cJSON_CreateObject();
-    cJSON_AddBoolToObject(response, "success", true);
-    cJSON_AddBoolToObject(response, "has_token", has_token);
-
-    if (has_token && strlen(token) > 4) {
-        char preview[8];
-        snprintf(preview, sizeof(preview), "****%s", token + strlen(token) - 4);
-        cJSON_AddStringToObject(response, "token_preview", preview);
+    const char *effective_token = NULL;
+    if (err == ESP_OK && token[0] != '\0') {
+        effective_token = token;
+    } else if (CONFIG_MCP_AUTH_TOKEN[0] != '\0') {
+        effective_token = CONFIG_MCP_AUTH_TOKEN;
     }
 
-    return web_send_json(request, response);
+    *configured = effective_token != NULL;
+    preview[0] = '\0';
+    if (effective_token != NULL) {
+        size_t length = strlen(effective_token);
+        const char *suffix = length > 4 ? effective_token + length - 4
+                                        : effective_token;
+        snprintf(preview, preview_size, "...%s", suffix);
+    }
+    return ESP_OK;
 }
 
 // ---------------------------------------------------------------------------
@@ -97,8 +110,8 @@ static esp_err_t mcp_token_generate_handler(httpd_req_t *request)
                                        "auth_required");
     }
 
-    char new_token[65];
-    generate_random_token(new_token, sizeof(new_token));
+    char new_token[MCP_TOKEN_LENGTH + 1];
+    generate_random_token(new_token);
 
     esp_err_t err = nvs_set_token(new_token);
     if (err != ESP_OK) {
@@ -197,7 +210,6 @@ static esp_err_t mcp_token_delete_handler(httpd_req_t *request)
 esp_err_t web_mcp_token_api_register(httpd_handle_t server)
 {
     static const httpd_uri_t routes[] = {
-        {"/api/mcp-token", HTTP_GET, mcp_token_get_handler, NULL},
         {"/api/mcp-token", HTTP_PUT, mcp_token_update_handler, NULL},
         {"/api/mcp-token", HTTP_DELETE, mcp_token_delete_handler, NULL},
         {"/api/mcp-token/generate", HTTP_POST, mcp_token_generate_handler, NULL},

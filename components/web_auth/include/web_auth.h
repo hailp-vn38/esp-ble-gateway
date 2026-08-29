@@ -50,4 +50,9 @@ web_auth_result_t web_auth_change_username(const char *current_password,
 web_auth_result_t web_auth_change_password(const char *current_password,
                                            const char *new_password);
 
+bool web_auth_password_validate(const char *password);
+bool web_auth_username_validate(const char *username);
+
+int web_auth_session_cookie_max_age_seconds(void);
+
 #endif // WEB_AUTH_H

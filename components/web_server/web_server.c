@@ -12,9 +12,9 @@
 static const char *TAG = "web_server";
 
 // Route budget: assets 6 (dashboard + login + css + icons + font + favicon)
-// + auth API 4 + mcp-token API 4 + device API 4 + command API 1 + capability API 2 + exposure API 2
+// + auth API 4 + mcp-token API 3 + settings API 1 + device API 4 + command API 1 + capability API 2 + exposure API 2
 // + system API 3 + BLE API 3 = 29; headroom for future.
-#define WEB_GATEWAY_MAX_URI_HANDLERS 32
+#define WEB_GATEWAY_MAX_URI_HANDLERS 34
 #define WEB_GATEWAY_STACK_SIZE       12288
 
 // Provisioning: assets 6 + system API 2 + Wi-Fi API 4 = 12.
@@ -77,6 +77,7 @@ httpd_handle_t web_server_start(void)
         web_assets_register_gateway,
         web_auth_api_register,
         web_mcp_token_api_register,
+        web_settings_api_register,
         web_gateway_api_register,
         web_system_api_register_gateway,
         web_ble_api_register,

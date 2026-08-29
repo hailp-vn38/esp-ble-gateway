@@ -2,6 +2,7 @@
 #include "memory_policy.h"
 
 #include "esp_heap_caps.h"
+#include "esp_memory_utils.h"
 #include "esp_psram.h"
 #include "sdkconfig.h"
 
@@ -9,8 +10,7 @@ TEST_CASE("gw_mem_alloc INTERNAL_REQUIRED returns internal memory", "[memory_pol
 {
     void *p = gw_mem_alloc(128, GW_MEM_INTERNAL_REQUIRED);
     TEST_ASSERT_NOT_NULL(p);
-    TEST_ASSERT_TRUE(heap_caps_get_malloc_size(p, MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT) > 0 ||
-                     heap_caps_get_malloc_size(p, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT) > 0);
+    TEST_ASSERT_TRUE(esp_ptr_internal(p));
     gw_mem_free(p);
 }
 

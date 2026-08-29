@@ -100,7 +100,6 @@
 
     window.addEventListener('DOMContentLoaded', async () => {
         await Promise.all([devices.load(), settings.load()]);
-        if (state.activeTab === 'settings') settings.loadMcpTokenStatus();
         if (state.devicesLoaded) nav.restoreRoute();
     });
     </script>

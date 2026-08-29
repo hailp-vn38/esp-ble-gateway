@@ -32,6 +32,10 @@ static esp_err_t extract_cookie_value(httpd_req_t *req, const char *name,
         size_t name_len = strlen(name);
         if (strncmp(token, name, name_len) == 0 && token[name_len] == '=') {
             const char *val = token + name_len + 1;
+            if (strlen(val) >= value_size) {
+                free(buf);
+                return ESP_ERR_INVALID_SIZE;
+            }
             strlcpy(value, val, value_size);
             free(buf);
             return ESP_OK;
@@ -43,19 +47,28 @@ static esp_err_t extract_cookie_value(httpd_req_t *req, const char *name,
     return ESP_ERR_NOT_FOUND;
 }
 
+esp_err_t web_auth_get_session_token(httpd_req_t *req, char *token,
+                                     size_t token_size)
+{
+    if (req == NULL || token == NULL || token_size == 0) {
+        return ESP_ERR_INVALID_ARG;
+    }
+    token[0] = '\0';
+    return extract_cookie_value(req, SESSION_COOKIE_NAME, token, token_size);
+}
+
 web_auth_result_t web_auth_require_request(httpd_req_t *req)
 {
     // Check if auth is enabled
     web_auth_status_t status;
     esp_err_t err = web_auth_get_status(&status);
-    if (err != ESP_OK || !status.enabled) {
-        return WEB_AUTH_OK;  // Auth disabled or error, allow access
-    }
+    if (err != ESP_OK) return WEB_AUTH_STORAGE_ERROR;
+    if (!status.enabled) return WEB_AUTH_OK;
 
     // Extract session cookie
     char session_token[64] = {0};
-    err = extract_cookie_value(req, SESSION_COOKIE_NAME,
-                               session_token, sizeof(session_token));
+    err = web_auth_get_session_token(req, session_token,
+                                     sizeof(session_token));
     if (err != ESP_OK || session_token[0] == '\0') {
         return WEB_AUTH_REQUIRED;
     }

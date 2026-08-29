@@ -9,6 +9,8 @@
 #include "esp_timer.h"
 
 #include "web_http.h"
+#include "web_auth.h"
+#include "web_auth_http.h"
 
 static const char *TAG = "web_assets";
 
@@ -26,10 +28,14 @@ static void set_security_headers(httpd_req_t *request)
     httpd_resp_set_hdr(request, "Referrer-Policy", "no-referrer");
 }
 
-extern const uint8_t dashboard_html_start[] asm("_binary_dashboard_html_start");
-extern const uint8_t dashboard_html_end[] asm("_binary_dashboard_html_end");
-extern const uint8_t login_html_start[] asm("_binary_login_html_start");
-extern const uint8_t login_html_end[] asm("_binary_login_html_end");
+extern const uint8_t dashboard_html_gz_start[]
+    asm("_binary_dashboard_html_gz_start");
+extern const uint8_t dashboard_html_gz_end[]
+    asm("_binary_dashboard_html_gz_end");
+extern const uint8_t login_html_gz_start[]
+    asm("_binary_login_html_gz_start");
+extern const uint8_t login_html_gz_end[]
+    asm("_binary_login_html_gz_end");
 extern const uint8_t setup_html_gz_start[] asm("_binary_setup_html_gz_start");
 extern const uint8_t setup_html_gz_end[] asm("_binary_setup_html_gz_end");
 extern const uint8_t dashboard_css_start[] asm("_binary_dashboard_css_start");
@@ -56,33 +62,40 @@ static esp_err_t send_embedded_gzip_file(httpd_req_t *request,
                                          const uint8_t *start,
                                          const uint8_t *end,
                                          const char *content_type,
-                                         const char *cache_control)
+                                         const char *cache_control,
+                                         const char *csp)
 {
     httpd_resp_set_type(request, content_type);
     httpd_resp_set_hdr(request, "Content-Encoding", "gzip");
     httpd_resp_set_hdr(request, "Cache-Control", cache_control);
-    httpd_resp_set_hdr(
-        request, "Content-Security-Policy",
-        "default-src 'none'; connect-src 'self'; script-src 'unsafe-inline'; "
-        "style-src 'unsafe-inline'; img-src data:; base-uri 'none'; "
-        "form-action 'self'; frame-ancestors 'none'");
+    if (csp != NULL) {
+        httpd_resp_set_hdr(request, "Content-Security-Policy", csp);
+    }
     set_security_headers(request);
     return httpd_resp_send(request, (const char *)start, end - start);
 }
 
 static esp_err_t index_get_handler(httpd_req_t *request)
 {
-    return send_embedded_file(request, dashboard_html_start, dashboard_html_end,
-                              "text/html; charset=utf-8", "no-cache",
-                              DASHBOARD_CSP);
+    web_auth_result_t auth = web_auth_require_request(request);
+    if (auth != WEB_AUTH_OK) {
+        httpd_resp_set_status(request, "303 See Other");
+        httpd_resp_set_hdr(request, "Location", "/login");
+        httpd_resp_set_hdr(request, "Cache-Control", "no-store");
+        return httpd_resp_send(request, NULL, 0);
+    }
+
+    return send_embedded_gzip_file(
+        request, dashboard_html_gz_start, dashboard_html_gz_end,
+        "text/html; charset=utf-8", "no-cache", DASHBOARD_CSP);
 }
 
 static esp_err_t login_get_handler(httpd_req_t *request)
 {
     // Login page uses same CSP as dashboard (inline scripts)
-    return send_embedded_file(request, login_html_start, login_html_end,
-                              "text/html; charset=utf-8", "no-cache",
-                              DASHBOARD_CSP);
+    return send_embedded_gzip_file(
+        request, login_html_gz_start, login_html_gz_end,
+        "text/html; charset=utf-8", "no-cache", DASHBOARD_CSP);
 }
 
 static bool host_equals_domain(const char *host, const char *domain)
@@ -115,7 +128,11 @@ static esp_err_t provisioning_index_get_handler(httpd_req_t *request)
     int64_t started_us = esp_timer_get_time();
     esp_err_t result = send_embedded_gzip_file(
         request, setup_html_gz_start, setup_html_gz_end,
-        "text/html; charset=utf-8", "no-cache");
+        "text/html; charset=utf-8", "no-cache",
+        "default-src 'none'; connect-src 'self'; "
+        "script-src 'unsafe-inline'; style-src 'unsafe-inline'; "
+        "img-src data:; base-uri 'none'; form-action 'self'; "
+        "frame-ancestors 'none'");
     ESP_LOGI(TAG, "Provisioning page sent: %u gzip bytes in %lld ms",
              (unsigned)(setup_html_gz_end - setup_html_gz_start),
              (long long)((esp_timer_get_time() - started_us) / 1000));

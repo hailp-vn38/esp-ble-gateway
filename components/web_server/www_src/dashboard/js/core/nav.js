@@ -92,7 +92,6 @@ const nav = {
 
         // Trigger specific view logic
         if(tabId === 'devices') devices.renderGrid();
-        if(tabId === 'settings') settings.loadMcpTokenStatus();
         if(tabId === 'scanner') {
             if(!state.isScanning && state.scannedDevices.length === 0) {
                 // Optional: auto-start scan on view open

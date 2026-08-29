@@ -2,8 +2,8 @@
 set -euo pipefail
 
 PORT="${1:-/dev/cu.usbmodem2101}"
-IDF_PATH="${IDF_PATH:-/Users/lamphuchai/.espressif/v5.4.4/esp-idf}"
-IDF_PYTHON="${IDF_PYTHON:-/Users/lamphuchai/.espressif/python_env/idf5.4_py3.13_env/bin/python}"
+IDF_PATH="${IDF_PATH:-/Users/lamphuchai/.espressif/v6.1-rc1/esp-idf}"
+IDF_PYTHON="${IDF_PYTHON:-/Users/lamphuchai/.espressif/python_env/idf6.1_py3.13_env/bin/python}"
 SERIAL_BAUD=115200
 READ_TIMEOUT=50
 

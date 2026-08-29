@@ -77,9 +77,6 @@ const api = {
             })
         });
     },
-    getStatus() {
-        return this.request('/api/status');
-    },
     getCapabilities(deviceId) {
         return this.request(`/api/capabilities?device_id=${encodeURIComponent(deviceId)}`);
     },

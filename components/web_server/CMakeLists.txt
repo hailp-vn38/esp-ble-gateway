@@ -7,6 +7,8 @@ set(webui_source "${CMAKE_CURRENT_SOURCE_DIR}/www_src")
 set(webui_builder "${CMAKE_CURRENT_SOURCE_DIR}/tools/build_webui.py")
 set(dashboard_generated "${CMAKE_CURRENT_BINARY_DIR}/dashboard.html")
 set(login_generated "${CMAKE_CURRENT_BINARY_DIR}/login.html")
+set(dashboard_generated_gz "${CMAKE_CURRENT_BINARY_DIR}/dashboard.html.gz")
+set(login_generated_gz "${CMAKE_CURRENT_BINARY_DIR}/login.html.gz")
 
 if(NOT CMAKE_BUILD_EARLY_EXPANSION)
     idf_build_get_property(python PYTHON)
@@ -38,8 +40,23 @@ if(NOT CMAKE_BUILD_EARLY_EXPANSION)
         VERBATIM
     )
 
-    set_source_files_properties("${dashboard_generated}" "${login_generated}"
-        PROPERTIES GENERATED TRUE)
+    add_custom_command(
+        OUTPUT "${dashboard_generated_gz}" "${login_generated_gz}"
+        COMMAND "${python}" "${gzip_asset_script}"
+                "${dashboard_generated}" "${dashboard_generated_gz}"
+        COMMAND "${python}" "${gzip_asset_script}"
+                "${login_generated}" "${login_generated_gz}"
+        DEPENDS "${dashboard_generated}" "${login_generated}"
+                "${gzip_asset_script}"
+        COMMENT "Compressing dashboard and login web assets"
+        VERBATIM
+    )
+
+    set_source_files_properties(
+        "${dashboard_generated}" "${login_generated}"
+        "${dashboard_generated_gz}" "${login_generated_gz}"
+        PROPERTIES GENERATED TRUE
+    )
 endif()
 
 idf_component_register(
@@ -57,6 +74,7 @@ idf_component_register(
          "web_auth_api.c"
          "web_auth_http.c"
          "web_mcp_token_api.c"
+         "web_settings_api.c"
     INCLUDE_DIRS "include"
     REQUIRES esp_http_server cbor_codec command_dispatcher command_executor
              device_store gateway_status wifi_provisioning
@@ -65,8 +83,8 @@ idf_component_register(
              espressif__cjson esp_system esp_timer freertos
              esp_wifi esp_app_format nvs_flash
     EMBED_FILES
-             "${dashboard_generated}"
-             "${login_generated}"
+             "${dashboard_generated_gz}"
+             "${login_generated_gz}"
              "${setup_html_gz}"
              "www/dashboard.css"
              "www/icons.css"

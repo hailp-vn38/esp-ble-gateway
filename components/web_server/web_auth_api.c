@@ -38,7 +38,9 @@ static esp_err_t auth_login_handler(httpd_req_t *request)
     cJSON_Delete(json);
 
     if (result == WEB_AUTH_OK) {
-        web_auth_set_session_cookie(request, session_token, 30 * 60);  // 30 min
+        web_auth_set_session_cookie(
+            request, session_token,
+            web_auth_session_cookie_max_age_seconds());
         httpd_resp_set_hdr(request, "Cache-Control", "no-store");
         cJSON *response = cJSON_CreateObject();
         cJSON_AddBoolToObject(response, "success", true);
@@ -68,7 +70,18 @@ static esp_err_t auth_login_handler(httpd_req_t *request)
 
 static esp_err_t auth_logout_handler(httpd_req_t *request)
 {
-    web_auth_invalidate_all_sessions();
+    web_auth_result_t auth = web_auth_require_request(request);
+    if (auth != WEB_AUTH_OK) {
+        return web_send_api_error_code(request, "401 Unauthorized",
+                                       "Authentication required",
+                                       "auth_required");
+    }
+
+    char session_token[64] = {0};
+    if (web_auth_get_session_token(request, session_token,
+                                   sizeof(session_token)) == ESP_OK) {
+        web_auth_logout(session_token);
+    }
     web_auth_clear_session_cookie(request);
 
     cJSON *response = cJSON_CreateObject();
@@ -82,6 +95,13 @@ static esp_err_t auth_logout_handler(httpd_req_t *request)
 
 static esp_err_t auth_config_handler(httpd_req_t *request)
 {
+    web_auth_result_t auth = web_auth_require_request(request);
+    if (auth != WEB_AUTH_OK) {
+        return web_send_api_error_code(request, "401 Unauthorized",
+                                       "Authentication required",
+                                       "auth_required");
+    }
+
     char body[512];
     web_body_status_t body_status;
     cJSON *json = web_parse_request_json(request, body, sizeof(body),
@@ -136,9 +156,10 @@ static esp_err_t auth_config_handler(httpd_req_t *request)
     cJSON_Delete(json);
 
     if (result == WEB_AUTH_OK) {
-        web_auth_invalidate_all_sessions();
+        web_auth_clear_session_cookie(request);
         cJSON *response = cJSON_CreateObject();
         cJSON_AddBoolToObject(response, "success", true);
+        cJSON_AddBoolToObject(response, "reauth_required", enabled);
         return web_send_json(request, response);
     }
 
@@ -171,6 +192,13 @@ static esp_err_t auth_config_handler(httpd_req_t *request)
 
 static esp_err_t auth_password_handler(httpd_req_t *request)
 {
+    web_auth_result_t auth = web_auth_require_request(request);
+    if (auth != WEB_AUTH_OK) {
+        return web_send_api_error_code(request, "401 Unauthorized",
+                                       "Authentication required",
+                                       "auth_required");
+    }
+
     char body[512];
     web_body_status_t body_status;
     cJSON *json = web_parse_request_json(request, body, sizeof(body),
