@@ -32,6 +32,7 @@ const settings = {
         const langSelector = document.getElementById('lang-selector');
         if (langSelector) langSelector.value = i18n.currentLang;
         i18n.applyTranslations();
+        this.renderMcpUrl();
 
         try {
             const data = await api.request('/api/settings');
@@ -214,6 +215,26 @@ const settings = {
             document.execCommand('copy');
             ui.showToast(i18n.t('settings.mcp_token_copied'), 'success');
         }
+    },
+
+    renderMcpUrl() {
+        const origin = window.location.origin && window.location.origin !== 'null'
+            ? window.location.origin
+            : `${window.location.protocol}//${window.location.host}`;
+        document.getElementById('mcp-endpoint-url').value = `${origin}/mcp`;
+    },
+
+    async copyMcpUrl() {
+        const input = document.getElementById('mcp-endpoint-url');
+        try {
+            await navigator.clipboard.writeText(input.value);
+        } catch (_) {
+            input.select();
+            input.setSelectionRange(0, input.value.length);
+            document.execCommand('copy');
+            window.getSelection()?.removeAllRanges();
+        }
+        ui.showToast(i18n.t('settings.mcp_url_copied'), 'success');
     },
 
     // --- Xiaozhi Direct MCP Bridge ---

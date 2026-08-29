@@ -1,95 +1,70 @@
             <!-- VIEW: DEVICE DETAIL -->
-            <section id="view-device-detail" class="max-w-6xl mx-auto hidden pb-20">
-                <div class="mb-6">
+            <section id="view-device-detail" class="max-w-6xl mx-auto hidden pb-20 space-y-6">
+                <div>
                     <button onclick="nav.switchTab('devices')" class="flex items-center text-gray-500 hover:text-brand-600 transition-colors mb-4 text-sm font-medium">
-                        <i class="ph ph-arrow-left mr-2"></i> Back to Devices
+                        <i class="ph ph-arrow-left mr-2"></i><span data-i18n="device_detail.back">Back to Devices</span>
                     </button>
-                    
-                    <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-6 bg-white p-6 rounded-xl border border-gray-200 shadow-sm">
+                    <div id="detail-header" class="flex flex-col sm:flex-row sm:items-center justify-between gap-6 bg-white p-6 rounded-xl border border-gray-200 shadow-sm">
                         <div class="flex items-center min-w-0">
-                            <div id="detail-icon" class="w-12 h-12 rounded-lg flex items-center justify-center mr-4 text-2xl flex-shrink-0">
-                                <!-- Icon injected by JS -->
-                            </div>
+                            <div id="detail-icon" class="w-12 h-12 rounded-lg flex items-center justify-center mr-4 text-2xl flex-shrink-0"></div>
                             <div class="min-w-0">
-                                <div class="flex items-center gap-3">
-                                    <h2 id="detail-name" class="text-2xl font-bold text-gray-900 truncate">Device Name</h2>
-                                    <span id="detail-status" class="flex items-center text-sm font-medium flex-shrink-0">
-                                        <!-- Status injected by JS -->
-                                    </span>
-                                </div>
-                                <p class="text-gray-500 text-sm mt-1">
-                                    <span class="capitalize" id="detail-header-type">Unknown</span>
-                                    <span class="mx-2 text-gray-300">•</span>
-                                    <span id="detail-mac" class="font-mono">00:00:00:00:00:00</span>
-                                </p>
+                                <h2 id="detail-name" class="text-2xl font-bold text-gray-900 truncate">Device Name</h2>
+                                <p class="text-gray-500 text-sm mt-1 min-w-0"><span class="capitalize" id="detail-header-type">Unknown</span><span class="mx-2 text-gray-300">•</span><span id="detail-mac" class="font-mono break-all">00:00:00:00:00:00</span></p>
                             </div>
                         </div>
-                        
-                        <div class="flex gap-2 w-full sm:w-auto flex-shrink-0">
-                            <button onclick="ui.openEditModal()" class="flex-1 sm:w-auto px-4 py-2 bg-white border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 transition-colors shadow-sm text-sm font-medium flex items-center justify-center">
-                                <i class="ph ph-pencil-simple mr-2"></i> Edit
-                            </button>
-                            <button onclick="devices.confirmDeleteDetail()" class="flex-1 sm:w-auto px-4 py-2 bg-white border border-red-200 text-red-600 rounded-lg hover:bg-red-50 transition-colors shadow-sm text-sm font-medium flex items-center justify-center">
-                                <i class="ph ph-trash mr-2"></i> Remove
-                            </button>
+                        <div class="flex flex-col items-stretch sm:items-end gap-3 flex-shrink-0">
+                            <span id="detail-status" class="inline-flex items-center justify-center sm:justify-end text-sm font-semibold"></span>
+                            <button onclick="ui.openEditModal()" class="w-full sm:w-auto px-4 py-2 bg-white border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 transition-colors shadow-sm text-sm font-medium flex items-center justify-center"><i class="ph ph-pencil-simple mr-2"></i><span data-i18n="device_detail.edit">Edit</span></button>
                         </div>
                     </div>
                 </div>
 
-                <div class="grid grid-cols-1 md:grid-cols-3 gap-6 items-start">
-                    <div class="md:col-span-1 bg-white p-5 rounded-xl border border-gray-200 shadow-sm">
-                        <div class="mb-4 border-b border-gray-100 pb-3">
-                            <h3 class="font-semibold text-gray-900">Device information</h3>
-                            <p class="text-xs text-gray-500 mt-1">Identity and connection details</p>
-                        </div>
-                        <div class="space-y-4">
-                            <div>
-                                <p class="text-xs text-gray-500 mb-1">Device type</p>
-                                <p id="detail-type" class="text-sm font-medium text-gray-800 capitalize">Unknown</p>
-                            </div>
-                            <div>
-                                <p class="text-xs text-gray-500 mb-1">Device ID</p>
-                                <p id="detail-device-id" class="text-sm font-medium text-gray-800 font-mono break-all">Unknown</p>
-                            </div>
-                            <div>
-                                <p class="text-xs text-gray-500 mb-1">BLE address</p>
-                                <p id="detail-ble-address" class="text-sm font-medium text-gray-800 font-mono break-all">Unknown</p>
-                            </div>
-                        </div>
-                    </div>
-
-                    <div class="md:col-span-2 bg-white p-5 rounded-xl border border-gray-200 shadow-sm">
-                        <div class="flex items-start justify-between mb-4 border-b border-gray-100 pb-3 gap-4">
-                            <div>
-                                <h3 class="font-semibold text-gray-900">Device Commands</h3>
-                                <p class="text-xs text-gray-500 mt-1">Available controls reported by this device</p>
-                            </div>
-                            <button onclick="devices.refreshCapabilities()" class="inline-flex items-center px-3 py-1.5 bg-brand-50 text-brand-600 rounded-lg hover:bg-brand-100 transition-colors text-xs font-medium flex-shrink-0">
-                                <i class="ph ph-arrows-clockwise mr-1.5"></i> Refresh
-                            </button>
-                        </div>
-                        <div>
-                            <p id="capability-state" class="inline-flex px-2 py-1 bg-gray-100 rounded text-xs text-gray-600 mb-4">Capabilities unknown</p>
-                            <div class="mb-5 rounded-lg border border-gray-200 bg-gray-50 p-4">
-                                <div class="flex items-start justify-between gap-4 mb-3">
-                                    <div>
-                                        <h4 class="text-sm font-semibold text-gray-800 flex items-center">
-                                            <i class="ph ph-plugs text-brand-600 mr-1.5"></i> MCP tools
-                                        </h4>
-                                        <p class="text-xs text-gray-500 mt-1">Select commands exposed to connected MCP clients</p>
-                                    </div>
-                                    <span id="mcp-capacity-text" class="mcp-capacity text-xs text-gray-500 font-mono"></span>
-                                </div>
-                                <div id="mcp-tool-chips" class="mcp-chip-list" aria-live="polite">
-                                    <span class="text-xs text-gray-400">Loading MCP tools…</span>
-                                </div>
-                            </div>
-                            <div id="capability-controls" class="grid grid-cols-1 lg:grid-cols-2 gap-3"></div>
-                            <div id="legacy-command-controls" class="flex gap-2 pt-4">
-                                <input id="input-device-command" type="text" value="toggle" maxlength="31" class="min-w-0 flex-1 px-3 py-2 border border-gray-300 rounded-lg text-sm" aria-label="Custom command">
-                                <button onclick="devices.sendCustomCommand()" class="px-4 py-2 bg-brand-600 text-white rounded-lg hover:bg-brand-700 transition-colors text-sm font-medium">Send</button>
-                            </div>
-                        </div>
-                    </div>
+                <div id="detail-summary" class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+                    <div class="bg-white p-4 rounded-xl border border-gray-200 shadow-sm"><p data-i18n="device_detail.connection" class="text-xs font-semibold uppercase tracking-wide text-gray-500">Connection</p><div id="detail-summary-connection" class="mt-2 text-sm font-semibold"></div></div>
+                    <div class="bg-white p-4 rounded-xl border border-gray-200 shadow-sm"><p data-i18n="device_detail.device_type" class="text-xs font-semibold uppercase tracking-wide text-gray-500">Device Type</p><p id="detail-type" class="mt-2 text-sm font-semibold text-gray-800 capitalize">Unknown</p></div>
+                    <div class="bg-white p-4 rounded-xl border border-gray-200 shadow-sm sm:col-span-2 lg:col-span-1"><p data-i18n="device_detail.capabilities" class="text-xs font-semibold uppercase tracking-wide text-gray-500">Capabilities</p><div id="detail-summary-capabilities" class="mt-2 text-sm font-semibold"></div></div>
                 </div>
+
+                <section id="device-controls-card" class="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
+                    <div class="flex flex-col sm:flex-row sm:items-start justify-between gap-4 p-5 border-b border-gray-100">
+                        <div><h3 data-i18n="device_detail.controls" class="font-semibold text-gray-900">Device Controls</h3><p data-i18n="device_detail.controls_desc" class="text-xs text-gray-500 mt-1">Available functions reported by this device.</p></div>
+                        <button id="btn-refresh-capabilities" onclick="devices.refreshCapabilities()" class="inline-flex items-center justify-center px-3 py-2 bg-brand-50 text-brand-600 rounded-lg hover:bg-brand-100 transition-colors text-xs font-medium flex-shrink-0 disabled:opacity-50 disabled:cursor-not-allowed"><i class="ph ph-arrows-clockwise mr-1.5"></i><span data-i18n="device_detail.refresh">Refresh</span></button>
+                    </div>
+                    <div class="p-5">
+                        <div id="capability-offline-notice" class="hidden mb-4 rounded-lg border border-gray-200 bg-gray-50 p-4 text-sm text-gray-600"><p data-i18n="device_detail.offline_notice" class="font-medium text-gray-800">This device is currently offline.</p><p data-i18n="device_detail.offline_controls_desc" class="text-xs mt-1">Commands cannot run until the device reconnects.</p></div>
+                        <div id="capability-controls" class="space-y-3" aria-live="polite"></div>
+                    </div>
+                </section>
+
+                <section id="mcp-tools-card" class="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
+                    <div class="flex flex-col sm:flex-row sm:items-start justify-between gap-3 p-5 border-b border-gray-100"><div><h3 data-i18n="device_detail.mcp_tools" class="font-semibold text-gray-900">MCP Tools</h3><p data-i18n="device_detail.mcp_tools_desc" class="text-xs text-gray-500 mt-1">Choose commands exposed to MCP clients.</p></div><span id="mcp-capacity-text" class="mcp-capacity text-xs text-gray-500 font-mono"></span></div>
+                    <div id="mcp-tool-rows" class="divide-y divide-gray-100" aria-live="polite"><div data-i18n="device_detail.mcp_loading" class="p-5 text-sm text-gray-400">Loading MCP tools…</div></div>
+                </section>
+
+                <section id="device-info-card" class="bg-white p-5 rounded-xl border border-gray-200 shadow-sm">
+                    <div class="mb-4 border-b border-gray-100 pb-3"><h3 data-i18n="device_detail.info" class="font-semibold text-gray-900">Device Information</h3><p data-i18n="device_detail.info_desc" class="text-xs text-gray-500 mt-1">Identity and BLE metadata</p></div>
+                    <dl class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                        <div id="detail-identifier-row" class="hidden sm:col-span-2"><dt data-i18n="device_detail.identifier" class="text-xs text-gray-500 mb-1">Identifier</dt><dd id="detail-identifier" class="text-sm font-medium text-gray-800 font-mono break-all">Unknown</dd></div>
+                        <div id="detail-device-id-row"><dt data-i18n="device_detail.device_id" class="text-xs text-gray-500 mb-1">Device ID</dt><dd id="detail-device-id" class="text-sm font-medium text-gray-800 font-mono break-all">Unknown</dd></div>
+                        <div id="detail-ble-address-row"><dt data-i18n="device_detail.ble_address" class="text-xs text-gray-500 mb-1">BLE address</dt><dd id="detail-ble-address" class="text-sm font-medium text-gray-800 font-mono break-all">Unknown</dd></div>
+                    </dl>
+                </section>
+
+                <details id="device-advanced-section" class="group bg-white rounded-xl border border-gray-200 shadow-sm">
+                    <summary class="flex items-center p-5 cursor-pointer list-none text-sm font-semibold text-gray-800 hover:text-brand-600"><i class="ph ph-caret-right mr-2 transition-transform group-open:rotate-90"></i><span data-i18n="device_detail.advanced">Advanced Tools</span></summary>
+                    <div class="border-t border-gray-100 p-5">
+                        <h4 data-i18n="device_detail.custom_command" class="text-sm font-semibold text-gray-800">Send a custom command</h4><p data-i18n="device_detail.custom_command_warning" class="text-xs text-amber-700 mt-1 mb-4">Use only for debugging or devices without capability discovery.</p>
+                        <div id="legacy-command-controls" class="grid grid-cols-1 sm:grid-cols-3 gap-3 items-end">
+                            <div><label for="input-device-command" data-i18n="device_detail.command" class="block text-xs font-medium text-gray-600 mb-1.5">Command</label><input id="input-device-command" type="text" value="toggle" maxlength="31" class="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm"></div>
+                            <div><label for="input-command-value-type" data-i18n="device_detail.value_type" class="block text-xs font-medium text-gray-600 mb-1.5">Value type</label><select id="input-command-value-type" onchange="devices.updateCustomCommandValueInput()" class="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm bg-white"><option value="none">none</option><option value="boolean">boolean</option><option value="integer">integer</option></select></div>
+                            <div id="custom-command-value-wrapper" class="hidden"><label for="input-command-value" data-i18n="device_detail.value" class="block text-xs font-medium text-gray-600 mb-1.5">Value</label><input id="input-command-value" type="text" class="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm"></div>
+                            <button onclick="devices.sendCustomCommand()" class="sm:col-span-3 justify-self-start px-4 py-2 bg-brand-600 text-white rounded-lg hover:bg-brand-700 transition-colors text-sm font-medium"><span data-i18n="device_detail.send">Send command</span></button>
+                        </div>
+                    </div>
+                </details>
+
+                <section id="device-management-card" class="bg-white p-5 rounded-xl border border-red-100 shadow-sm">
+                    <h3 data-i18n="device_detail.management" class="font-semibold text-gray-900">Device Management</h3>
+                    <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mt-4"><div><p data-i18n="device_detail.remove_title" class="text-sm font-medium text-gray-800">Remove this device from the gateway</p><p data-i18n="device_detail.remove_desc" class="text-xs text-gray-500 mt-1">The gateway will remove its configuration and stop reconnecting automatically.</p></div><button onclick="devices.confirmDeleteDetail()" class="w-full sm:w-auto px-4 py-2 bg-white border border-red-200 text-red-600 rounded-lg hover:bg-red-50 transition-colors text-sm font-medium flex items-center justify-center flex-shrink-0"><i class="ph ph-trash mr-2"></i><span data-i18n="device_detail.remove">Remove device</span></button></div>
+                </section>
             </section>

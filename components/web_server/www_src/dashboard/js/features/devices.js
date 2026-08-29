@@ -1,6 +1,8 @@
 // --- Connected Devices Logic ---
 const devices = {
     capabilitiesLoadId: 0,
+    currentCapabilityState: 'unknown',
+    currentCapabilities: [],
     loadPromise: null,
     connectionRefreshes: new Map(),
 
@@ -127,22 +129,25 @@ const devices = {
 
     openDetailView(dev, updateRoute = true) {
         state.selectedDeviceDetail = dev;
-        
-        // Update UI elements
-        document.getElementById('detail-name').innerText = dev.customName;
-        document.getElementById('detail-mac').innerText = dev.mac;
-        document.getElementById('detail-type').innerText = dev.type;
-        document.getElementById('detail-header-type').innerText = dev.type;
-        document.getElementById('detail-device-id').innerText = dev.id;
-        document.getElementById('detail-ble-address').innerText = dev.mac;
-        
-        // Status
-        const statusEl = document.getElementById('detail-status');
-        if(dev.status === 'online') {
-            statusEl.innerHTML = `<span class="w-2.5 h-2.5 rounded-full bg-green-500 mr-2 animate-pulse"></span> <span class="text-green-600">Online</span>`;
-        } else {
-            statusEl.innerHTML = `<span class="w-2.5 h-2.5 rounded-full bg-gray-400 mr-2"></span> <span class="text-gray-500">Offline</span>`;
-        }
+        this.currentCapabilities = [];
+        document.getElementById('device-advanced-section').open = false;
+        document.getElementById('detail-name').textContent = dev.customName;
+        document.getElementById('detail-mac').textContent = dev.mac;
+        document.getElementById('detail-type').textContent = dev.type;
+        document.getElementById('detail-header-type').textContent = dev.type;
+
+        const duplicateIdentifier = dev.id === dev.mac;
+        document.getElementById('detail-identifier-row').classList.toggle('hidden', !duplicateIdentifier);
+        document.getElementById('detail-device-id-row').classList.toggle('hidden', duplicateIdentifier);
+        document.getElementById('detail-ble-address-row').classList.toggle('hidden', duplicateIdentifier);
+        document.getElementById('detail-identifier').textContent = dev.id;
+        document.getElementById('detail-device-id').textContent = dev.id;
+        document.getElementById('detail-ble-address').textContent = dev.mac;
+
+        this.renderConnectionState(dev);
+        this.renderCapabilityState('loading');
+        document.getElementById('capability-offline-notice').classList.toggle(
+            'hidden', dev.status === 'online');
 
         // Icon
         const typeIconMap = {
@@ -156,11 +161,31 @@ const devices = {
         iconContainer.className = `w-12 h-12 rounded-lg flex items-center justify-center mr-4 text-2xl flex-shrink-0 ${iconClass.split(' ').slice(1).join(' ')}`;
         iconContainer.innerHTML = `<i class="ph ${iconClass.split(' ')[0]}"></i>`;
 
-        // Load Logs (device log panel removed)
-        this.loadCapabilities(dev);
-
-        // Switch view
+        i18n.applyTranslations();
         nav.switchTab('device-detail', updateRoute);
+        this.loadCapabilities(dev);
+    },
+
+    renderConnectionState(device) {
+        const online = device.status === 'online';
+        const markup = `<span class="w-2.5 h-2.5 rounded-full ${online ? 'bg-green-500' : 'bg-gray-400'} mr-2"></span><span class="${online ? 'text-green-600' : 'text-gray-500'}">${i18n.t(online ? 'device_detail.online' : 'device_detail.offline')}</span>`;
+        document.getElementById('detail-status').innerHTML = markup;
+        document.getElementById('detail-summary-connection').innerHTML = markup;
+    },
+
+    renderCapabilityState(capabilityState) {
+        const normalized = capabilityState === 'discovering' ? 'loading' : (capabilityState || 'unknown');
+        this.currentCapabilityState = normalized;
+        const styles = {
+            ready: ['bg-green-500', 'text-green-700'],
+            loading: ['bg-blue-500', 'text-blue-700'],
+            stale: ['bg-amber-500', 'text-amber-700'],
+            error: ['bg-red-500', 'text-red-700'],
+            unknown: ['bg-gray-400', 'text-gray-600']
+        };
+        const style = styles[normalized] || styles.unknown;
+        const key = styles[normalized] ? normalized : 'unknown';
+        document.getElementById('detail-summary-capabilities').innerHTML = `<span class="inline-flex items-center"><span class="w-2.5 h-2.5 rounded-full ${style[0]} mr-2"></span><span class="${style[1]}">${i18n.t(`device_detail.capability_${key}`)}</span></span>`;
     },
 
     async saveEdit(event) {
@@ -172,7 +197,7 @@ const devices = {
         const btn = document.getElementById('btn-save-edit');
         
         if(!newName) {
-            ui.showToast("Name cannot be empty", "error");
+            ui.showToast(i18n.t('device_detail.name_required'), "error");
             document.getElementById('input-edit-name').focus();
             return;
         }
@@ -183,7 +208,7 @@ const devices = {
         }
 
         const originalHtml = btn.innerHTML;
-        btn.innerHTML = `<i class="ph ph-spinner animate-spin mr-1.5 text-lg"></i> Saving...`;
+        btn.innerHTML = `<i class="ph ph-spinner animate-spin mr-1.5 text-lg"></i> ${i18n.t('device_detail.saving')}`;
         btn.disabled = true;
         btn.classList.add('opacity-80', 'cursor-not-allowed');
 
@@ -199,11 +224,11 @@ const devices = {
                 // Update current detail view
                 this.openDetailView(state.connectedDevices[devIndex]);
                 
-                ui.showToast("Device updated", "success");
+                ui.showToast(i18n.t('device_detail.updated'), "success");
                 ui.closeEditModal();
             }
         } catch(e) {
-            ui.showToast(`Failed to update device: ${e.message}`, "error");
+            ui.showToast(`${i18n.t('device_detail.update_failed')}: ${e.message}`, "error");
         } finally {
             btn.innerHTML = originalHtml;
             btn.disabled = false;
@@ -224,43 +249,87 @@ const devices = {
     async sendCustomCommand() {
         const command = document.getElementById('input-device-command').value.trim();
         if (!command) {
-            ui.showToast('Command cannot be empty', 'error');
+            ui.showToast(i18n.t('device_detail.command_required'), 'error');
             return;
         }
-        await this.sendCommand(command, 'boolean', true);
+        const valueType = document.getElementById('input-command-value-type').value;
+        const rawValue = document.getElementById('input-command-value').value.trim();
+        let value = null;
+        if (valueType === 'boolean') {
+            if (!['true', 'false'].includes(rawValue.toLowerCase())) {
+                ui.showToast(i18n.t('device_detail.boolean_value_error'), 'error');
+                return;
+            }
+            value = rawValue.toLowerCase() === 'true';
+        } else if (valueType === 'integer') {
+            if (!/^-?\d+$/.test(rawValue)) {
+                ui.showToast(i18n.t('device_detail.integer_value_error'), 'error');
+                return;
+            }
+            value = Number(rawValue);
+        }
+        await this.sendCommand(command, valueType, value);
     },
 
-    async sendCommand(command, valueType = 'none', value = null) {
+    updateCustomCommandValueInput() {
+        const valueType = document.getElementById('input-command-value-type').value;
+        const wrapper = document.getElementById('custom-command-value-wrapper');
+        const input = document.getElementById('input-command-value');
+        wrapper.classList.toggle('hidden', valueType === 'none');
+        input.placeholder = valueType === 'boolean' ? 'true / false' : '';
+        input.inputMode = valueType === 'integer' ? 'numeric' : 'text';
+    },
+
+    async sendCommand(command, valueType = 'none', value = null, controls = []) {
         const device = state.selectedDeviceDetail;
         if (!device) return;
+        if (device.status !== 'online') {
+            ui.showToast(i18n.t('device_detail.offline_command_error'), 'error');
+            return;
+        }
+        controls.forEach(control => control.disabled = true);
         try {
             const result = await api.sendCommand(device.id, command, valueType, value);
-            ui.showToast(result.message || `Command ${command} completed`, 'success');
+            ui.showToast(result.message || i18n.t('device_detail.command_completed'), 'success');
         } catch (error) {
             ui.showToast(error.message, 'error');
+        } finally {
+            controls.forEach(control => control.disabled = false);
         }
     },
 
     async refreshCapabilities() {
         const device = state.selectedDeviceDetail;
         if (!device) return;
+        const button = document.getElementById('btn-refresh-capabilities');
+        const label = button.querySelector('span');
+        button.disabled = true;
+        button.querySelector('i').classList.add('animate-spin');
+        label.textContent = i18n.t('device_detail.refreshing');
+        this.renderCapabilityState('loading');
         try {
             await api.refreshCapabilities(device.id);
-            ui.showToast('Capability refresh queued', 'success');
-            setTimeout(() => this.loadCapabilities(device), 2500);
+            await new Promise(resolve => setTimeout(resolve, 2500));
+            const loaded = await this.loadCapabilities(device, true);
+            if (loaded) ui.showToast(i18n.t('device_detail.capabilities_updated'), 'success');
         } catch (error) {
             ui.showToast(error.message, 'error');
+            this.renderCapabilityState('error');
+        } finally {
+            button.disabled = false;
+            button.querySelector('i').classList.remove('animate-spin');
+            label.textContent = i18n.t('device_detail.refresh');
         }
     },
 
-    async loadCapabilities(device) {
+    async loadCapabilities(device, syncMcpAfterLoad = false) {
         const loadId = ++this.capabilitiesLoadId;
-        mcpTools.loadDevice(device.id);
-        const stateText = document.getElementById('capability-state');
         const controls = document.getElementById('capability-controls');
-        const legacy = document.getElementById('legacy-command-controls');
+        this.currentCapabilities = [];
         controls.replaceChildren();
-        stateText.textContent = 'Loading capabilities...';
+        this.renderCapabilityState('loading');
+        this.renderCapabilitiesLoading(controls);
+        if (!syncMcpAfterLoad) void mcpTools.loadDevice(device.id);
         try {
             const response = await api.getCapabilities(device.id);
             // Opening a detail view also updates the URL hash, which
@@ -270,63 +339,176 @@ const devices = {
             if (loadId !== this.capabilitiesLoadId ||
                 state.selectedDeviceDetail?.id !== device.id) return;
             const snapshot = response.data || {};
-            stateText.textContent = `Capability state: ${snapshot.state || 'unknown'}`;
+            this.renderCapabilityState(snapshot.state);
             const commands = Array.isArray(snapshot.commands) ? snapshot.commands : [];
-            legacy.classList.toggle('hidden', commands.length > 0 && snapshot.state === 'ready');
-            commands.forEach(capability => {
-                const row = document.createElement('div');
-                row.className = 'p-4 rounded-lg border border-gray-200 bg-gray-50 space-y-2';
-                const label = document.createElement('label');
-                label.className = 'block text-sm font-medium text-gray-700';
-                label.textContent = capability.label || capability.name;
-                row.appendChild(label);
-
-                if (capability.value_type === 'integer') {
-                    const wrapper = document.createElement('div');
-                    wrapper.className = 'flex gap-2';
-                    const input = document.createElement('input');
-                    input.type = 'number';
-                    input.min = capability.minimum;
-                    input.max = capability.maximum;
-                    input.step = capability.step || 1;
-                    input.value = capability.minimum;
-                    input.className = 'min-w-0 flex-1 px-3 py-2 border border-gray-300 rounded-lg text-sm';
-                    const button = document.createElement('button');
-                    button.className = 'px-4 py-2 bg-brand-600 text-white rounded-lg hover:bg-brand-700 transition-colors text-sm';
-                    button.textContent = capability.unit ? `Set ${capability.unit}` : 'Set';
-                    button.onclick = () => this.sendCommand(capability.name, 'integer', input.value);
-                    wrapper.append(input, button);
-                    row.appendChild(wrapper);
-                } else if (capability.value_type === 'boolean') {
-                    const wrapper = document.createElement('div');
-                    wrapper.className = 'grid grid-cols-2 gap-2';
-                    ['On', 'Off'].forEach((text, index) => {
-                        const button = document.createElement('button');
-                        button.className = 'px-4 py-2 bg-brand-600 text-white rounded-lg hover:bg-brand-700 transition-colors text-sm';
-                        button.textContent = text;
-                        button.onclick = () => this.sendCommand(capability.name, 'boolean', index === 0);
-                        wrapper.appendChild(button);
-                    });
-                    row.appendChild(wrapper);
-                } else {
-                    const button = document.createElement('button');
-                    button.className = 'w-full px-4 py-2 bg-brand-600 text-white rounded-lg hover:bg-brand-700 transition-colors text-sm';
-                    button.textContent = capability.destructive ? 'Run (confirmation required)' : 'Run';
-                    button.onclick = () => {
-                        if (!capability.destructive || confirm(`Run ${capability.name}?`)) {
-                            this.sendCommand(capability.name);
-                        }
-                    };
-                    row.appendChild(button);
-                }
-                controls.appendChild(row);
-            });
+            this.currentCapabilities = commands;
+            this.renderCapabilities(commands, device);
+            if (syncMcpAfterLoad) await mcpTools.loadDevice(device.id);
+            return true;
         } catch (error) {
             if (loadId !== this.capabilitiesLoadId ||
                 state.selectedDeviceDetail?.id !== device.id) return;
-            stateText.textContent = `Capabilities unavailable: ${error.message}`;
-            legacy.classList.remove('hidden');
+            this.renderCapabilityState('error');
+            this.currentCapabilities = [];
+            this.renderCapabilityError(controls, error, device);
+            return false;
         }
+    },
+
+    renderCapabilitiesLoading(container) {
+        const loading = document.createElement('div');
+        loading.className = 'rounded-lg border border-gray-200 bg-gray-50 p-5 text-sm text-gray-500';
+        loading.innerHTML = `<i class="ph ph-spinner animate-spin mr-2"></i>${i18n.t('device_detail.loading_capabilities')}`;
+        container.appendChild(loading);
+    },
+
+    renderCapabilities(commands, device) {
+        const controls = document.getElementById('capability-controls');
+        controls.replaceChildren();
+        if (!commands.length) {
+            this.renderCapabilityEmptyState(controls, device);
+            return;
+        }
+        commands.forEach(capability =>
+            controls.appendChild(this.renderCapabilityControl(capability, device)));
+    },
+
+    renderCapabilityControl(capability, device) {
+        const row = document.createElement('div');
+        row.className = `flex flex-col md:flex-row md:items-center justify-between gap-4 p-4 rounded-lg border ${capability.destructive ? 'border-red-200 bg-red-50/50' : 'border-gray-200 bg-gray-50'}`;
+        const description = document.createElement('div');
+        description.className = 'min-w-0';
+        const heading = document.createElement('div');
+        heading.className = 'flex flex-wrap items-center gap-2';
+        const label = document.createElement('h4');
+        label.className = 'text-sm font-semibold text-gray-800 break-words';
+        label.textContent = capability.label || capability.name;
+        heading.appendChild(label);
+        if (capability.destructive) {
+            const badge = document.createElement('span');
+            badge.className = 'inline-flex items-center rounded-full bg-red-100 px-2 py-0.5 text-xs font-semibold text-red-700';
+            badge.textContent = `⚠ ${i18n.t('device_detail.destructive')}`;
+            heading.appendChild(badge);
+        }
+        const copy = document.createElement('p');
+        copy.className = 'text-xs text-gray-500 mt-1 break-words';
+        copy.textContent = capability.description || capability.name;
+        description.append(heading, copy);
+
+        const control = capability.value_type === 'integer'
+            ? this.renderIntegerControl(capability, device)
+            : (capability.value_type === 'boolean'
+                ? this.renderBooleanControl(capability, device)
+                : this.renderActionControl(capability, device));
+        row.append(description, control);
+        return row;
+    },
+
+    renderBooleanControl(capability, device) {
+        const wrapper = document.createElement('div');
+        wrapper.className = 'grid grid-cols-2 gap-2 w-full sm:w-auto flex-shrink-0';
+        const buttons = [true, false].map((value, index) => {
+            const button = document.createElement('button');
+            button.type = 'button';
+            button.disabled = device.status !== 'online';
+            button.className = index === 0
+                ? 'px-4 py-2 bg-brand-600 text-white rounded-lg hover:bg-brand-700 transition-colors text-sm font-medium disabled:opacity-50 disabled:cursor-not-allowed'
+                : 'px-4 py-2 bg-white border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-100 transition-colors text-sm font-medium disabled:opacity-50 disabled:cursor-not-allowed';
+            button.textContent = i18n.t(value ? 'device_detail.on' : 'device_detail.off');
+            button.onclick = () => this.sendCommand(capability.name, 'boolean', value, buttons);
+            return button;
+        });
+        wrapper.append(...buttons);
+        return wrapper;
+    },
+
+    renderIntegerControl(capability, device) {
+        const container = document.createElement('div');
+        container.className = 'w-full md:w-auto flex-shrink-0';
+        const wrapper = document.createElement('div');
+        wrapper.className = 'flex flex-col sm:flex-row gap-2';
+        const input = document.createElement('input');
+        input.type = 'number';
+        if (Number.isFinite(capability.minimum)) input.min = capability.minimum;
+        if (Number.isFinite(capability.maximum)) input.max = capability.maximum;
+        input.step = capability.step || 1;
+        input.value = Number.isFinite(capability.minimum) ? capability.minimum : 0;
+        input.disabled = device.status !== 'online';
+        input.className = 'w-full sm:w-40 px-3 py-2 border border-gray-300 rounded-lg text-sm disabled:bg-gray-100';
+        const button = document.createElement('button');
+        button.type = 'button';
+        button.disabled = device.status !== 'online';
+        button.className = 'px-4 py-2 bg-brand-600 text-white rounded-lg hover:bg-brand-700 transition-colors text-sm font-medium disabled:opacity-50 disabled:cursor-not-allowed';
+        button.textContent = i18n.t('device_detail.apply');
+        button.onclick = () => this.sendCommand(capability.name, 'integer', input.value, [input, button]);
+        wrapper.append(input);
+        if (capability.unit) {
+            const unit = document.createElement('span');
+            unit.className = 'self-center text-sm text-gray-500';
+            unit.textContent = capability.unit;
+            wrapper.appendChild(unit);
+        }
+        wrapper.appendChild(button);
+        container.appendChild(wrapper);
+        const rangeParts = [];
+        if (Number.isFinite(capability.minimum) && Number.isFinite(capability.maximum)) rangeParts.push(`${capability.minimum}–${capability.maximum}`);
+        if (capability.step) rangeParts.push(`${i18n.t('device_detail.step')}: ${capability.step}`);
+        if (rangeParts.length) {
+            const range = document.createElement('p');
+            range.className = 'text-xs text-gray-400 mt-1';
+            range.textContent = rangeParts.join(' · ');
+            container.appendChild(range);
+        }
+        return container;
+    },
+
+    renderActionControl(capability, device) {
+        const button = document.createElement('button');
+        button.type = 'button';
+        button.disabled = device.status !== 'online';
+        button.className = capability.destructive
+            ? 'w-full md:w-auto px-4 py-2 bg-white border border-red-300 text-red-700 rounded-lg hover:bg-red-100 transition-colors text-sm font-medium flex-shrink-0 disabled:opacity-50 disabled:cursor-not-allowed'
+            : 'w-full md:w-auto px-4 py-2 bg-brand-600 text-white rounded-lg hover:bg-brand-700 transition-colors text-sm font-medium flex-shrink-0 disabled:opacity-50 disabled:cursor-not-allowed';
+        button.textContent = capability.destructive
+            ? i18n.t('device_detail.run_confirm')
+            : i18n.t('device_detail.run');
+        button.onclick = () => {
+            const label = capability.label || capability.name;
+            if (!capability.destructive || confirm(i18n.t('device_detail.run_destructive_confirm').replace('{name}', label))) {
+                this.sendCommand(capability.name, 'none', null, [button]);
+            }
+        };
+        return button;
+    },
+
+    renderCapabilityEmptyState(container, device) {
+        const empty = document.createElement('div');
+        empty.className = 'rounded-lg border border-dashed border-gray-300 p-6 text-center';
+        empty.innerHTML = `<i class="ph ph-plugs text-2xl text-gray-400"></i><h4 class="mt-2 text-sm font-semibold text-gray-800">${i18n.t('device_detail.no_capabilities')}</h4><p class="mt-1 text-xs text-gray-500">${i18n.t('device_detail.no_capabilities_desc')}</p>`;
+        const retry = document.createElement('button');
+        retry.className = 'mt-4 px-4 py-2 bg-brand-50 text-brand-700 rounded-lg hover:bg-brand-100 text-sm font-medium';
+        retry.textContent = i18n.t('device_detail.refresh_capabilities');
+        retry.onclick = () => this.refreshCapabilities(device);
+        empty.appendChild(retry);
+        container.appendChild(empty);
+    },
+
+    renderCapabilityError(container, error, device) {
+        container.replaceChildren();
+        const failure = document.createElement('div');
+        failure.className = 'rounded-lg border border-red-200 bg-red-50 p-5';
+        const title = document.createElement('h4');
+        title.className = 'text-sm font-semibold text-red-800';
+        title.textContent = i18n.t('device_detail.capabilities_load_error');
+        const message = document.createElement('p');
+        message.className = 'text-xs text-red-700 mt-1 break-words';
+        message.textContent = error.message;
+        const retry = document.createElement('button');
+        retry.className = 'mt-3 px-3 py-2 bg-white border border-red-200 text-red-700 rounded-lg hover:bg-red-100 text-sm font-medium';
+        retry.textContent = i18n.t('device_detail.retry');
+        retry.onclick = () => this.loadCapabilities(device);
+        failure.append(title, message, retry);
+        container.appendChild(failure);
     },
 
     async addDeviceFromModal() {
@@ -402,14 +584,20 @@ const devices = {
     },
 
     async remove(deviceId, fromDetailView = false) {
-        if(!confirm("Are you sure you want to remove this device from the gateway?")) return;
+        const device = state.connectedDevices.find(dev => dev.id === deviceId);
+        const name = device?.customName || deviceId;
+        let message = i18n.t('device_detail.remove_confirm').replace('{name}', name);
+        if ((mcpTools.enabledByDevice.get(deviceId) || 0) > 0) {
+            message += `\n\n${i18n.t('device_detail.remove_mcp_warning')}`;
+        }
+        if(!confirm(message)) return;
         
         try {
             await api.removeDevice(deviceId);
             this.connectionRefreshes.delete(deviceId);
             state.connectedDevices = state.connectedDevices.filter(d => d.id !== deviceId);
 
-            ui.showToast("Device removed", "info");
+            ui.showToast(i18n.t('device_detail.removed'), "info");
             
             if(fromDetailView) {
                 nav.switchTab('devices');
@@ -418,7 +606,7 @@ const devices = {
             }
             
         } catch(e) {
-            ui.showToast("Failed to remove device", "error");
+            ui.showToast(i18n.t('device_detail.remove_failed'), "error");
         }
     }
 };
