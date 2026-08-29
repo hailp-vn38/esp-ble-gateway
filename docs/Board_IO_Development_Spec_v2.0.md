@@ -3,7 +3,7 @@
 **Phiên bản:** 2.1  
 **Ngày cập nhật:** 26/08/2026  
 **Target:** ESP32-S3  
-**Framework:** ESP-IDF 5.4.4 native  
+**Framework:** ESP-IDF 6.1.0 native  
 **Repository:** `hailp-vn38/esp-ble-gateway`  
 **Trạng thái:** Development Specification — Ready for Implementation  
 **Thay thế:** `Board_IO_Development_Spec.md` v1.0
@@ -38,9 +38,11 @@ Các thay đổi sau vòng review sẵn sàng triển khai production:
      `UNINITIALIZED -> INITIALIZING -> RUNNING -> STOPPING -> UNINITIALIZED`.
 
 2. `board_io_deinit()` đổi thành:
+
    ```c
    esp_err_t board_io_deinit(void);
    ```
+
    để có thể báo lỗi lifecycle và self-deinit.
 
 3. Public button event bỏ `BUTTON_PRESSED` và `BUTTON_RELEASED`.
@@ -1113,14 +1115,14 @@ duplicate tại đây để tránh drift khi sửa enum.
 
 Pattern mặc định cho single-color LED:
 
-| State | Pattern |
-|---|---|
-| BOOTING | 100 ms ON / 100 ms OFF |
-| PROVISIONING | 500 ms ON / 500 ms OFF |
-| WIFI_CONNECTING | 125 ms ON / 125 ms OFF |
-| READY | steady ON |
-| DEGRADED | 150 ms ON / 850 ms OFF |
-| ERROR | 3 x 150 ms blink + 1000 ms pause |
+| State           | Pattern                          |
+| --------------- | -------------------------------- |
+| BOOTING         | 100 ms ON / 100 ms OFF           |
+| PROVISIONING    | 500 ms ON / 500 ms OFF           |
+| WIFI_CONNECTING | 125 ms ON / 125 ms OFF           |
+| READY           | steady ON                        |
+| DEGRADED        | 150 ms ON / 850 ms OFF           |
+| ERROR           | 3 x 150 ms blink + 1000 ms pause |
 
 Pattern timing constants ở internal code hoặc Kconfig tùy implementation; V2 không cần expose mọi timing ra menuconfig.
 
@@ -3108,30 +3110,30 @@ docs/Tai_lieu_Test_ESP32_BLE_Gateway.md
 
 # 80. Acceptance criteria
 
-| Area | Acceptance |
-|---|---|
-| Lifecycle | `init -> deinit -> init` pass |
-| Double init | second init while RUNNING rejected |
-| Deinit | worker confirms stop before resources free |
-| Button | exactly one semantic action per physical press |
-| Debounce | no duplicate event under bounce pattern |
-| Restart | exact threshold classified correctly |
-| Factory reset | exact threshold classified correctly |
-| LED | API call does not block for pattern duration |
-| Activity | latest trigger extends pulse |
-| Identify | retrigger restarts duration |
-| Error state | not obscured by activity/identify |
-| Restart armed | visible feedback even when base is ERROR (v2.1) |
-| Pin blocklist | flash/PSRAM pins rejected per module config (v2.1) |
+| Area                | Acceptance                                                |
+| ------------------- | --------------------------------------------------------- |
+| Lifecycle           | `init -> deinit -> init` pass                             |
+| Double init         | second init while RUNNING rejected                        |
+| Deinit              | worker confirms stop before resources free                |
+| Button              | exactly one semantic action per physical press            |
+| Debounce            | no duplicate event under bounce pattern                   |
+| Restart             | exact threshold classified correctly                      |
+| Factory reset       | exact threshold classified correctly                      |
+| LED                 | API call does not block for pattern duration              |
+| Activity            | latest trigger extends pulse                              |
+| Identify            | retrigger restarts duration                               |
+| Error state         | not obscured by activity/identify                         |
+| Restart armed       | visible feedback even when base is ERROR (v2.1)           |
+| Pin blocklist       | flash/PSRAM pins rejected per module config (v2.1)        |
 | Display runtime off | update accepted, latest pending restored on enable (v2.1) |
-| Display | burst update latest-state-wins |
-| Display refresh | never exceeds configured cap |
-| Display fault | optional fault does not kill worker |
-| Runtime status | reconnect reflected without reboot |
-| Thread safety | no deadlock in concurrent API test |
-| Memory | no linear leak after ISR-service warm-up |
-| HIL | button/LED/provisioning/reconnect pass |
-| Soak | 8–24 h without unexpected reset/deadlock |
+| Display             | burst update latest-state-wins                            |
+| Display refresh     | never exceeds configured cap                              |
+| Display fault       | optional fault does not kill worker                       |
+| Runtime status      | reconnect reflected without reboot                        |
+| Thread safety       | no deadlock in concurrent API test                        |
+| Memory              | no linear leak after ISR-service warm-up                  |
+| HIL                 | button/LED/provisioning/reconnect pass                    |
+| Soak                | 8–24 h without unexpected reset/deadlock                  |
 
 ---
 

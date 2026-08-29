@@ -22,13 +22,13 @@
 
 Chốt 5 quyết định trước khi code (decision record):
 
-| # | Quyết định | Chọn |
-|---|---|---|
-| D1 | Worker count / queue length | 2 workers / queue 2, Kconfig `CONFIG_CMD_EXEC_*` để benchmark sau (§13-14) |
-| D2 | Vị trí executor | Component riêng `components/command_executor` |
-| D3 | Deadline semantics | Queue-full → 503; accepted nhưng expired → 504 (§50) |
-| D4 | `mcp_async` | Phương án A — xóa hẳn (§8) |
-| D5 | `error.code` machine-readable | Để P2, giữ response schema ổn định (§92) |
+| #   | Quyết định                    | Chọn                                                                       |
+| --- | ----------------------------- | -------------------------------------------------------------------------- |
+| D1  | Worker count / queue length   | 2 workers / queue 2, Kconfig `CONFIG_CMD_EXEC_*` để benchmark sau (§13-14) |
+| D2  | Vị trí executor               | Component riêng `components/command_executor`                              |
+| D3  | Deadline semantics            | Queue-full → 503; accepted nhưng expired → 504 (§50)                       |
+| D4  | `mcp_async`                   | Phương án A — xóa hẳn (§8)                                                 |
+| D5  | `error.code` machine-readable | Để P2, giữ response schema ổn định (§92)                                   |
 
 **Quick wins:**
 
@@ -147,16 +147,16 @@ dashboard.
 
 ## Trạng thái thực thi
 
-| Giai đoạn | Trạng thái | PR/Ghi chú |
-|---|---|---|
-| GĐ0 Quick wins | ✅ Code xong | Mutex `s_log_snapshot`; constants `WEB_GATEWAY_*` / `WEB_PROVISIONING_*` (headroom 17→21, 12→14) |
-| GĐ1 BLE esp_timer | ✅ Đã test trên board | POST/GET/DELETE/auto-stop ~6s ✓; DELETE→POST ngay: scan mới sống sót (stale callback hết hiệu lực) |
-| GĐ2 command_executor | ✅ Đã test trên board | 4/4 unit test PASS; fix bug stats decrement trong quá trình test |
-| GĐ3 Migrate REST | ✅ Đã test trên board | 400 sync / 502 async NOT_CONNECTED đúng mapping; burst 90 lệnh, heap ổn định (94868→94324→94508); status/logs responsive |
-| GĐ4 Migrate MCP + xóa mcp_async | ✅ Đã test trên board | Xóa `mcp_async.c` + Kconfig stack; `/mcp` device_command → executor completion format JSON-RPC (§67); queue-full 503 test lại qua executor thật; 119 PASS / 8 FAIL DNS pre-existing |
-| GĐ5 HTTP body correctness | ✅ Đã test trên board | 413+close với body lớn; 408+close sau ~3.4s với slow client; keep-alive GIỮ cho body đã consume (400 rồi request kế tiếp vẫn OK trên cùng socket); limit theo endpoint đúng (600B: devices=413, command=400) |
-| GĐ6 Services + headroom | ✅ Đã test trên board | `gateway_status` single source; add/list/delete device qua executor (async) hoạt động; MCP `get_status` dùng chung service |
-| GĐ7 P2 metrics/tuning | ✅ Đã test trên board | Block `executor` trong `/api/status` live: burst 12 lệnh → max_queue_depth=2, max_queue_wait_ms=9; worker_stack_min=3104B (~76% margin, đạt §86); error codes + CSP/nosniff/referrer verified |
+| Giai đoạn                       | Trạng thái            | PR/Ghi chú                                                                                                                                                                                                   |
+| ------------------------------- | --------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| GĐ0 Quick wins                  | ✅ Code xong          | Mutex `s_log_snapshot`; constants `WEB_GATEWAY_*` / `WEB_PROVISIONING_*` (headroom 17→21, 12→14)                                                                                                             |
+| GĐ1 BLE esp_timer               | ✅ Đã test trên board | POST/GET/DELETE/auto-stop ~6s ✓; DELETE→POST ngay: scan mới sống sót (stale callback hết hiệu lực)                                                                                                           |
+| GĐ2 command_executor            | ✅ Đã test trên board | 4/4 unit test PASS; fix bug stats decrement trong quá trình test                                                                                                                                             |
+| GĐ3 Migrate REST                | ✅ Đã test trên board | 400 sync / 502 async NOT_CONNECTED đúng mapping; burst 90 lệnh, heap ổn định (94868→94324→94508); status/logs responsive                                                                                     |
+| GĐ4 Migrate MCP + xóa mcp_async | ✅ Đã test trên board | Xóa `mcp_async.c` + Kconfig stack; `/mcp` device_command → executor completion format JSON-RPC (§67); queue-full 503 test lại qua executor thật; 119 PASS / 8 FAIL DNS pre-existing                          |
+| GĐ5 HTTP body correctness       | ✅ Đã test trên board | 413+close với body lớn; 408+close sau ~3.4s với slow client; keep-alive GIỮ cho body đã consume (400 rồi request kế tiếp vẫn OK trên cùng socket); limit theo endpoint đúng (600B: devices=413, command=400) |
+| GĐ6 Services + headroom         | ✅ Đã test trên board | `gateway_status` single source; add/list/delete device qua executor (async) hoạt động; MCP `get_status` dùng chung service                                                                                   |
+| GĐ7 P2 metrics/tuning           | ✅ Đã test trên board | Block `executor` trong `/api/status` live: burst 12 lệnh → max_queue_depth=2, max_queue_wait_ms=9; worker_stack_min=3104B (~76% margin, đạt §86); error codes + CSP/nosniff/referrer verified                |
 
 ## Kết cục
 
@@ -177,7 +177,7 @@ cd test && idf.py -p <PORT> flash monitor   # chọn command_executor tests
 
 ### Ghi chú phát hiện thêm khi thực hiện
 
-- `sdkconfig.defaults` có dòng `HTTPD_RECV_TIMEOUT_SEC` không tồn tại trong IDF 5.4.4
+- `sdkconfig.defaults` có dòng `HTTPD_RECV_TIMEOUT_SEC` không tồn tại trong IDF 6.1.0
   (Kconfig warning lúc build) — symbol đúng là `HTTPD_RECV_WAIT_TIMEOUT`? Cần dọn ở GĐ5.
 - `components/web_server/README.md` còn mô tả kiến trúc cũ (task-per-request,
   `COMMAND_WORKER_COUNT`) — cần cập nhật sau GĐ4.

@@ -164,19 +164,19 @@ Tăng `GW_PROTOCOL_VERSION` từ 2 lên 3. Gateway v3 vẫn nhận message versi
 
 Không tái sử dụng key cũ với ý nghĩa mới. Bổ sung key:
 
-| Key | Tên | Kiểu | Ghi chú |
-| ---: | --- | --- | --- |
-| 11 | `snapshot_id` | uint32 | ID khác 0, đổi ở mỗi snapshot |
-| 12 | `sequence` | uint16 | Index item, bắt đầu từ 0 |
-| 13 | `total` | uint16 | Tổng số item |
-| 14 | `value_type` | uint8 | 0 none, 1 bool, 2 int |
-| 15 | `flags` | uint8 | idempotent/destructive |
-| 16 | `min_value` | int32 | Chỉ dùng cho integer |
-| 17 | `max_value` | int32 | Chỉ dùng cho integer |
-| 18 | `step` | uint32 | Chỉ dùng cho integer |
-| 19 | `label` | text | Tối đa 31 byte UTF-8 |
-| 20 | `unit` | text | Tối đa 11 byte UTF-8 |
-| 21 | `capability_revision` | uint32 | Tăng khi schema command đổi |
+| Key | Tên                   | Kiểu   | Ghi chú                       |
+| --: | --------------------- | ------ | ----------------------------- |
+|  11 | `snapshot_id`         | uint32 | ID khác 0, đổi ở mỗi snapshot |
+|  12 | `sequence`            | uint16 | Index item, bắt đầu từ 0      |
+|  13 | `total`               | uint16 | Tổng số item                  |
+|  14 | `value_type`          | uint8  | 0 none, 1 bool, 2 int         |
+|  15 | `flags`               | uint8  | idempotent/destructive        |
+|  16 | `min_value`           | int32  | Chỉ dùng cho integer          |
+|  17 | `max_value`           | int32  | Chỉ dùng cho integer          |
+|  18 | `step`                | uint32 | Chỉ dùng cho integer          |
+|  19 | `label`               | text   | Tối đa 31 byte UTF-8          |
+|  20 | `unit`                | text   | Tối đa 11 byte UTF-8          |
+|  21 | `capability_revision` | uint32 | Tăng khi schema command đổi   |
 
 Để giữ tương thích với codec envelope hiện tại, mọi capability message vẫn có
 key `3` (`command`), `4` (`int_value`) và `5` (`bool_value`). Với field không
@@ -683,5 +683,5 @@ Chức năng được xem là hoàn thành khi:
 - MCP luôn giữ allowlist độc lập với dữ liệu peripheral;
 - firmware v1/v2 tiếp tục hoạt động theo policy đã chọn;
 - test app build được và các test codec/cache/dispatcher/REST/MCP chạy trên board;
-- root firmware build với ESP-IDF 5.4.4, target ESP32-S3 và không bị component
+- root firmware build với ESP-IDF 6.1.0, target ESP32-S3 và không bị component
   mới loại khỏi dependency graph bởi `MINIMAL_BUILD`.

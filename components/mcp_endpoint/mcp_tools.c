@@ -11,6 +11,7 @@
 #include "cbor_codec.h"
 #include "command_dispatcher.h"
 #include "device_capabilities.h"
+#include "memory_policy.h"
 #include "mcp_endpoint_internal.h"
 #include "mcp_tool_exposure.h"
 
@@ -98,17 +99,27 @@ cJSON *mcp_tools_list(const mcp_request_context_t *ctx)
         return NULL;
     }
 
-    // Dynamic device tools (ENABLED only, deterministic order).
-    mcp_tool_binding_t bindings[CONFIG_MCP_DYNAMIC_TOOL_MAX_ENABLED];
+    // Dynamic device tools (ENABLED only, deterministic order).  A binding is
+    // large enough that the maximum snapshot does not fit on the 8 KiB MCP WS
+    // task stack, so keep this bounded transient workspace off the stack.
+    const size_t binding_capacity = CONFIG_MCP_DYNAMIC_TOOL_MAX_ENABLED;
+    mcp_tool_binding_t *bindings = gw_mem_alloc(
+        binding_capacity * sizeof(*bindings), GW_MEM_EXTERNAL_PREFERRED);
+    if (bindings == NULL) {
+        cJSON_Delete(result);
+        cJSON_Delete(tools);
+        return NULL;
+    }
+
     size_t binding_count = 0;
-    mcp_tool_catalog_get_snapshot(bindings, CONFIG_MCP_DYNAMIC_TOOL_MAX_ENABLED,
-                                  &binding_count);
+    mcp_tool_catalog_get_snapshot(bindings, binding_capacity, &binding_count);
     for (size_t i = 0; i < binding_count; i++) {
         cJSON *tool = mcp_dynamic_tool_build_json(&bindings[i]);
         if (tool != NULL) {
             cJSON_AddItemToArray(tools, tool);
         }
     }
+    gw_mem_free(bindings);
 
     cJSON_AddItemToObject(result, "tools", tools);
 

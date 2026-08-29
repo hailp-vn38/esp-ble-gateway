@@ -71,7 +71,7 @@ Tài liệu này giả định chức năng log history đã được loại b�
 
 Tài liệu phân biệt hai baseline để tránh nhầm lẫn:
 
-- **Repository code baseline:** commit `5baf93517f448144958e612531b5752652f49965`; code hiện tại trước migration được mô tả/test với ESP-IDF 5.4.4.
+- **Repository code baseline:** commit `5baf93517f448144958e612531b5752652f49965`; code hiện tại trước migration được mô tả/test với ESP-IDF 6.1.0.
 - **Toolchain target mới:** ESP-IDF **`v6.1-rc1`**, target `esp32s3`. Mọi build/benchmark sau migration phải dùng đúng tag này; không dùng `master`, `release/6.1`, hoặc một bản 6.1 khác rồi coi là tương đương.
 
 Tại repository baseline đã kiểm tra:
@@ -117,9 +117,9 @@ Trên controller Kconfig dùng bởi ESP32-S3 trong v6.1-rc1, `BT_CTRL_BLE_MAX_A
 
 ### 3.2 Những thay đổi IDF 6.x ảnh hưởng trực tiếp tới plan
 
-Migration từ 5.4.4 lên v6.1-rc1 không được coi là chỉ đổi version string. Các thay đổi cần phản ánh trong implementation:
+Migration từ 6.1.0 lên v6.1-rc1 không được coi là chỉ đổi version string. Các thay đổi cần phản ánh trong implementation:
 
-1. **PicolibC là libc mặc định từ IDF 6.0.** Binary/stdio/stack footprint có thể khác baseline 5.4.4; vì vậy mọi stack và heap checkpoint phải đo lại từ đầu trên v6.1-rc1. Không tái sử dụng số đo runtime cũ làm acceptance evidence.
+1. **PicolibC là libc mặc định từ IDF 6.0.** Binary/stdio/stack footprint có thể khác baseline 6.1.0; vì vậy mọi stack và heap checkpoint phải đo lại từ đầu trên v6.1-rc1. Không tái sử dụng số đo runtime cũ làm acceptance evidence.
 2. **FreeRTOS function placement thay đổi trong IDF 6.0.** Phần lớn FreeRTOS code mặc định nằm trong Flash thay vì IRAM. Không bật `CONFIG_FREERTOS_IN_IRAM` ở baseline memory plan; chỉ bật sau benchmark latency/IRAM riêng.
 3. **`esp_spiram.h` đã bị loại bỏ.** Chỉ dùng `esp_psram.h`. Các component trực tiếp include/use PSRAM API phải khai báo dependency `esp_psram`.
 4. **Built-in `json` component đã bị loại bỏ trong IDF 6.0.** Project hiện đã dùng `espressif/cjson` qua Component Manager; giữ kiến trúc này và regenerate lock file bằng v6.1-rc1.
@@ -217,7 +217,7 @@ idf.py --version
 
 CI phải assert output/version tương ứng `v6.1-rc1`.
 
-### 4A.2 Không tái sử dụng build artefact 5.4.4
+### 4A.2 Không tái sử dụng build artefact 6.1.0
 
 Trong project gateway:
 
@@ -270,7 +270,7 @@ idf.py size
 idf.py size-components
 ```
 
-và runtime checkpoints M0–M4. Các số này trở thành **v6.1-rc1 baseline**. Không so trực tiếp absolute heap/stack với 5.4.4 để pass/fail; chỉ dùng để hiểu migration delta.
+và runtime checkpoints M0–M4. Các số này trở thành **v6.1-rc1 baseline**. Không so trực tiếp absolute heap/stack với 6.1.0 để pass/fail; chỉ dùng để hiểu migration delta.
 
 ### 4A.6 Pass criteria
 
@@ -278,7 +278,7 @@ và runtime checkpoints M0–M4. Các số này trở thành **v6.1-rc1 baseline
 - production app build sạch.
 - test app build sạch.
 - `dependencies.lock` được resolve lại.
-- không còn compile dependency ngầm từ 5.4.4.
+- không còn compile dependency ngầm từ 6.1.0.
 - có size report mới trước khi bắt đầu P0.
 
 ## 5. Phase P0 — Sửa stack telemetry trước khi tuning
@@ -881,7 +881,7 @@ Khoảng 4–16 KiB:
 
 #### Large/unbounded response
 
->16 KiB hoặc phụ thuộc số record/history:
+> 16 KiB hoặc phụ thuộc số record/history:
 
 - dùng `httpd_resp_send_chunk()`;
 - serialize từng item;
@@ -973,7 +973,7 @@ Mỗi worker tăng:
 
 ### 11.3 Tuning sequence
 
-Do IDF 6.x mặc định dùng PicolibC và có thay đổi placement của FreeRTOS functions, số đo stack từ firmware 5.4.4 không được dùng để quyết định stack size mới. Phải đo lại trên v6.1-rc1.
+Do IDF 6.x mặc định dùng PicolibC và có thay đổi placement của FreeRTOS functions, số đo stack từ firmware 6.1.0 không được dùng để quyết định stack size mới. Phải đo lại trên v6.1-rc1.
 
 Sau khi fix stack telemetry:
 
@@ -1412,20 +1412,20 @@ mà chưa có benchmark riêng.
 
 ## 18. Allocation matrix
 
-| Data/object | Memory class | Lý do |
-|---|---|---|
-| BLE connection state | INTERNAL_REQUIRED | control path |
-| ACK/session state | INTERNAL_REQUIRED | latency-sensitive |
-| FreeRTOS task stack | Internal | baseline policy |
-| queue/mutex object | Internal/default | nhỏ, control |
-| HTTP body 256–1024 B | stack/internal | bounded, short-lived |
-| async HTTP context nhỏ | default/internal | control object |
-| CBOR frame nhỏ | internal/default | BLE working set |
-| large HTTP output | EXTERNAL_REQUIRED/PREFERRED | tránh SRAM peak |
-| diagnostics snapshot lớn | EXTERNAL_REQUIRED | non-critical |
-| future cache >4 KiB | EXTERNAL_REQUIRED | bulk data |
-| NVS metadata | Flash/NVS | persistent |
-| OTA image | Flash OTA slot | persistent firmware |
+| Data/object              | Memory class                | Lý do                |
+| ------------------------ | --------------------------- | -------------------- |
+| BLE connection state     | INTERNAL_REQUIRED           | control path         |
+| ACK/session state        | INTERNAL_REQUIRED           | latency-sensitive    |
+| FreeRTOS task stack      | Internal                    | baseline policy      |
+| queue/mutex object       | Internal/default            | nhỏ, control         |
+| HTTP body 256–1024 B     | stack/internal              | bounded, short-lived |
+| async HTTP context nhỏ   | default/internal            | control object       |
+| CBOR frame nhỏ           | internal/default            | BLE working set      |
+| large HTTP output        | EXTERNAL_REQUIRED/PREFERRED | tránh SRAM peak      |
+| diagnostics snapshot lớn | EXTERNAL_REQUIRED           | non-critical         |
+| future cache >4 KiB      | EXTERNAL_REQUIRED           | bulk data            |
+| NVS metadata             | Flash/NVS                   | persistent           |
+| OTA image                | Flash OTA slot              | persistent firmware  |
 
 ---
 
@@ -2024,6 +2024,7 @@ Plan được coi là hoàn tất khi:
 11. OTA A/B partition pass.
 12. OTA rollback pass cả happy/fail/power-loss cases.
 13. Các giá trị tuning cuối cùng được ghi lại từ benchmark thật, không chỉ từ estimate.
+
 ---
 
 ## 41. Tài liệu tham chiếu kỹ thuật

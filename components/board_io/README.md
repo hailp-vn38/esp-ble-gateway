@@ -2,7 +2,7 @@
 
 Component quản lý toàn bộ I/O vật lý của board gateway trên ESP32-S3:
 button reset/factory-reset, status LED và display text tùy chọn (4 dòng x 32 ký tự).
-Target ESP-IDF 5.4.4, build cùng firmware root hoặc chạy unit test qua project `test/`.
+Target ESP-IDF 6.1.0, build cùng firmware root hoặc chạy unit test qua project `test/`.
 
 ## Nguyên tắc thiết kế
 
@@ -38,16 +38,16 @@ UNINITIALIZED --init--> INITIALIZING --ok--> RUNNING --deinit--> STOPPING --> UN
 
 ## Public API
 
-| Hàm | Mô tả | Lỗi chính |
-|---|---|---|
-| `board_io_init()` | Validate pin, init module, tạo worker | `INVALID_ARG` khi pin/threshold sai, driver error |
-| `board_io_deinit()` | Stop handshake rồi teardown | `INVALID_STATE` nếu đang init/stopping, `TIMEOUT` |
-| `board_io_is_initialized()` | True chỉ ở RUNNING | — |
-| `board_io_register_event_handler(h, ctx)` | Một handler duy nhất; `NULL` = unregister | `INVALID_STATE` trước init hoặc handler thứ hai |
-| `board_io_set_status(status)` | Đặt base state cho LED, non-blocking | `INVALID_ARG`, `INVALID_STATE` |
-| `board_io_signal(signal)` | `ACTIVITY` hoặc `IDENTIFY` overlay | `INVALID_ARG`, `INVALID_STATE` |
-| `board_io_display_update(frame)` | Copy frame, render async | `NOT_SUPPORTED` khi capability tắt, `INVALID_ARG` frame NULL |
-| `board_io_display_set_enabled(bool)` | Bật/tắt display lúc runtime | `NOT_SUPPORTED` khi không có backend |
+| Hàm                                       | Mô tả                                     | Lỗi chính                                                    |
+| ----------------------------------------- | ----------------------------------------- | ------------------------------------------------------------ |
+| `board_io_init()`                         | Validate pin, init module, tạo worker     | `INVALID_ARG` khi pin/threshold sai, driver error            |
+| `board_io_deinit()`                       | Stop handshake rồi teardown               | `INVALID_STATE` nếu đang init/stopping, `TIMEOUT`            |
+| `board_io_is_initialized()`               | True chỉ ở RUNNING                        | —                                                            |
+| `board_io_register_event_handler(h, ctx)` | Một handler duy nhất; `NULL` = unregister | `INVALID_STATE` trước init hoặc handler thứ hai              |
+| `board_io_set_status(status)`             | Đặt base state cho LED, non-blocking      | `INVALID_ARG`, `INVALID_STATE`                               |
+| `board_io_signal(signal)`                 | `ACTIVITY` hoặc `IDENTIFY` overlay        | `INVALID_ARG`, `INVALID_STATE`                               |
+| `board_io_display_update(frame)`          | Copy frame, render async                  | `NOT_SUPPORTED` khi capability tắt, `INVALID_ARG` frame NULL |
+| `board_io_display_set_enabled(bool)`      | Bật/tắt display lúc runtime               | `NOT_SUPPORTED` khi không có backend                         |
 
 Trạng thái hệ thống (`board_status_t`): `BOOTING`, `PROVISIONING`,
 `WIFI_CONNECTING`, `READY`, `DEGRADED`, `ERROR`.
@@ -75,22 +75,22 @@ duration >= 8000 ms               -> FACTORY_RESET_REQUEST  (khi release)
 
 Base pattern (single-color LED, anchor reset mỗi khi đổi base state):
 
-| State | Pattern |
-|---|---|
-| BOOTING | 100 ms ON / 100 ms OFF |
-| PROVISIONING | 500 ms ON / 500 ms OFF |
-| WIFI_CONNECTING | 125 ms ON / 125 ms OFF |
-| READY | sáng liên tục |
-| DEGRADED | 150 ms ON / 850 ms OFF |
-| ERROR | 3 nhịp 150 ms + pause 1000 ms (chu kỳ 1750 ms) |
+| State           | Pattern                                        |
+| --------------- | ---------------------------------------------- |
+| BOOTING         | 100 ms ON / 100 ms OFF                         |
+| PROVISIONING    | 500 ms ON / 500 ms OFF                         |
+| WIFI_CONNECTING | 125 ms ON / 125 ms OFF                         |
+| READY           | sáng liên tục                                  |
+| DEGRADED        | 150 ms ON / 850 ms OFF                         |
+| ERROR           | 3 nhịp 150 ms + pause 1000 ms (chu kỳ 1750 ms) |
 
 Transient/armed overlay:
 
-| Overlay | Biểu diễn | Thời lượng |
-|---|---|---|
-| ACTIVITY | sáng liên tục | pulse 80 ms, retrigger = extend |
-| IDENTIFY | nhấp nháy 250/250 | 5000 ms, retrigger = restart từ đầu |
-| RESTART_ARMED | sáng liên tục | trong suốt thời gian giữ qua mốc 2 s |
+| Overlay       | Biểu diễn         | Thời lượng                           |
+| ------------- | ----------------- | ------------------------------------ |
+| ACTIVITY      | sáng liên tục     | pulse 80 ms, retrigger = extend      |
+| IDENTIFY      | nhấp nháy 250/250 | 5000 ms, retrigger = restart từ đầu  |
+| RESTART_ARMED | sáng liên tục     | trong suốt thời gian giữ qua mốc 2 s |
 | FACTORY_ARMED | nhấp nháy 100/100 | trong suốt thời gian giữ qua mốc 8 s |
 
 Độ ưu tiên hiển thị (cao → thấp):
@@ -123,24 +123,24 @@ Runtime disabled (đã gọi set_enabled(false)):
 
 ## Cấu hình Kconfig
 
-| Option | Default | Ghi chú |
-|---|---|---|
-| `BOARD_IO_BUTTON_ENABLE` | n | |
-| `BOARD_IO_BUTTON_GPIO` | -1 | -1 = chưa đặt, init sẽ fail |
-| `BOARD_IO_BUTTON_ACTIVE_LOW` | y | |
-| `BOARD_IO_BUTTON_PULL_MODE` | PULL_UP | choice: NONE / UP / DOWN |
-| `BOARD_IO_BUTTON_DEBOUNCE_MS` | 40 | range 5–500 |
-| `BOARD_IO_BUTTON_RESTART_MS` | 2000 | range 500–30000 |
-| `BOARD_IO_BUTTON_FACTORY_RESET_MS` | 8000 | range 1000–60000 |
-| `BOARD_IO_LED_ENABLE` | n | |
-| `BOARD_IO_LED_GPIO` | -1 | -1 = chưa đặt |
-| `BOARD_IO_LED_ACTIVE_LOW` | n | |
-| `BOARD_IO_DISPLAY_ENABLE` | n | |
-| `BOARD_IO_DISPLAY_BACKEND` | NONE | chỉ NONE khả dụng hiện tại |
-| `BOARD_IO_DISPLAY_REQUIRED` | n | y = display fail làm fail toàn bộ init |
-| `BOARD_IO_DISPLAY_MAX_REFRESH_HZ` | 5 | range 1–30 |
-| `BOARD_IO_TASK_STACK_SIZE` | 3072 | range 2048–8192 |
-| `BOARD_IO_TASK_PRIORITY` | 3 | range 1–10 |
+| Option                             | Default | Ghi chú                                |
+| ---------------------------------- | ------- | -------------------------------------- |
+| `BOARD_IO_BUTTON_ENABLE`           | n       |                                        |
+| `BOARD_IO_BUTTON_GPIO`             | -1      | -1 = chưa đặt, init sẽ fail            |
+| `BOARD_IO_BUTTON_ACTIVE_LOW`       | y       |                                        |
+| `BOARD_IO_BUTTON_PULL_MODE`        | PULL_UP | choice: NONE / UP / DOWN               |
+| `BOARD_IO_BUTTON_DEBOUNCE_MS`      | 40      | range 5–500                            |
+| `BOARD_IO_BUTTON_RESTART_MS`       | 2000    | range 500–30000                        |
+| `BOARD_IO_BUTTON_FACTORY_RESET_MS` | 8000    | range 1000–60000                       |
+| `BOARD_IO_LED_ENABLE`              | n       |                                        |
+| `BOARD_IO_LED_GPIO`                | -1      | -1 = chưa đặt                          |
+| `BOARD_IO_LED_ACTIVE_LOW`          | n       |                                        |
+| `BOARD_IO_DISPLAY_ENABLE`          | n       |                                        |
+| `BOARD_IO_DISPLAY_BACKEND`         | NONE    | chỉ NONE khả dụng hiện tại             |
+| `BOARD_IO_DISPLAY_REQUIRED`        | n       | y = display fail làm fail toàn bộ init |
+| `BOARD_IO_DISPLAY_MAX_REFRESH_HZ`  | 5       | range 1–30                             |
+| `BOARD_IO_TASK_STACK_SIZE`         | 3072    | range 2048–8192                        |
+| `BOARD_IO_TASK_PRIORITY`           | 3       | range 1–10                             |
 
 Validation runtime bắt buộc thêm: `factory_reset_ms > restart_ms`,
 `debounce_ms < restart_ms`. Vi phạm → `board_io_init()` trả
@@ -159,14 +159,14 @@ cho từng feature (button / LED / display) trước khi bật trong production.
 
 Bảng blocklist mà runtime validation (`board_pin_map.c`) thực thi:
 
-| GPIO | Phân loại | Hành vi của validation |
-|---|---|---|
-| 22–25 | Chip-invalid (không tồn tại vật lý) | **Reject** — `ESP_ERR_INVALID_ARG` |
-| 26–32 | Nối sẵn SPI flash nội bộ | **Reject** — dùng sẽ crash/hỏng flash |
-| 33–37 | Octal PSRAM (module N8R8/N16R8…) | **Reject** khi `CONFIG_SPIRAM_MODE_OCT=y`; warning khi quad PSRAM |
-| 0, 3, 45, 46 | Strapping pins | Runtime cho phép nhưng **warning**; bắt buộc review schematic |
-| 43, 44 | UART0 console mặc định (TX/RX) | Warning |
-| Ngoài 0–48 | Invalid | Reject qua `GPIO_IS_VALID_GPIO` |
+| GPIO         | Phân loại                           | Hành vi của validation                                            |
+| ------------ | ----------------------------------- | ----------------------------------------------------------------- |
+| 22–25        | Chip-invalid (không tồn tại vật lý) | **Reject** — `ESP_ERR_INVALID_ARG`                                |
+| 26–32        | Nối sẵn SPI flash nội bộ            | **Reject** — dùng sẽ crash/hỏng flash                             |
+| 33–37        | Octal PSRAM (module N8R8/N16R8…)    | **Reject** khi `CONFIG_SPIRAM_MODE_OCT=y`; warning khi quad PSRAM |
+| 0, 3, 45, 46 | Strapping pins                      | Runtime cho phép nhưng **warning**; bắt buộc review schematic     |
+| 43, 44       | UART0 console mặc định (TX/RX)      | Warning                                                           |
+| Ngoài 0–48   | Invalid                             | Reject qua `GPIO_IS_VALID_GPIO`                                   |
 
 Chi tiết strapping (chỉ review, không bị chặn bởi software vì có thể là
 lựa chọn hợp lệ khi có external resistor phù hợp):
@@ -184,6 +184,7 @@ lựa chọn hợp lệ khi có external resistor phù hợp):
 Với mỗi pin ứng viên, đối chiếu schematic/BOM trước khi ghi vào config:
 
 **Button:**
+
 1. Pin không thuộc blocklist bảng trên.
 2. Có trở kéo bên ngoài (thường 10k) hay dựa internal pull? Internal pull
    đủ dùng cho button trên dây ngắn; nếu dùng `PULL_NONE` thì external
@@ -193,6 +194,7 @@ Với mỗi pin ứng viên, đối chiếu schematic/BOM trước khi ghi vào 
 5. Nếu là GPIO0: xác nhận hành vi boot khi nhấn đúng thiết kế.
 
 **Status LED:**
+
 1. Pin phải output-capable (validation đã check `GPIO_IS_VALID_OUTPUT_GPIO`).
 2. Trở hạn lưu đúng dòng (LED 20 mA điển hình); active level theo cách đấu
    cathode/anode — cấu hình `BOARD_IO_LED_ACTIVE_LOW` tương ứng.
@@ -200,6 +202,7 @@ Với mỗi pin ứng viên, đối chiếu schematic/BOM trước khi ghi vào 
    board dùng native USB CDC/JTAG thì tuyệt đối không dùng).
 
 **Display (khi có backend thật):**
+
 1. Controller/bus xác nhận (I2C/SPI), SDA≠SCL hoặc CS riêng.
 2. Tần số bus nằm trong giới hạn (I2C tối đa 400 kHz trong spec hiện hành).
 3. Power/reset pin nếu controller yêu cầu.
@@ -270,15 +273,15 @@ và rebuild để defaults áp dụng sạch.
 
 Unit test project (`test/`) đã chặn các trường hợp blocklist bằng test thật:
 
-| Nhóm test | Kiểm chứng gì |
-|---|---|
-| `pin map rejects chip-invalid gpio 22–25` | Macro validity chip-level |
-| `pin map rejects flash blocklist gpio 26/31` | Vùng flash |
-| `pin map applies psram policy on gpio 35` | Theo `CONFIG_SPIRAM_MODE_OCT` thực tế của build |
-| `pin map rejects shared button and led gpio` | Trùng pin giữa 2 feature |
-| `pin map ignores pins of disabled features` | Feature tắt không tham gia validation |
-| `pin map rejects polarity pull contradiction` | Bảng Bước 3 |
-| `pin map rejects factory/debounce threshold...` | Ngưỡng thời gian hợp lý |
+| Nhóm test                                       | Kiểm chứng gì                                   |
+| ----------------------------------------------- | ----------------------------------------------- |
+| `pin map rejects chip-invalid gpio 22–25`       | Macro validity chip-level                       |
+| `pin map rejects flash blocklist gpio 26/31`    | Vùng flash                                      |
+| `pin map applies psram policy on gpio 35`       | Theo `CONFIG_SPIRAM_MODE_OCT` thực tế của build |
+| `pin map rejects shared button and led gpio`    | Trùng pin giữa 2 feature                        |
+| `pin map ignores pins of disabled features`     | Feature tắt không tham gia validation           |
+| `pin map rejects polarity pull contradiction`   | Bảng Bước 3                                     |
+| `pin map rejects factory/debounce threshold...` | Ngưỡng thời gian hợp lý                         |
 
 Sau khi chọn pin production, chạy lại test suite; nếu thêm pin lạ vào
 cấu hình mà vi phạm blocklist, `board_io_init()` fail ngay tại boot thay vì
@@ -292,8 +295,8 @@ Thứ tự trong `app_main()` (đã áp dụng ở `main/main.c`):
 
 1. `board_io_init()` **sớm** — trước NVS/Wi-Fi; worker task sống qua
    provisioning-mode return nên LED/button/display vẫn hoạt động;
-3. register event handler + `set_status(BOOTING)`;
-4. `board_status_sync_start()` — task poll `wifi_prov_get_state()` mỗi
+2. register event handler + `set_status(BOOTING)`;
+3. `board_status_sync_start()` — task poll `wifi_prov_get_state()` mỗi
    300 ms, map sang `board_status_t` và chỉ push khi thay đổi:
    `BOOT_CONNECTING/RECONNECTING → WIFI_CONNECTING`,
    `PROVISIONING/TESTING/RESTART_PENDING → PROVISIONING`,

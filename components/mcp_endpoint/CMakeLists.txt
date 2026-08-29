@@ -11,4 +11,5 @@ idf_component_register(
     REQUIRES esp_http_server cbor_codec command_dispatcher command_executor
              device_capabilities device_store mcp_tool_exposure
              espressif__cjson nvs_flash esp_timer freertos
+    PRIV_REQUIRES memory_policy
 )

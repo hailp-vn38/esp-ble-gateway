@@ -1,6 +1,6 @@
 # AGENTS.md
 
-ESP-IDF firmware for ESP32-S3 (BLE Central gateway with Web UI / REST / JSON-RPC). Verified against ESP-IDF 5.4.4, 16 MiB flash. Design docs and README are in Vietnamese.
+ESP-IDF firmware for ESP32-S3 (BLE Central gateway with Web UI / REST / JSON-RPC). Verified against ESP-IDF 6.1.0, 16 MiB flash. Design docs and README are in Vietnamese.
 
 ## Build
 
