@@ -29,8 +29,6 @@ esp_err_t web_ble_api_register(httpd_handle_t server);
 
 esp_err_t web_exposure_api_register(httpd_handle_t server);
 
-esp_err_t web_auth_api_register(httpd_handle_t server);
-
 esp_err_t web_mcp_token_api_register(httpd_handle_t server);
 esp_err_t web_mcp_token_get_status(bool *configured, char *preview,
                                    size_t preview_size);

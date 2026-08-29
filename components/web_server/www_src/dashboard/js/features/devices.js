@@ -1,8 +1,25 @@
 // --- Connected Devices Logic ---
 const devices = {
     capabilitiesLoadId: 0,
+    loadPromise: null,
+    connectionRefreshes: new Map(),
 
     async load() {
+        // Navigation can invoke switchTab() once from the click handler and
+        // once again from hashchange. Share the in-flight request so opening
+        // the Devices tab does not issue duplicate API calls.
+        if (this.loadPromise) return this.loadPromise;
+
+        const loadOperation = this.loadFresh();
+        this.loadPromise = loadOperation;
+        try {
+            return await loadOperation;
+        } finally {
+            if (this.loadPromise === loadOperation) this.loadPromise = null;
+        }
+    },
+
+    async loadFresh() {
         try {
             state.connectedDevices = await api.getDevices();
             state.devicesLoaded = true;
@@ -12,6 +29,32 @@ const devices = {
             ui.showToast("Failed to load devices", "error");
             return false;
         }
+    },
+
+    refreshConnectionUntilOnline(deviceId) {
+        if (this.connectionRefreshes.has(deviceId)) return;
+
+        const refreshToken = {};
+        this.connectionRefreshes.set(deviceId, refreshToken);
+        void (async () => {
+            try {
+                // BLE connection establishment continues after add_device
+                // returns. Reconcile the runtime status for a bounded period
+                // so the card changes from offline to online without reload.
+                for (let attempt = 0; attempt < 12; attempt++) {
+                    const device = state.connectedDevices.find(dev => dev.id === deviceId);
+                    if (!device || device.status === 'online') return;
+
+                    await new Promise(resolve => setTimeout(resolve, 1000));
+                    if (this.connectionRefreshes.get(deviceId) !== refreshToken) return;
+                    await this.load();
+                }
+            } finally {
+                if (this.connectionRefreshes.get(deviceId) === refreshToken) {
+                    this.connectionRefreshes.delete(deviceId);
+                }
+            }
+        })();
     },
 
     renderGrid() {
@@ -317,7 +360,12 @@ const devices = {
 
         try {
             ui.showToast(`Adding ${newDevice.customName}...`, "info");
-            
+
+            // NimBLE cannot start a connection while discovery is active.
+            // End the scan first so add_device can connect immediately
+            // instead of waiting for the reconnect supervisor.
+            if (state.isScanning) await scanner.stopScan();
+
             // Call backend API
             await api.addDevice(newDevice);
             
@@ -341,6 +389,7 @@ const devices = {
             }
             
             await this.load();
+            this.refreshConnectionUntilOnline(newDevice.id);
 
         } catch(e) {
             ui.showToast(`Failed to add device: ${e.message}`, "error");
@@ -357,6 +406,7 @@ const devices = {
         
         try {
             await api.removeDevice(deviceId);
+            this.connectionRefreshes.delete(deviceId);
             state.connectedDevices = state.connectedDevices.filter(d => d.id !== deviceId);
 
             ui.showToast("Device removed", "info");

@@ -8,8 +8,6 @@
 #include "esp_random.h"
 #include "sdkconfig.h"
 
-#include "web_auth.h"
-#include "web_auth_http.h"
 #include "web_http.h"
 
 static const char *TAG = "web_mcp_token_api";
@@ -103,13 +101,6 @@ esp_err_t web_mcp_token_get_status(bool *configured, char *preview,
 
 static esp_err_t mcp_token_generate_handler(httpd_req_t *request)
 {
-    web_auth_result_t auth = web_auth_require_request(request);
-    if (auth != WEB_AUTH_OK) {
-        return web_send_api_error_code(request, "401 Unauthorized",
-                                       "Authentication required",
-                                       "auth_required");
-    }
-
     char new_token[MCP_TOKEN_LENGTH + 1];
     generate_random_token(new_token);
 
@@ -135,13 +126,6 @@ static esp_err_t mcp_token_generate_handler(httpd_req_t *request)
 
 static esp_err_t mcp_token_update_handler(httpd_req_t *request)
 {
-    web_auth_result_t auth = web_auth_require_request(request);
-    if (auth != WEB_AUTH_OK) {
-        return web_send_api_error_code(request, "401 Unauthorized",
-                                       "Authentication required",
-                                       "auth_required");
-    }
-
     char body[256];
     web_body_status_t body_status;
     cJSON *json = web_parse_request_json(request, body, sizeof(body),
@@ -181,13 +165,6 @@ static esp_err_t mcp_token_update_handler(httpd_req_t *request)
 
 static esp_err_t mcp_token_delete_handler(httpd_req_t *request)
 {
-    web_auth_result_t auth = web_auth_require_request(request);
-    if (auth != WEB_AUTH_OK) {
-        return web_send_api_error_code(request, "401 Unauthorized",
-                                       "Authentication required",
-                                       "auth_required");
-    }
-
     esp_err_t err = nvs_set_token("");
     if (err != ESP_OK) {
         ESP_LOGE(TAG, "Failed to clear MCP token: %s", esp_err_to_name(err));

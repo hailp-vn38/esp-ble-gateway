@@ -4,7 +4,6 @@ Build-time assembler for ESP32 BLE Gateway web UI.
 
 Reads modular source files from www_src/ and generates:
   - dashboard.html (assembled from shell + views + partials + JS)
-  - login.html (assembled from login shell + shared JS)
 """
 
 import argparse
@@ -126,54 +125,10 @@ def build_dashboard(source_dir, output_path):
     print(f"Generated dashboard: {output_path} ({len(html)} bytes)")
 
 
-def build_login(source_dir, output_path):
-    """Build login.html from login shell + shared JS."""
-    shell_path = os.path.join(source_dir, 'login', 'shell.html')
-    if not os.path.isfile(shell_path):
-        raise FileNotFoundError(f"Login shell not found: {shell_path}")
-
-    html = read_file(shell_path)
-
-    # Resolve shared JS includes referenced directly in login shell
-    login_dir = os.path.dirname(shell_path)
-    shared_dir = os.path.join(source_dir, 'shared')
-
-    # Replace shared script references with inline content
-    def replace_script(match):
-        src = match.group(1).strip()
-        
-        # Map web paths to filesystem paths
-        if src.startswith('/shared/'):
-            abs_path = os.path.join(shared_dir, src[len('/shared/'):])
-        elif src.startswith('/login/'):
-            abs_path = os.path.join(login_dir, src[len('/login/'):])
-        else:
-            abs_path = os.path.normpath(os.path.join(login_dir, src))
-
-        if not os.path.isfile(abs_path):
-            raise FileNotFoundError(f"JS file not found: {src} (resolved to {abs_path})")
-
-        js_content = read_file(abs_path)
-        return f"<script>\n{js_content}\n</script>"
-
-    html = re.sub(r'<script src="([^"]+)"></script>', replace_script, html)
-
-    # Add banner
-    banner = (
-        "<!-- GENERATED FILE - DO NOT EDIT -->\n"
-        "<!-- source: components/web_server/www_src/ -->\n\n"
-    )
-    html = banner + html
-
-    write_file(output_path, html)
-    print(f"Generated login: {output_path} ({len(html)} bytes)")
-
-
 def main():
     parser = argparse.ArgumentParser(description='Build web UI assets for ESP32 gateway')
     parser.add_argument('--source', required=True, help='Source directory (www_src/)')
     parser.add_argument('--dashboard-out', required=True, help='Output path for dashboard.html')
-    parser.add_argument('--login-out', required=True, help='Output path for login.html')
     args = parser.parse_args()
 
     source_dir = os.path.abspath(args.source)
@@ -182,21 +137,10 @@ def main():
         print(f"Error: Source directory not found: {source_dir}", file=sys.stderr)
         sys.exit(1)
 
-    errors = []
-
     try:
         build_dashboard(source_dir, args.dashboard_out)
     except Exception as e:
-        errors.append(f"Dashboard build failed: {e}")
-
-    try:
-        build_login(source_dir, args.login_out)
-    except Exception as e:
-        errors.append(f"Login build failed: {e}")
-
-    if errors:
-        for err in errors:
-            print(f"Error: {err}", file=sys.stderr)
+        print(f"Error: Dashboard build failed: {e}", file=sys.stderr)
         sys.exit(1)
 
     print("Web UI build completed successfully")

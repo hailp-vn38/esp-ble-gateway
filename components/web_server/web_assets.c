@@ -9,8 +9,6 @@
 #include "esp_timer.h"
 
 #include "web_http.h"
-#include "web_auth.h"
-#include "web_auth_http.h"
 
 static const char *TAG = "web_assets";
 
@@ -38,10 +36,6 @@ extern const uint8_t dashboard_html_gz_start[]
     asm("_binary_dashboard_html_gz_start");
 extern const uint8_t dashboard_html_gz_end[]
     asm("_binary_dashboard_html_gz_end");
-extern const uint8_t login_html_gz_start[]
-    asm("_binary_login_html_gz_start");
-extern const uint8_t login_html_gz_end[]
-    asm("_binary_login_html_gz_end");
 extern const uint8_t setup_html_gz_start[] asm("_binary_setup_html_gz_start");
 extern const uint8_t setup_html_gz_end[] asm("_binary_setup_html_gz_end");
 extern const uint8_t dashboard_css_start[] asm("_binary_dashboard_css_start");
@@ -111,24 +105,8 @@ static esp_err_t send_embedded_gzip_file(httpd_req_t *request,
 
 static esp_err_t index_get_handler(httpd_req_t *request)
 {
-    web_auth_result_t auth = web_auth_require_request(request);
-    if (auth != WEB_AUTH_OK) {
-        httpd_resp_set_status(request, "303 See Other");
-        httpd_resp_set_hdr(request, "Location", "/login");
-        httpd_resp_set_hdr(request, "Cache-Control", "no-store");
-        return httpd_resp_send(request, NULL, 0);
-    }
-
     return send_embedded_gzip_file(
         request, dashboard_html_gz_start, dashboard_html_gz_end,
-        "text/html; charset=utf-8", "no-cache", DASHBOARD_CSP);
-}
-
-static esp_err_t login_get_handler(httpd_req_t *request)
-{
-    // Login page uses same CSP as dashboard (inline scripts)
-    return send_embedded_gzip_file(
-        request, login_html_gz_start, login_html_gz_end,
         "text/html; charset=utf-8", "no-cache", DASHBOARD_CSP);
 }
 
@@ -232,7 +210,6 @@ esp_err_t web_assets_register_gateway(httpd_handle_t server)
 {
     static const httpd_uri_t routes[] = {
         {.uri = "/", .method = HTTP_GET, .handler = index_get_handler},
-        {.uri = "/login", .method = HTTP_GET, .handler = login_get_handler},
         {.uri = "/dashboard.css", .method = HTTP_GET,
          .handler = dashboard_css_get_handler},
         {.uri = "/icons.css", .method = HTTP_GET, .handler = icons_css_get_handler},

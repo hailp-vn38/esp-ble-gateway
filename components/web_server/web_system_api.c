@@ -9,18 +9,11 @@
 
 #include "command_executor.h"
 #include "gateway_status.h"
-#include "web_auth_http.h"
 #include "web_http.h"
 #include "wifi_prov.h"
 
 static esp_err_t status_get_handler(httpd_req_t *request)
 {
-    if (web_auth_require_request(request) != WEB_AUTH_OK) {
-        return web_send_api_error_code(request, "401 Unauthorized",
-                                       "Authentication required",
-                                       "auth_required");
-    }
-
     gateway_status_t status;
     if (gateway_status_get(&status) != ESP_OK) {
         return web_send_api_error(request, "500 Internal Server Error",
@@ -103,12 +96,6 @@ static esp_err_t status_get_handler(httpd_req_t *request)
 
 static esp_err_t restart_post_handler(httpd_req_t *request)
 {
-    if (web_auth_require_request(request) != WEB_AUTH_OK) {
-        return web_send_api_error_code(request, "401 Unauthorized",
-                                       "Authentication required",
-                                       "auth_required");
-    }
-
     if (wifi_prov_schedule_restart(1000) != 0) {
         return web_send_api_error(request, "500 Internal Server Error",
                                   "Could not schedule gateway restart");

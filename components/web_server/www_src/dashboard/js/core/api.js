@@ -3,10 +3,6 @@ const api = {
     async request(path, options = {}) {
         options.credentials = 'same-origin';
         const response = await fetch(path, options);
-        if (response.status === 401) {
-            window.location.href = '/login';
-            throw new Error('Authentication required');
-        }
         let data;
         try {
             data = await response.json();

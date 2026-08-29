@@ -7,8 +7,6 @@
 #include "gateway_status.h"
 #include "mcp_ws_bridge.h"
 
-#include "web_auth.h"
-#include "web_auth_http.h"
 #include "web_http.h"
 
 static const char *TAG = "web_settings_api";
@@ -60,20 +58,6 @@ static void add_xiaozhi_status(cJSON *response)
 
 static esp_err_t settings_get_handler(httpd_req_t *request)
 {
-    web_auth_result_t auth = web_auth_require_request(request);
-    if (auth != WEB_AUTH_OK) {
-        return web_send_api_error_code(request, "401 Unauthorized",
-                                       "Authentication required",
-                                       "auth_required");
-    }
-
-    web_auth_status_t auth_status;
-    if (web_auth_get_status(&auth_status) != ESP_OK) {
-        return web_send_api_error_code(request, "500 Internal Server Error",
-                                       "Could not read authentication status",
-                                       "internal_error");
-    }
-
     gateway_status_t gw_status;
     if (gateway_status_get(&gw_status) != ESP_OK) {
         return web_send_api_error_code(request, "500 Internal Server Error",
@@ -113,12 +97,8 @@ static esp_err_t settings_get_handler(httpd_req_t *request)
     }
 
     cJSON *auth_obj = cJSON_AddObjectToObject(response, "auth");
-    cJSON_AddBoolToObject(auth_obj, "enabled", auth_status.enabled);
-    cJSON_AddBoolToObject(auth_obj, "configured",
-                          auth_status.credentials_configured);
-    if (auth_status.username[0] != '\0') {
-        cJSON_AddStringToObject(auth_obj, "username", auth_status.username);
-    }
+    cJSON_AddBoolToObject(auth_obj, "enabled", false);
+    cJSON_AddBoolToObject(auth_obj, "configured", false);
 
     cJSON *mcp = cJSON_AddObjectToObject(response, "mcp");
     cJSON_AddBoolToObject(mcp, "configured", mcp_token_configured);
@@ -133,13 +113,6 @@ static esp_err_t settings_get_handler(httpd_req_t *request)
 
 static esp_err_t xiaozhi_put_handler(httpd_req_t *request)
 {
-    web_auth_result_t auth = web_auth_require_request(request);
-    if (auth != WEB_AUTH_OK) {
-        return web_send_api_error_code(request, "401 Unauthorized",
-                                       "Authentication required",
-                                       "auth_required");
-    }
-
     char body[MCP_WS_ENDPOINT_MAX_LEN + 160];
     web_body_status_t body_status;
     cJSON *json = web_parse_request_json(request, body, sizeof(body),

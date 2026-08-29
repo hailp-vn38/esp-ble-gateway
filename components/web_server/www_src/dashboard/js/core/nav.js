@@ -91,7 +91,13 @@ const nav = {
         }
 
         // Trigger specific view logic
-        if(tabId === 'devices') devices.renderGrid();
+        if(tabId === 'devices') {
+            // BLE status is runtime state and can change after add_device has
+            // returned. Render cached data immediately, then reconcile it
+            // whenever the Devices tab is opened.
+            devices.renderGrid();
+            void devices.load();
+        }
         if(tabId === 'scanner') {
             if(!state.isScanning && state.scannedDevices.length === 0) {
                 // Optional: auto-start scan on view open

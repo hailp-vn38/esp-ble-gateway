@@ -5,7 +5,7 @@
                         <h2 data-i18n="settings.title" class="text-2xl font-bold text-gray-900">Gateway Settings</h2>
                         <p data-i18n="settings.subtitle" class="text-gray-500 text-sm mt-1">View system and network status.</p>
                     </div>
-                    <select id="lang-selector" onchange="i18n.setLang(this.value); settings.renderAuthStatus(); settings.renderMcpTokenStatus(); settings.renderXiaozhiStatus();" class="px-3 py-2 border border-gray-300 rounded-lg text-sm bg-white">
+                    <select id="lang-selector" onchange="i18n.setLang(this.value); settings.renderMcpTokenStatus(); settings.renderXiaozhiStatus();" class="px-3 py-2 border border-gray-300 rounded-lg text-sm bg-white">
                         <option value="en">English</option>
                         <option value="vi">Tiếng Việt</option>
                     </select>
@@ -14,31 +14,6 @@
                 <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
                     <!-- Column 1 -->
                     <div class="space-y-6">
-                        <!-- Web Access -->
-                        <div class="bg-white rounded-xl border border-gray-200 p-6 shadow-sm">
-                            <h3 data-i18n="settings.web_access" class="font-semibold text-gray-900 mb-4 flex items-center border-b border-gray-100 pb-3">
-                                <i class="ph ph-shield-check text-brand-600 text-xl mr-2"></i> Web Access
-                            </h3>
-                            <div id="auth-status" class="mb-4">
-                                <p class="text-sm text-gray-500">Loading...</p>
-                            </div>
-                            <form id="auth-form" onsubmit="return false;">
-                                <div id="auth-setup" class="hidden">
-                                    <label data-i18n="settings.username" class="block text-sm text-gray-500 mb-1">Username</label>
-                                    <input id="auth-username" type="text" class="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm mb-3" placeholder="admin">
-                                    <label data-i18n="settings.password" class="block text-sm text-gray-500 mb-1">Password</label>
-                                    <input id="auth-password" type="password" class="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm mb-3" placeholder="Min 8 characters">
-                                </div>
-                                <div id="auth-enable-section" class="hidden">
-                                    <label data-i18n="settings.current_password" class="block text-sm text-gray-500 mb-1">Current Password</label>
-                                    <input id="auth-current-password" type="password" class="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm mb-3">
-                                </div>
-                                <button id="auth-toggle-btn" onclick="settings.toggleAuth()" class="w-full px-4 py-2.5 bg-brand-600 text-white rounded-lg hover:bg-brand-700 transition-colors font-medium text-sm flex items-center justify-center" disabled>
-                                    <i class="ph ph-shield mr-2 text-lg"></i> <span id="auth-toggle-text">Enable</span>
-                                </button>
-                            </form>
-                        </div>
-
                         <!-- System Info -->
                         <div class="bg-white rounded-xl border border-gray-200 p-6 shadow-sm">
                             <h3 data-i18n="settings.system_info" class="font-semibold text-gray-900 mb-4 flex items-center border-b border-gray-100 pb-3">

@@ -11,7 +11,6 @@
 #include "freertos/semphr.h"
 
 #include "ble_central.h"
-#include "web_auth_http.h"
 #include "web_http.h"
 
 #define BLE_SCAN_CACHE_SIZE  20
@@ -89,12 +88,6 @@ static cJSON *scan_state_response(bool success, bool scanning)
 
 static esp_err_t ble_scan_post_handler(httpd_req_t *request)
 {
-    if (web_auth_require_request(request) != WEB_AUTH_OK) {
-        return web_send_api_error_code(request, "401 Unauthorized",
-                                       "Authentication required",
-                                       "auth_required");
-    }
-
     if (ble_central_is_scanning()) {
         return web_send_json(request, scan_state_response(true, true));
     }
@@ -139,12 +132,6 @@ static esp_err_t ble_scan_post_handler(httpd_req_t *request)
 
 static esp_err_t ble_scan_get_handler(httpd_req_t *request)
 {
-    if (web_auth_require_request(request) != WEB_AUTH_OK) {
-        return web_send_api_error_code(request, "401 Unauthorized",
-                                       "Authentication required",
-                                       "auth_required");
-    }
-
     cJSON *json = cJSON_CreateObject();
     if (json == NULL) return web_send_json(request, NULL);
     cJSON_AddBoolToObject(json, "success", true);
@@ -172,12 +159,6 @@ static esp_err_t ble_scan_get_handler(httpd_req_t *request)
 
 static esp_err_t ble_scan_delete_handler(httpd_req_t *request)
 {
-    if (web_auth_require_request(request) != WEB_AUTH_OK) {
-        return web_send_api_error_code(request, "401 Unauthorized",
-                                       "Authentication required",
-                                       "auth_required");
-    }
-
     if (xSemaphoreTake(s_scan_mutex, pdMS_TO_TICKS(SCAN_STATE_LOCK_TIMEOUT_MS)) ==
         pdTRUE) {
         s_scan_active = false;

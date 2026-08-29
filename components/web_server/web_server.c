@@ -7,7 +7,6 @@
 #include "freertos/task.h"
 
 #include "web_modules.h"
-#include "web_auth.h"
 
 static const char *TAG = "web_server";
 
@@ -67,15 +66,8 @@ httpd_handle_t web_server_start(void)
         return NULL;
     }
 
-    esp_err_t auth_err = web_auth_init();
-    if (auth_err != ESP_OK) {
-        ESP_LOGW(TAG, "Web auth init failed: %s (continuing without auth)",
-                 esp_err_to_name(auth_err));
-    }
-
     static const route_registrar_t registrars[] = {
         web_assets_register_gateway,
-        web_auth_api_register,
         web_mcp_token_api_register,
         web_settings_api_register,
         web_gateway_api_register,

@@ -11,8 +11,6 @@
 #include "device_store.h"
 #include "mcp_tool_exposure.h"
 #include "web_http.h"
-#include "web_auth.h"
-#include "web_auth_http.h"
 
 // ---------------------------------------------------------------------------
 // GET /api/mcp/exposures — Web Auth protected (§22)
@@ -20,13 +18,6 @@
 
 static esp_err_t exposure_get_handler(httpd_req_t *request)
 {
-    web_auth_result_t auth = web_auth_require_request(request);
-    if (auth != WEB_AUTH_OK) {
-        return web_send_api_error_code(request, "401 Unauthorized",
-                                       "Authentication required",
-                                       "auth_required");
-    }
-
     char query[128];
     char device_id[GW_MSG_DEVICE_ID_LEN] = {0};
     if (httpd_req_get_url_query_str(request, query, sizeof(query)) != ESP_OK ||
@@ -141,13 +132,6 @@ static esp_err_t exposure_get_handler(httpd_req_t *request)
 
 static esp_err_t exposure_put_handler(httpd_req_t *request)
 {
-    web_auth_result_t auth = web_auth_require_request(request);
-    if (auth != WEB_AUTH_OK) {
-        return web_send_api_error_code(request, "401 Unauthorized",
-                                       "Authentication required",
-                                       "auth_required");
-    }
-
     char body[WEB_COMMAND_BODY_MAX_LEN];
     web_body_status_t body_status;
     cJSON *json = web_parse_request_json(request, body, sizeof(body),
