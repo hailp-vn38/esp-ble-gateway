@@ -7,5 +7,5 @@ idf_component_register(
     INCLUDE_DIRS "include"
     PRIV_INCLUDE_DIRS "."
     REQUIRES device_store device_capabilities nvs_flash mbedtls
-             espressif__cjson freertos esp_timer
+             espressif__cjson freertos esp_timer memory_policy
 )

@@ -6,6 +6,7 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/semphr.h"
 
+#include "memory_policy.h"
 #include "mcp_tool_exposure_internal.h"
 
 static const char *TAG = "mcp_catalog";
@@ -21,7 +22,8 @@ typedef struct {
     device_capability_t capability;
 } catalog_entry_t;
 
-static catalog_entry_t s_entries[CONFIG_MCP_DYNAMIC_TOOL_MAX_ENABLED];
+/* Runtime-allocated so memory_policy places it in PSRAM (Plan v1.1 §11.2). */
+static catalog_entry_t *s_entries;
 static size_t s_count = 0;
 static uint32_t s_revision = 0;
 
@@ -43,6 +45,17 @@ esp_err_t mcp_tool_catalog_init(mcp_catalog_change_fn on_change,
     s_change_context = change_context;
     s_count = 0;
     s_revision = 0;
+    if (s_entries == NULL) {
+        s_entries = gw_mem_calloc(CONFIG_MCP_DYNAMIC_TOOL_MAX_ENABLED,
+                                  sizeof(*s_entries),
+                                  GW_MEM_EXTERNAL_PREFERRED);
+        if (s_entries == NULL) {
+            ESP_LOGE(TAG, "Failed to allocate catalog entries");
+            return ESP_ERR_NO_MEM;
+        }
+    }
+    memset(s_entries, 0,
+           CONFIG_MCP_DYNAMIC_TOOL_MAX_ENABLED * sizeof(*s_entries));
     if (ensure_mutex() == NULL) {
         ESP_LOGE(TAG, "Failed to create catalog mutex");
         return ESP_ERR_NO_MEM;
@@ -70,7 +83,7 @@ esp_err_t mcp_tool_catalog_add(const mcp_tool_binding_t *binding)
         xSemaphoreGive(mtx);
         return ESP_ERR_INVALID_STATE;
     }
-    if (s_count >= CONFIG_MCP_DYNAMIC_TOOL_MAX_ENABLED) {
+    if (s_entries == NULL || s_count >= CONFIG_MCP_DYNAMIC_TOOL_MAX_ENABLED) {
         xSemaphoreGive(mtx);
         return ESP_ERR_NO_MEM;
     }

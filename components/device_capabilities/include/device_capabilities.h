@@ -140,6 +140,16 @@ void device_capabilities_on_disconnect(const char *device_id);
 bool device_capabilities_on_notify(const char *device_id,
                                    const gw_message_t *message);
 
+/* Queue health counters (Plan v1.1 §10.7). */
+typedef struct {
+    uint32_t enqueued;
+    uint32_t dropped;
+    uint32_t high_watermark;
+    uint32_t message_alloc_fail;
+} device_cap_queue_stats_t;
+
+void device_capabilities_get_queue_stats(device_cap_queue_stats_t *out);
+
 /* Manual refresh. Caller MUST preflight BLE ready status.
  * On success, *out_generation is set to the reserved generation. */
 esp_err_t device_capabilities_refresh(const char *device_id,

@@ -14,6 +14,7 @@
 
 #include "device_store.h"
 #include "device_capabilities.h"
+#include "memory_policy.h"
 #include "mcp_tool_exposure.h"
 #include "mcp_tool_exposure_internal.h"
 
@@ -48,7 +49,9 @@ static TaskHandle_t s_worker_task = NULL;
 static bool s_initialized = false;
 static bool s_dirty = false;
 
-/* Enabled set (RAM): tools currently in the executable catalog. */
+/* Enabled set (RAM): tools currently in the executable catalog. Both tables
+ * are runtime-allocated so memory_policy places them in PSRAM; the mutex,
+ * queue and task handles stay internal (Plan v1.1 §11). */
 static size_t s_enabled_count = 0;
 typedef struct {
     char tool_name[MCP_DYNAMIC_TOOL_NAME_MAX + 1];
@@ -56,10 +59,9 @@ typedef struct {
     char command[GW_MSG_COMMAND_LEN];
     uint8_t capability_digest[MCP_CAPABILITY_DIGEST_LEN];
 } enabled_entry_t;
-static enabled_entry_t s_enabled[CONFIG_MCP_DYNAMIC_TOOL_MAX_ENABLED];
+static enabled_entry_t *s_enabled;
 
-/* Persisted records (for reconciliation and delete). */
-static mcp_exposure_persisted_record_t s_persisted[CONFIG_MCP_EXPOSURE_RECORD_MAX];
+static mcp_exposure_persisted_record_t *s_persisted;
 static size_t s_persisted_count = 0;
 
 /* ---------- Helpers ---------- */
@@ -380,17 +382,61 @@ esp_err_t mcp_tool_exposure_init(void)
         return ESP_ERR_NO_MEM;
     }
 
-    /* Create worker queue and task. */
-    s_worker_queue = xQueueCreate(16, sizeof(worker_event_t));
-    if (s_worker_queue == NULL) {
-        ESP_LOGE(TAG, "Failed to create worker queue");
-        return ESP_ERR_NO_MEM;
+    xSemaphoreTake(s_mutex, portMAX_DELAY);
+
+    /* Allocate state tables first so a failure unwinds without leaking
+     * partially-created resources (Plan v1.1 §11.4). */
+    if (s_enabled == NULL) {
+        s_enabled = gw_mem_calloc(CONFIG_MCP_DYNAMIC_TOOL_MAX_ENABLED,
+                                  sizeof(*s_enabled),
+                                  GW_MEM_EXTERNAL_PREFERRED);
+        if (s_enabled == NULL) {
+            xSemaphoreGive(s_mutex);
+            ESP_LOGE(TAG, "Failed to allocate enabled table");
+            return ESP_ERR_NO_MEM;
+        }
     }
-    if (xTaskCreatePinnedToCore(worker_task, "mcp_exp", 4096, NULL, 5,
+    if (s_persisted == NULL) {
+        s_persisted = gw_mem_calloc(CONFIG_MCP_EXPOSURE_RECORD_MAX,
+                                    sizeof(*s_persisted),
+                                    GW_MEM_EXTERNAL_PREFERRED);
+        if (s_persisted == NULL) {
+            gw_mem_free(s_enabled);
+            s_enabled = NULL;
+            xSemaphoreGive(s_mutex);
+            ESP_LOGE(TAG, "Failed to allocate persisted table");
+            return ESP_ERR_NO_MEM;
+        }
+    }
+
+    /* Create worker queue and task. */
+    if (s_worker_queue == NULL) {
+        s_worker_queue = xQueueCreate(16, sizeof(worker_event_t));
+        if (s_worker_queue == NULL) {
+            gw_mem_free(s_persisted);
+            s_persisted = NULL;
+            gw_mem_free(s_enabled);
+            s_enabled = NULL;
+            xSemaphoreGive(s_mutex);
+            ESP_LOGE(TAG, "Failed to create worker queue");
+            return ESP_ERR_NO_MEM;
+        }
+    }
+    if (s_worker_task == NULL &&
+        xTaskCreatePinnedToCore(worker_task, "mcp_exp", 4096, NULL, 5,
                                 &s_worker_task, 0) != pdPASS) {
+        vQueueDelete(s_worker_queue);
+        s_worker_queue = NULL;
+        gw_mem_free(s_persisted);
+        s_persisted = NULL;
+        gw_mem_free(s_enabled);
+        s_enabled = NULL;
+        xSemaphoreGive(s_mutex);
         ESP_LOGE(TAG, "Failed to create worker task");
         return ESP_ERR_NO_MEM;
     }
+
+    xSemaphoreGive(s_mutex);
 
     /* Load persisted exposure catalog. */
     size_t loaded = 0;

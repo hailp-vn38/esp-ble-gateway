@@ -15,13 +15,38 @@
 #include "mcp_endpoint_internal.h"
 #include "mcp_tool_exposure.h"
 
-// One static dispatch result guarded by a mutex: no per-request 4KB heap
+// One shared dispatch result guarded by a mutex: no per-request 4 KB heap
 // churn, and the same lock serializes dispatcher access between the HTTPD
 // task (sync tools) and the async worker (device_command).
+// Backing buffer is heap-allocated (PSRAM-preferred) so the ~4 KB does not
+// sit in internal BSS (Plan v1.1 §13).
 
 static SemaphoreHandle_t s_dispatch_mutex;
-static dispatch_result_t s_dispatch_result;
+static dispatch_result_t *s_dispatch_result;
 static portMUX_TYPE s_mutex_guard = portMUX_INITIALIZER_UNLOCKED;
+
+static dispatch_result_t *ensure_dispatch_result(void)
+{
+    dispatch_result_t *existing;
+    taskENTER_CRITICAL(&s_mutex_guard);
+    existing = s_dispatch_result;
+    taskEXIT_CRITICAL(&s_mutex_guard);
+    if (existing != NULL) return existing;
+
+    dispatch_result_t *alloc = gw_mem_calloc(1, sizeof(*alloc),
+                                            GW_MEM_EXTERNAL_PREFERRED);
+    if (alloc == NULL) return NULL;
+    taskENTER_CRITICAL(&s_mutex_guard);
+    if (s_dispatch_result != NULL) {
+        dispatch_result_t *winner = s_dispatch_result;
+        taskEXIT_CRITICAL(&s_mutex_guard);
+        gw_mem_free(alloc);
+        return winner;
+    }
+    s_dispatch_result = alloc;
+    taskEXIT_CRITICAL(&s_mutex_guard);
+    return alloc;
+}
 
 static SemaphoreHandle_t ensure_dispatch_mutex(void)
 {
@@ -518,14 +543,15 @@ cJSON *mcp_tools_execute(const gw_message_t *msg,
                          mcp_rpc_error_t *error)
 {
     SemaphoreHandle_t mutex = ensure_dispatch_mutex();
-    if (mutex == NULL) {
+    dispatch_result_t *result_buf = ensure_dispatch_result();
+    if (mutex == NULL || result_buf == NULL) {
         *error = (mcp_rpc_error_t){-32603, "out of memory"};
         return NULL;
     }
     xSemaphoreTake(mutex, portMAX_DELAY);
-    command_dispatcher_handle(msg, &s_dispatch_result);
+    command_dispatcher_handle(msg, result_buf);
     cJSON *result =
-        mcp_tools_format_dispatch(&s_dispatch_result, ctx, error);
+        mcp_tools_format_dispatch(result_buf, ctx, error);
     xSemaphoreGive(mutex);
     return result;
 }

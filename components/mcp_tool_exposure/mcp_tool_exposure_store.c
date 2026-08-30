@@ -8,6 +8,7 @@
 #include "nvs_flash.h"
 #include "nvs.h"
 
+#include "memory_policy.h"
 #include "mcp_tool_exposure_internal.h"
 
 static const char *TAG = "mcp_exp_store";
@@ -39,7 +40,8 @@ esp_err_t mcp_exposure_store_load(mcp_exposure_persisted_record_t *records,
         return (err == ESP_OK) ? ESP_ERR_INVALID_SIZE : err;
     }
 
-    mcp_exposure_store_blob_t *blob = malloc(blob_size);
+    mcp_exposure_store_blob_t *blob = gw_mem_alloc(blob_size,
+                                                   GW_MEM_EXTERNAL_PREFERRED);
     if (blob == NULL) {
         nvs_close(h);
         return ESP_ERR_NO_MEM;
@@ -49,14 +51,14 @@ esp_err_t mcp_exposure_store_load(mcp_exposure_persisted_record_t *records,
     nvs_close(h);
     if (err != ESP_OK) {
         ESP_LOGE(TAG, "NVS blob read failed: %s", esp_err_to_name(err));
-        free(blob);
+        gw_mem_free(blob);
         return err;
     }
 
     if (blob->schema_version != MCP_EXP_STORE_SCHEMA_VERSION) {
         ESP_LOGW(TAG, "Exposure schema version mismatch: got %u, expected %u",
                  blob->schema_version, MCP_EXP_STORE_SCHEMA_VERSION);
-        free(blob);
+        gw_mem_free(blob);
         return ESP_ERR_INVALID_VERSION;
     }
 
@@ -73,7 +75,7 @@ esp_err_t mcp_exposure_store_load(mcp_exposure_persisted_record_t *records,
 
     ESP_LOGI(TAG, "Loaded %zu exposure records, revision=%" PRIu32,
              n, blob->catalog_revision);
-    free(blob);
+    gw_mem_free(blob);
     return ESP_OK;
 }
 
@@ -83,7 +85,8 @@ esp_err_t mcp_exposure_store_save(const mcp_exposure_persisted_record_t *records
     size_t blob_size = sizeof(mcp_exposure_store_blob_t) +
                        count * sizeof(mcp_exposure_persisted_record_t);
 
-    mcp_exposure_store_blob_t *blob = malloc(blob_size);
+    mcp_exposure_store_blob_t *blob = gw_mem_alloc(blob_size,
+                                                   GW_MEM_EXTERNAL_PREFERRED);
     if (blob == NULL) return ESP_ERR_NO_MEM;
 
     blob->schema_version = MCP_EXP_STORE_SCHEMA_VERSION;
@@ -99,12 +102,12 @@ esp_err_t mcp_exposure_store_save(const mcp_exposure_persisted_record_t *records
     esp_err_t err = nvs_open(MCP_EXP_NVS_NAMESPACE, NVS_READWRITE, &h);
     if (err != ESP_OK) {
         ESP_LOGE(TAG, "NVS open failed for save: %s", esp_err_to_name(err));
-        free(blob);
+        gw_mem_free(blob);
         return err;
     }
 
     err = nvs_set_blob(h, MCP_EXP_NVS_KEY, blob, blob_size);
-    free(blob);
+    gw_mem_free(blob);
     if (err != ESP_OK) {
         ESP_LOGE(TAG, "NVS blob write failed: %s", esp_err_to_name(err));
         nvs_close(h);

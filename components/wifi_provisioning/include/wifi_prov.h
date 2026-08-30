@@ -47,6 +47,14 @@ void wifi_prov_get_ip(char *out_ip, size_t out_ip_len);
 /* Optional new API; does not hot-switch HTTP mode at runtime. */
 esp_err_t wifi_prov_clear_credentials(void);
 
+/* State change observer (Plan v1.1 §16): called synchronously from
+ * set_state() when the workflow state actually changes. Only one observer
+ * slot; registering replaces the previous one. Passing NULL removes it. */
+typedef void (*wifi_prov_state_change_fn)(wifi_prov_state_t new_state,
+                                          void *context);
+void wifi_prov_register_state_observer(wifi_prov_state_change_fn fn,
+                                       void *context);
+
 #ifdef __cplusplus
 }
 #endif

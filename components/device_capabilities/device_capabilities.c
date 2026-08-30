@@ -13,6 +13,7 @@
 #include "freertos/queue.h"
 #include "freertos/semphr.h"
 #include "freertos/task.h"
+#include "memory_policy.h"
 #include "nvs.h"
 
 #define CAP_EVENT_QUEUE_DEPTH 32
@@ -85,7 +86,11 @@ typedef struct {
     char device_id[GW_MSG_DEVICE_ID_LEN];
     uint32_t operation_id;
     uint32_t refresh_generation;
-    gw_message_t message;
+    /* Heap (PSRAM-preferred) copy of the notify message, set only for
+     * CAP_EVENT_NOTIFY. Keeping the payload out of the queue item lets the
+     * 32-slot queue stay deep without pinning ~8 KB of internal RAM
+     * (Plan v1.1 §10). */
+    gw_message_t *message;
     device_cap_submit_result_t completion;
 } capability_event_t;
 
@@ -107,7 +112,10 @@ typedef struct {
 
 /* ── Module state ───────────────────────────────────────────────────── */
 
-static capability_record_t s_records[DEVICE_STORE_MAX_DEVICES];
+/* Per-device records hold committed + staging snapshots (~40 KB total for 16
+ * devices) — runtime-allocated so memory_policy can place them in PSRAM
+ * (Plan v1.1 §9). Control state (mutex/queue/task/owner) stays internal. */
+static capability_record_t *s_records;
 static SemaphoreHandle_t s_mutex;
 static QueueHandle_t s_queue;
 static TaskHandle_t s_worker;
@@ -118,6 +126,13 @@ static bool s_initialized;
 static capability_global_owner_t s_owner;
 static uint32_t s_next_operation_id;
 static uint32_t s_next_global_generation;
+
+/* Queue health metrics (Plan v1.1 §10.7). */
+static uint32_t s_q_enqueued;
+static uint32_t s_q_dropped;
+static uint32_t s_q_high_watermark;
+static uint32_t s_q_message_alloc_fail;
+static int64_t s_last_drop_log_us;
 
 /* ── Forward declarations ───────────────────────────────────────────── */
 
@@ -371,6 +386,7 @@ static void discovery_done(device_cap_submit_result_t result, void *context)
     }
     if (s_queue == NULL ||
         xQueueSend(s_queue, &event, 0) != pdTRUE) {
+        __atomic_fetch_add(&s_q_dropped, 1, __ATOMIC_RELAXED);
         ESP_LOGW(TAG, "Dropping discovery completion for %s", event.device_id);
         if (lock_records()) {
             int index = find_record_locked(event.device_id);
@@ -950,12 +966,15 @@ static void capability_worker(void *arg)
             handle_disconnect(event.device_id);
             break;
         case CAP_EVENT_NOTIFY:
-            if (strcmp(event.message.type, "capabilities_begin") == 0) {
-                handle_begin(event.device_id, &event.message);
-            } else if (strcmp(event.message.type, "capability_item") == 0) {
-                handle_item(event.device_id, &event.message);
-            } else {
-                handle_end(event.device_id, &event.message);
+            if (event.message != NULL) {
+                if (strcmp(event.message->type, "capabilities_begin") == 0) {
+                    handle_begin(event.device_id, event.message);
+                } else if (strcmp(event.message->type, "capability_item") == 0) {
+                    handle_item(event.device_id, event.message);
+                } else {
+                    handle_end(event.device_id, event.message);
+                }
+                gw_mem_free(event.message);
             }
             break;
         case CAP_EVENT_COMPLETION:
@@ -973,7 +992,14 @@ esp_err_t device_capabilities_init(void)
     if (s_initialized) return ESP_ERR_INVALID_STATE;
     if (s_mutex == NULL) s_mutex = xSemaphoreCreateMutex();
     if (s_mutex == NULL) return ESP_ERR_NO_MEM;
-    memset(s_records, 0, sizeof(s_records));
+    if (s_records == NULL) {
+        s_records = gw_mem_calloc(DEVICE_STORE_MAX_DEVICES,
+                                  sizeof(*s_records),
+                                  GW_MEM_EXTERNAL_PREFERRED);
+        if (s_records == NULL) return ESP_ERR_NO_MEM;
+    }
+    memset(s_records, 0,
+           DEVICE_STORE_MAX_DEVICES * sizeof(*s_records));
     memset(&s_owner, 0, sizeof(s_owner));
     s_next_operation_id = 0;
     s_next_global_generation = 0;
@@ -1023,7 +1049,12 @@ static esp_err_t enqueue_device_event(capability_event_type_t type,
         .refresh_generation = refresh_generation,
     };
     strlcpy(event.device_id, device_id, sizeof(event.device_id));
-    return xQueueSend(s_queue, &event, 0) == pdTRUE ? ESP_OK : ESP_ERR_NO_MEM;
+    if (xQueueSend(s_queue, &event, 0) != pdTRUE) {
+        __atomic_fetch_add(&s_q_dropped, 1, __ATOMIC_RELAXED);
+        return ESP_ERR_NO_MEM;
+    }
+    __atomic_fetch_add(&s_q_enqueued, 1, __ATOMIC_RELAXED);
+    return ESP_OK;
 }
 
 esp_err_t device_capabilities_on_ready(const char *device_id)
@@ -1059,19 +1090,61 @@ bool device_capabilities_on_notify(const char *device_id,
     capability_event_t event = {
         .type = CAP_EVENT_NOTIFY,
         .operation_id = op_id,
-        .message = *message,
     };
     strlcpy(event.device_id, device_id, sizeof(event.device_id));
+
+    event.message = gw_mem_alloc(sizeof(*event.message),
+                                GW_MEM_EXTERNAL_PREFERRED);
+    if (event.message == NULL) {
+        __atomic_fetch_add(&s_q_message_alloc_fail, 1, __ATOMIC_RELAXED);
+        ESP_LOGE(TAG, "[%s] capability message alloc failed", device_id);
+        return true;
+    }
+    *event.message = *message;
+
     if (xQueueSend(s_queue, &event, 0) != pdTRUE) {
-        ESP_LOGW(TAG, "[%s] capability queue full", device_id);
+        gw_mem_free(event.message);
+        __atomic_fetch_add(&s_q_dropped, 1, __ATOMIC_RELAXED);
+        int64_t now_us = esp_timer_get_time();
+        if (now_us - s_last_drop_log_us > 5000000LL) {
+            s_last_drop_log_us = now_us;
+            ESP_LOGW(TAG, "[%s] capability queue full (dropped total: %u)",
+                     device_id,
+                     (unsigned)__atomic_load_n(&s_q_dropped,
+                                               __ATOMIC_RELAXED));
+        }
+        return true;
+    }
+
+    __atomic_fetch_add(&s_q_enqueued, 1, __ATOMIC_RELAXED);
+    UBaseType_t depth = uxQueueMessagesWaiting(s_queue);
+    uint32_t prev = __atomic_load_n(&s_q_high_watermark, __ATOMIC_RELAXED);
+    while ((uint32_t)depth > prev &&
+           !__atomic_compare_exchange_n(&s_q_high_watermark, &prev,
+                                        (uint32_t)depth, false,
+                                        __ATOMIC_RELAXED, __ATOMIC_RELAXED)) {
     }
     return true;
+}
+
+void device_capabilities_get_queue_stats(device_cap_queue_stats_t *out)
+{
+    if (out == NULL) return;
+    out->enqueued =
+        __atomic_load_n(&s_q_enqueued, __ATOMIC_RELAXED);
+    out->dropped =
+        __atomic_load_n(&s_q_dropped, __ATOMIC_RELAXED);
+    out->high_watermark =
+        __atomic_load_n(&s_q_high_watermark, __ATOMIC_RELAXED);
+    out->message_alloc_fail =
+        __atomic_load_n(&s_q_message_alloc_fail, __ATOMIC_RELAXED);
 }
 
 esp_err_t device_capabilities_refresh(const char *device_id,
                                       uint32_t *out_generation)
 {
     if (device_id == NULL || device_id[0] == '\0') return ESP_ERR_INVALID_ARG;
+    if (!s_initialized || s_records == NULL) return ESP_ERR_INVALID_STATE;
 
     device_entry_t entry;
     if (device_store_get(device_id, &entry) != DEVICE_STORE_OK) {
@@ -1312,7 +1385,10 @@ const char *device_capabilities_refresh_result_name(
 void device_capabilities_reset_for_test(void)
 {
     if (lock_records()) {
-        memset(s_records, 0, sizeof(s_records));
+        if (s_records != NULL) {
+            memset(s_records, 0,
+                   DEVICE_STORE_MAX_DEVICES * sizeof(*s_records));
+        }
         memset(&s_owner, 0, sizeof(s_owner));
         s_next_operation_id = 0;
         s_next_global_generation = 0;

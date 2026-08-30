@@ -6,7 +6,6 @@
 
 #include "ble_central.h"
 #include "board_io.h"
-#include "board_status_sync.h"
 #include "command_dispatcher.h"
 #include "command_executor.h"
 #include "device_store.h"
@@ -112,6 +111,36 @@ static void on_board_io_event(board_io_event_t event, void *context)
     }
 }
 
+/* Event-driven board status: called synchronously by wifi_prov whenever the
+ * workflow state changes, replacing the 300 ms polling task (Plan v1.1 §16). */
+static void on_wifi_prov_state_change(wifi_prov_state_t new_state, void *ctx)
+{
+    (void)ctx;
+    board_status_t resolved;
+    switch (new_state) {
+    case WIFI_PROV_STATE_BOOT_CONNECTING:
+    case WIFI_PROV_STATE_RECONNECTING:
+        resolved = BOARD_STATUS_WIFI_CONNECTING;
+        break;
+    case WIFI_PROV_STATE_PROVISIONING:
+    case WIFI_PROV_STATE_TESTING:
+    case WIFI_PROV_STATE_RESTART_PENDING:
+        resolved = BOARD_STATUS_PROVISIONING;
+        break;
+    case WIFI_PROV_STATE_CONNECTED:
+        resolved = BOARD_STATUS_READY;
+        break;
+    case WIFI_PROV_STATE_FAILED:
+        resolved = BOARD_STATUS_ERROR;
+        break;
+    case WIFI_PROV_STATE_UNINITIALIZED:
+    default:
+        resolved = BOARD_STATUS_BOOTING;
+        break;
+    }
+    board_io_set_status(resolved);
+}
+
 void app_main(void)
 {
     esp_err_t io_rc = board_io_init();
@@ -122,10 +151,6 @@ void app_main(void)
         board_io_set_status(BOARD_STATUS_BOOTING);
     } else {
         ESP_LOGE(TAG, "Board I/O init failed: %s", esp_err_to_name(io_rc));
-    }
-
-    if (board_status_sync_start() != ESP_OK) {
-        ESP_LOGW(TAG, "Board status synchronizer could not start");
     }
 
     esp_err_t ret = nvs_flash_init();
@@ -145,6 +170,11 @@ void app_main(void)
         ESP_LOGE(TAG, "Wi-Fi initialization failed; gateway services were not started");
         return;
     }
+
+    /* Register event-driven board status observer (Plan v1.1 §16). */
+    wifi_prov_register_state_observer(on_wifi_prov_state_change, NULL);
+    /* Push initial state after observer is registered. */
+    on_wifi_prov_state_change(wifi_prov_get_state(), NULL);
 
     if (wifi_prov_is_provisioning()) {
         if (web_server_start_provisioning() == NULL) {

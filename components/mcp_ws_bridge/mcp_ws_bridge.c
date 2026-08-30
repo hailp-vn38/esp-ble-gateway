@@ -18,6 +18,7 @@
 #include "freertos/queue.h"
 #include "freertos/semphr.h"
 #include "freertos/task.h"
+#include "memory_policy.h"
 #include "nvs.h"
 #include "nvs_flash.h"
 
@@ -424,7 +425,8 @@ static void websocket_event_handler(void *handler_args, esp_event_base_t base,
     bool message_complete = frame_complete && data->fin;
     if (message_complete) {
         if (!s_bridge.rx_discard) {
-            char *message = malloc(s_bridge.rx_length + 1);
+            char *message = gw_mem_alloc(s_bridge.rx_length + 1,
+                                        GW_MEM_EXTERNAL_PREFERRED);
             if (message != NULL) {
                 memcpy(message, s_bridge.rx_buffer, s_bridge.rx_length);
                 message[s_bridge.rx_length] = '\0';
@@ -435,7 +437,7 @@ static void websocket_event_handler(void *handler_args, esp_event_base_t base,
                     .payload = message,
                     .payload_len = s_bridge.rx_length,
                 };
-                if (!queue_event(&rx)) free(message);
+                if (!queue_event(&rx)) gw_mem_free(message);
             }
         } else {
             ESP_LOGW(TAG, "Dropped oversized WebSocket message");

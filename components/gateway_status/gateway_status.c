@@ -4,8 +4,6 @@
 #include <string.h>
 
 #include "esp_app_desc.h"
-#include "esp_heap_caps.h"
-#include "esp_psram.h"
 #include "esp_system.h"
 #include "esp_timer.h"
 #include "esp_wifi.h"
@@ -13,6 +11,7 @@
 
 #include "ble_central.h"
 #include "device_store.h"
+#include "memory_policy.h"
 #include "wifi_prov.h"
 
 esp_err_t gateway_status_get(gateway_status_t *status)
@@ -69,31 +68,17 @@ esp_err_t gateway_status_get(gateway_status_t *status)
         strlcpy(status->wifi_mac, "00:00:00:00:00:00", sizeof(status->wifi_mac));
     }
 
-    // Internal SRAM telemetry
-    status->internal_free = (uint32_t)heap_caps_get_free_size(
-        MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
-    status->internal_min_free =
-        (uint32_t)heap_caps_get_minimum_free_size(
-            MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
-    status->internal_largest_free_block =
-        (uint32_t)heap_caps_get_largest_free_block(
-            MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
-
-    // PSRAM telemetry
-#if CONFIG_SPIRAM
-    status->psram_ready = esp_psram_is_initialized();
-#else
-    status->psram_ready = false;
-#endif
-    if (status->psram_ready) {
-        status->psram_free = (uint32_t)heap_caps_get_free_size(
-            MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
-        status->psram_min_free =
-            (uint32_t)heap_caps_get_minimum_free_size(
-                MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
-        status->psram_largest_free_block =
-            (uint32_t)heap_caps_get_largest_free_block(
-                MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+    // Shared memory telemetry (single source of truth in memory_policy).
+    gw_memory_snapshot_t mem;
+    gw_memory_snapshot(&mem);
+    status->internal_free = (uint32_t)mem.internal_free;
+    status->internal_min_free = (uint32_t)mem.internal_min_free;
+    status->internal_largest_free_block = (uint32_t)mem.internal_largest;
+    status->psram_ready = mem.psram_ready;
+    if (mem.psram_ready) {
+        status->psram_free = (uint32_t)mem.psram_free;
+        status->psram_min_free = (uint32_t)mem.psram_min_free;
+        status->psram_largest_free_block = (uint32_t)mem.psram_largest;
     }
 
     return ESP_OK;

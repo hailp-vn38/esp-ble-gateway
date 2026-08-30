@@ -8,6 +8,7 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/queue.h"
 #include "freertos/task.h"
+#include "memory_policy.h"
 #include "sdkconfig.h"
 
 #define COMMAND_EXECUTOR_PRIORITY (tskIDLE_PRIORITY + 4)
@@ -26,10 +27,12 @@ typedef struct {
 } command_job_t;
 
 // Persistent per-worker result storage keeps memory deterministic and the
-// worker stack small (Plan v2 §11).
+// worker stack small (Plan v2 §11). The ~4 KB response buffer itself is
+// heap-allocated (PSRAM-preferred) so only the task handle and counters stay
+// in internal RAM (Plan v1.1 §12).
 typedef struct {
     TaskHandle_t task;
-    dispatch_result_t result;
+    dispatch_result_t *result;
     uint32_t jobs_processed;
 } command_worker_t;
 
@@ -55,13 +58,13 @@ static void stats_decrement(uint32_t *field)
 
 static void complete_job(command_worker_t *worker, const command_job_t *job)
 {
-    job->completion(&worker->result, job->context);
+    job->completion(worker->result, job->context);
 }
 
 static void complete_expired_job(command_worker_t *worker,
                                  const command_job_t *job)
 {
-    dispatch_result_t *result = &worker->result;
+    dispatch_result_t *result = worker->result;
     memset(result, 0, sizeof(*result));
     result->status = DISPATCH_STATUS_TIMEOUT;
     result->format = DISPATCH_RESULT_TEXT;
@@ -93,10 +96,10 @@ static void worker_loop(void *arg)
             continue;
         }
 
-        command_dispatcher_handle(&job.message, &worker->result);
+        command_dispatcher_handle(&job.message, worker->result);
         worker->jobs_processed++;
         stats_increment(&s_stats.completed);
-        if (worker->result.status == DISPATCH_STATUS_TIMEOUT) {
+        if (worker->result->status == DISPATCH_STATUS_TIMEOUT) {
             stats_increment(&s_stats.dispatch_timeout);
         }
         complete_job(worker, &job);
@@ -116,6 +119,24 @@ esp_err_t command_executor_init(void)
 
     s_queue = xQueueCreate(CONFIG_CMD_EXEC_QUEUE_LEN, sizeof(command_job_t));
     if (s_queue == NULL) return ESP_ERR_NO_MEM;
+
+    // Allocate all worker result buffers up-front (PSRAM-preferred) so a
+    // failure unwinds cleanly before any worker task exists.
+    for (size_t i = 0; i < CONFIG_CMD_EXEC_WORKER_COUNT; i++) {
+        s_workers[i].result = gw_mem_calloc(1, sizeof(*s_workers[i].result),
+                                            GW_MEM_EXTERNAL_PREFERRED);
+        if (s_workers[i].result == NULL) {
+            ESP_LOGE(TAG, "Could not allocate result buffer for worker %u",
+                     (unsigned)i);
+            for (size_t j = 0; j < i; j++) {
+                gw_mem_free(s_workers[j].result);
+                s_workers[j].result = NULL;
+            }
+            vQueueDelete(s_queue);
+            s_queue = NULL;
+            return ESP_ERR_NO_MEM;
+        }
+    }
 
     s_running = true;
     for (size_t i = 0; i < CONFIG_CMD_EXEC_WORKER_COUNT; i++) {
@@ -163,6 +184,12 @@ void command_executor_deinit(void)
 
     vQueueDelete(s_queue);
     s_queue = NULL;
+
+    for (size_t i = 0; i < CONFIG_CMD_EXEC_WORKER_COUNT; i++) {
+        gw_mem_free(s_workers[i].result);
+        s_workers[i].result = NULL;
+    }
+
     ESP_LOGI(TAG, "Command executor stopped");
 }
 

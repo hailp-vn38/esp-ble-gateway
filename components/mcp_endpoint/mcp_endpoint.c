@@ -4,6 +4,7 @@
 
 #include "esp_log.h"
 
+#include "memory_policy.h"
 #include "mcp_core.h"
 #include "mcp_endpoint.h"
 #include "mcp_endpoint_internal.h"
@@ -106,7 +107,8 @@ static mcp_recv_status_t receive_body(httpd_req_t *request, char **out_body)
     if (request->content_len <= 0 || request->content_len > MCP_MAX_REQUEST_LEN) {
         return MCP_RECV_ERR_SIZE;
     }
-    char *body = malloc((size_t)request->content_len + 1);
+    char *body = gw_mem_alloc((size_t)request->content_len + 1,
+                              GW_MEM_EXTERNAL_PREFERRED);
     if (body == NULL) return MCP_RECV_ERR_MEM;
 
     size_t received = 0;
@@ -116,13 +118,13 @@ static mcp_recv_status_t receive_body(httpd_req_t *request, char **out_body)
                                      request->content_len - (int)received);
         if (chunk == HTTPD_SOCK_ERR_TIMEOUT) {
             if (++timeout_retries > MCP_MAX_RECV_RETRIES) {
-                free(body);
+                gw_mem_free(body);
                 return MCP_RECV_ERR_TIMEOUT;
             }
             continue;
         }
         if (chunk <= 0) {
-            free(body);
+            gw_mem_free(body);
             return MCP_RECV_ERR_READ;
         }
         received += (size_t)chunk;
@@ -272,7 +274,7 @@ esp_err_t mcp_handle_request(httpd_req_t *request)
     mcp_responder_t responder = make_http_responder(request);
     esp_err_t outcome =
         mcp_core_handle_json(body, strlen(body), &wire, &responder);
-    free(body);
+    gw_mem_free(body);
     if (outcome == ESP_ERR_NO_MEM) {
         return s_transport.send_err(request, HTTPD_500_INTERNAL_SERVER_ERROR,
                                     "Out of memory");

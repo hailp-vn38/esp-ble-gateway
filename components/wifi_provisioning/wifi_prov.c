@@ -59,6 +59,10 @@ static esp_netif_t *s_ap_netif;
 static EventGroupHandle_t s_wifi_events;
 static SemaphoreHandle_t s_operation_mutex;
 
+/* State change observer (Plan v1.1 §16). */
+static wifi_prov_state_change_fn s_state_observer;
+static void *s_state_observer_context;
+
 static char s_ap_ssid[33];
 
 /* ------------------------------------------------------------------ */
@@ -76,6 +80,9 @@ static void set_state(wifi_prov_state_t new_state)
     if (old_state != new_state) {
         ESP_LOGI(TAG, "state: %s -> %s", wifi_prov_state_name(old_state),
                  wifi_prov_state_name(new_state));
+        if (s_state_observer != NULL) {
+            s_state_observer(new_state, s_state_observer_context);
+        }
     }
 }
 
@@ -800,4 +807,11 @@ int wifi_prov_init(void)
 fail:
     cleanup_owned_resources();
     return -1;
+}
+
+void wifi_prov_register_state_observer(wifi_prov_state_change_fn fn,
+                                       void *context)
+{
+    s_state_observer = fn;
+    s_state_observer_context = context;
 }
