@@ -5,7 +5,7 @@
 #include <stddef.h>
 #include <stdint.h>
 
-#include "device_capabilities.h"
+#include "device_schema.h"
 #include "esp_err.h"
 
 #ifdef __cplusplus
@@ -43,7 +43,7 @@ typedef struct {
     char tool_name[MCP_DYNAMIC_TOOL_NAME_MAX + 1];
     char device_id[GW_MSG_DEVICE_ID_LEN];
     char command[GW_MSG_COMMAND_LEN];
-    device_capability_t capability;
+    device_schema_tool_t capability;
 } mcp_tool_binding_t;
 
 typedef struct {
@@ -101,7 +101,7 @@ esp_err_t mcp_tool_name_generate(const char *device_name, const char *command,
                                  char *out, size_t out_len);
 
 // Capability digest (mcp_tool_digest.c).
-void mcp_tool_digest_compute(const device_capability_t *cap,
+void mcp_tool_digest_compute(const device_schema_tool_t *cap,
                              uint8_t out[MCP_CAPABILITY_DIGEST_LEN]);
 bool mcp_tool_digest_match(const uint8_t a[MCP_CAPABILITY_DIGEST_LEN],
                            const uint8_t b[MCP_CAPABILITY_DIGEST_LEN]);

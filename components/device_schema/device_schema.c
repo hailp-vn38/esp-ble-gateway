@@ -1,6 +1,6 @@
-#include "device_capabilities.h"
+#include "device_schema.h"
+#include "device_schema_internal.h"
 
-#include <ctype.h>
 #include <stddef.h>
 #include <stdlib.h>
 #include <stdio.h>
@@ -14,85 +14,31 @@
 #include "freertos/semphr.h"
 #include "freertos/task.h"
 #include "memory_policy.h"
-#include "nvs.h"
 
-#define CAP_EVENT_QUEUE_DEPTH 32
-#define CAP_WORKER_STACK 6144
-#define CAP_WORKER_PRIORITY (tskIDLE_PRIORITY + 3)
-#define CAP_STORE_SCHEMA_VERSION 1
-#define CAP_NVS_NAMESPACE "dev_caps"
+#define SCHEMA_EVENT_QUEUE_DEPTH 32
+#define SCHEMA_WORKER_STACK 6144
+#define SCHEMA_WORKER_PRIORITY (tskIDLE_PRIORITY + 3)
 
-static const char *TAG = "device_caps";
-
-/* ── Internal enums ─────────────────────────────────────────────────── */
-
-typedef enum {
-    DEVICE_CAP_OP_NONE = 0,
-    DEVICE_CAP_OP_INITIAL,
-    DEVICE_CAP_OP_MANUAL,
-} device_cap_operation_kind_t;
-
-typedef enum {
-    DEVICE_CAP_OP_IDLE = 0,
-    DEVICE_CAP_OP_QUEUED,
-    DEVICE_CAP_OP_RUNNING,
-} device_cap_operation_state_t;
-
-/* ── Per-device record ──────────────────────────────────────────────── */
-
-typedef struct {
-    bool used;
-    bool has_committed;
-    bool persist_dirty;
-
-    device_capability_snapshot_t committed;
-
-    bool staging_active;
-    uint32_t staging_operation_id;
-    uint16_t staging_expected;
-    device_capability_snapshot_t staging;
-
-    device_cap_operation_kind_t operation_kind;
-    device_cap_operation_state_t operation_state;
-    uint32_t operation_id;
-
-    device_cap_refresh_active_t refresh_active;
-    device_cap_refresh_completed_t refresh_last_completed;
-} capability_record_t;
-
-/* ── NVS persisted blob ─────────────────────────────────────────────── */
-
-typedef struct {
-    uint8_t schema_version;
-    uint8_t count;
-    uint16_t reserved;
-    char device_id[GW_MSG_DEVICE_ID_LEN];
-    uint32_t revision;
-    device_capability_t items[DEVICE_CAP_MAX_PER_DEVICE];
-} persisted_snapshot_t;
+static const char *TAG = "device_schema";
 
 /* ── Event types for worker queue ───────────────────────────────────── */
 
 typedef enum {
-    CAP_EVENT_READY = 0,
-    CAP_EVENT_REFRESH,
-    CAP_EVENT_DISCONNECT,
-    CAP_EVENT_NOTIFY,
-    CAP_EVENT_COMPLETION,
-} capability_event_type_t;
+    SCHEMA_EVENT_READY = 0,
+    SCHEMA_EVENT_REFRESH,
+    SCHEMA_EVENT_DISCONNECT,
+    SCHEMA_EVENT_NOTIFY,
+    SCHEMA_EVENT_COMPLETION,
+} schema_event_type_t;
 
 typedef struct {
-    capability_event_type_t type;
+    schema_event_type_t type;
     char device_id[GW_MSG_DEVICE_ID_LEN];
     uint32_t operation_id;
     uint32_t refresh_generation;
-    /* Heap (PSRAM-preferred) copy of the notify message, set only for
-     * CAP_EVENT_NOTIFY. Keeping the payload out of the queue item lets the
-     * 32-slot queue stay deep without pinning ~8 KB of internal RAM
-     * (Plan v1.1 §10). */
     gw_message_t *message;
-    device_cap_submit_result_t completion;
-} capability_event_t;
+    device_schema_submit_result_t completion;
+} schema_event_t;
 
 typedef struct {
     char device_id[GW_MSG_DEVICE_ID_LEN];
@@ -106,28 +52,26 @@ typedef struct {
     bool active;
     char device_id[GW_MSG_DEVICE_ID_LEN];
     uint32_t operation_id;
-    device_cap_operation_kind_t kind;
+    int kind;
     uint32_t refresh_generation;
-} capability_global_owner_t;
+} schema_global_owner_t;
 
 /* ── Module state ───────────────────────────────────────────────────── */
 
-/* Per-device records hold committed + staging snapshots (~40 KB total for 16
- * devices) — runtime-allocated so memory_policy can place them in PSRAM
- * (Plan v1.1 §9). Control state (mutex/queue/task/owner) stays internal. */
-static capability_record_t *s_records;
+static schema_record_t *s_records;
 static SemaphoreHandle_t s_mutex;
 static QueueHandle_t s_queue;
 static TaskHandle_t s_worker;
-static device_cap_submit_fn s_submitter;
-static device_capability_commit_listener_t s_commit_listener;
+static device_schema_submit_fn s_submitter;
+static device_schema_commit_listener_t s_commit_listener;
 static void *s_commit_listener_context;
 static bool s_initialized;
-static capability_global_owner_t s_owner;
+static bool s_shutdown;  /* test-only: signals worker to exit */
+static schema_global_owner_t s_owner;
 static uint32_t s_next_operation_id;
 static uint32_t s_next_global_generation;
 
-/* Queue health metrics (Plan v1.1 §10.7). */
+/* Queue health metrics */
 static uint32_t s_q_enqueued;
 static uint32_t s_q_dropped;
 static uint32_t s_q_high_watermark;
@@ -138,8 +82,7 @@ static int64_t s_last_drop_log_us;
 
 static bool lock_records(void);
 static void unlock_records(void);
-static void start_discovery(const char *device_id,
-                            device_cap_operation_kind_t kind,
+static void start_discovery(const char *device_id, int kind,
                             uint32_t generation);
 
 /* ── Helpers ────────────────────────────────────────────────────────── */
@@ -195,163 +138,30 @@ static int find_or_create_record_locked(const char *device_id)
         s_records[i].used = true;
         strlcpy(s_records[i].committed.device_id, device_id,
                 sizeof(s_records[i].committed.device_id));
-        s_records[i].committed.state = DEVICE_CAP_STATE_UNKNOWN;
+        s_records[i].committed.state = DEVICE_SCHEMA_STATE_UNKNOWN;
         return i;
     }
     return -1;
 }
 
-static bool valid_command_name(const char *command)
+static bool snapshot_content_equal(const device_schema_snapshot_t *a,
+                                   const device_schema_snapshot_t *b)
 {
-    size_t length = strnlen(command, GW_MSG_COMMAND_LEN);
-    if (length == 0 || length >= GW_MSG_COMMAND_LEN) return false;
-    for (size_t i = 0; i < length; i++) {
-        unsigned char c = (unsigned char)command[i];
-        if (!isalnum(c) && c != '_' && c != '-' && c != '.') return false;
-    }
-    return true;
-}
-
-static bool valid_capability(const device_capability_t *capability)
-{
-    if (!valid_command_name(capability->command) ||
-        capability->value_type > DEVICE_CAP_VALUE_INT) {
+    if (a->revision != b->revision ||
+        a->tool_count != b->tool_count ||
+        a->feature_count != b->feature_count) {
         return false;
     }
-    if (capability->value_type == DEVICE_CAP_VALUE_INT) {
-        if (capability->min_value > capability->max_value ||
-            capability->step == 0) {
+    for (size_t i = 0; i < a->tool_count; i++) {
+        if (!schema_tool_equal(&a->tools[i], &b->tools[i])) return false;
+    }
+    for (size_t i = 0; i < a->feature_count; i++) {
+        if (memcmp(&a->features[i], &b->features[i],
+                   sizeof(device_schema_feature_t)) != 0) {
             return false;
         }
     }
     return true;
-}
-
-static bool capability_item_equal(const device_capability_t *a,
-                                  const device_capability_t *b)
-{
-    return a->value_type == b->value_type &&
-           a->flags == b->flags &&
-           a->min_value == b->min_value &&
-           a->max_value == b->max_value &&
-           a->step == b->step &&
-           strcmp(a->command, b->command) == 0 &&
-           strcmp(a->label, b->label) == 0 &&
-           strcmp(a->unit, b->unit) == 0;
-}
-
-static bool snapshot_content_equal(const device_capability_snapshot_t *a,
-                                   const device_capability_snapshot_t *b)
-{
-    if (a->revision != b->revision || a->count != b->count) return false;
-    for (size_t i = 0; i < a->count; i++) {
-        if (!capability_item_equal(&a->items[i], &b->items[i])) return false;
-    }
-    return true;
-}
-
-/* ── NVS persistence ────────────────────────────────────────────────── */
-
-static void capability_nvs_key(int index, char key[8])
-{
-    unsigned bounded = (unsigned)index % DEVICE_STORE_MAX_DEVICES;
-    snprintf(key, 8, "cap%02u", bounded);
-}
-
-static esp_err_t persist_record(int index,
-                                const device_capability_snapshot_t *snapshot)
-{
-    persisted_snapshot_t persisted = {
-        .schema_version = CAP_STORE_SCHEMA_VERSION,
-        .count = (uint8_t)snapshot->count,
-        .revision = snapshot->revision,
-    };
-    strlcpy(persisted.device_id, snapshot->device_id,
-            sizeof(persisted.device_id));
-    if (snapshot->count > 0) {
-        memcpy(persisted.items, snapshot->items,
-               snapshot->count * sizeof(snapshot->items[0]));
-    }
-
-    nvs_handle_t handle;
-    esp_err_t error = nvs_open(CAP_NVS_NAMESPACE, NVS_READWRITE, &handle);
-    if (error != ESP_OK) return error;
-    char key[8];
-    capability_nvs_key(index, key);
-    size_t blob_size = offsetof(persisted_snapshot_t, items) +
-                       snapshot->count * sizeof(persisted.items[0]);
-    error = nvs_set_blob(handle, key, &persisted, blob_size);
-    if (error == ESP_OK) error = nvs_commit(handle);
-    nvs_close(handle);
-    return error;
-}
-
-static void load_persisted(void)
-{
-    nvs_handle_t handle;
-    esp_err_t error = nvs_open(CAP_NVS_NAMESPACE, NVS_READWRITE, &handle);
-    if (error != ESP_OK) {
-        ESP_LOGW(TAG, "Could not open capability NVS: %s",
-                 esp_err_to_name(error));
-        return;
-    }
-
-    for (int i = 0; i < DEVICE_STORE_MAX_DEVICES; i++) {
-        char key[8];
-        capability_nvs_key(i, key);
-        persisted_snapshot_t persisted;
-        memset(&persisted, 0, sizeof(persisted));
-        size_t length = 0;
-        error = nvs_get_blob(handle, key, NULL, &length);
-        if (error == ESP_ERR_NVS_NOT_FOUND) continue;
-        if (error != ESP_OK || length < offsetof(persisted_snapshot_t, items) ||
-            length > sizeof(persisted)) {
-            ESP_LOGW(TAG, "Ignoring invalid capability record %s", key);
-            continue;
-        }
-        error = nvs_get_blob(handle, key, &persisted, &length);
-        size_t expected_length = offsetof(persisted_snapshot_t, items) +
-                                 persisted.count * sizeof(persisted.items[0]);
-        if (error != ESP_OK || length != expected_length ||
-            persisted.schema_version != CAP_STORE_SCHEMA_VERSION ||
-            persisted.count > DEVICE_CAP_MAX_PER_DEVICE ||
-            persisted.device_id[0] == '\0') {
-            ESP_LOGW(TAG, "Ignoring invalid capability record %s", key);
-            continue;
-        }
-
-        device_entry_t device;
-        if (device_store_get(persisted.device_id, &device) != DEVICE_STORE_OK) {
-            continue;
-        }
-
-        bool valid = true;
-        for (size_t item = 0; item < persisted.count; item++) {
-            if (!valid_capability(&persisted.items[item])) {
-                valid = false;
-                break;
-            }
-        }
-        if (!valid) continue;
-
-        capability_record_t *record = &s_records[i];
-        memset(record, 0, sizeof(*record));
-        record->used = true;
-        record->has_committed = true;
-        record->persist_dirty = false;
-        strlcpy(record->committed.device_id, persisted.device_id,
-                sizeof(record->committed.device_id));
-        record->committed.state = DEVICE_CAP_STATE_READY;
-        record->committed.revision = persisted.revision;
-        record->committed.count = persisted.count;
-        memcpy(record->committed.items, persisted.items,
-               persisted.count * sizeof(persisted.items[0]));
-
-        ESP_LOGI(TAG, "[%s] loaded cached capabilities (revision=%lu, %u items)",
-                 persisted.device_id, (unsigned long)persisted.revision,
-                 (unsigned)persisted.count);
-    }
-    nvs_close(handle);
 }
 
 /* ── Completion context helpers ─────────────────────────────────────── */
@@ -370,11 +180,11 @@ static completion_context_t *make_completion_context(
 
 /* ── Submit callback from BLE command executor ──────────────────────── */
 
-static void discovery_done(device_cap_submit_result_t result, void *context)
+static void discovery_done(device_schema_submit_result_t result, void *context)
 {
     completion_context_t *done_context = context;
-    capability_event_t event = {
-        .type = CAP_EVENT_COMPLETION,
+    schema_event_t event = {
+        .type = SCHEMA_EVENT_COMPLETION,
         .completion = result,
     };
     if (done_context != NULL) {
@@ -391,13 +201,13 @@ static void discovery_done(device_cap_submit_result_t result, void *context)
         if (lock_records()) {
             int index = find_record_locked(event.device_id);
             if (index >= 0) {
-                capability_record_t *record = &s_records[index];
+                schema_record_t *record = &s_records[index];
                 record->staging_active = false;
                 memset(&record->staging, 0, sizeof(record->staging));
                 if (!record->has_committed) {
-                    record->committed.state = DEVICE_CAP_STATE_ERROR;
+                    record->committed.state = DEVICE_SCHEMA_STATE_ERROR;
                 }
-                record->operation_state = DEVICE_CAP_OP_IDLE;
+                record->operation_state = 0 /* IDLE */;
             }
             if (s_owner.active &&
                 strcmp(s_owner.device_id, event.device_id) == 0 &&
@@ -414,7 +224,7 @@ static void discovery_done(device_cap_submit_result_t result, void *context)
 static void start_next_pending(void)
 {
     char device_id[GW_MSG_DEVICE_ID_LEN] = {0};
-    device_cap_operation_kind_t kind = DEVICE_CAP_OP_NONE;
+    int kind = 0;
     uint32_t gen = 0;
 
     if (!lock_records()) return;
@@ -422,7 +232,7 @@ static void start_next_pending(void)
     if (!s_owner.active) {
         for (int i = 0; i < DEVICE_STORE_MAX_DEVICES; i++) {
             if (!s_records[i].used ||
-                s_records[i].operation_state != DEVICE_CAP_OP_QUEUED) {
+                s_records[i].operation_state != 1 /* QUEUED */) {
                 continue;
             }
             strlcpy(device_id, s_records[i].committed.device_id,
@@ -441,8 +251,7 @@ static void start_next_pending(void)
 
 /* ── Discovery submission ───────────────────────────────────────────── */
 
-static void start_discovery(const char *device_id,
-                            device_cap_operation_kind_t kind,
+static void start_discovery(const char *device_id, int kind,
                             uint32_t generation)
 {
     if (!lock_records()) return;
@@ -451,11 +260,11 @@ static void start_discovery(const char *device_id,
         unlock_records();
         return;
     }
-    capability_record_t *record = &s_records[index];
+    schema_record_t *record = &s_records[index];
 
     if (s_owner.active) {
-        record->operation_state = DEVICE_CAP_OP_QUEUED;
-        record->committed.state = DEVICE_CAP_STATE_DISCOVERING;
+        record->operation_state = 1 /* QUEUED */;
+        record->committed.state = DEVICE_SCHEMA_STATE_DISCOVERING;
         unlock_records();
         return;
     }
@@ -469,14 +278,14 @@ static void start_discovery(const char *device_id,
 
     record->operation_id = op_id;
     record->operation_kind = kind;
-    record->operation_state = DEVICE_CAP_OP_RUNNING;
+    record->operation_state = 2 /* RUNNING */;
     record->staging_active = false;
     record->staging_operation_id = op_id;
-    record->committed.state = DEVICE_CAP_STATE_DISCOVERING;
+    record->committed.state = DEVICE_SCHEMA_STATE_DISCOVERING;
 
-    if (kind == DEVICE_CAP_OP_MANUAL) {
+    if (kind == 2 /* MANUAL */) {
         record->refresh_active.generation = generation;
-        record->refresh_active.state = DEVICE_CAP_REFRESH_RUNNING;
+        record->refresh_active.state = DEVICE_SCHEMA_REFRESH_RUNNING;
     }
 
     unlock_records();
@@ -485,13 +294,13 @@ static void start_discovery(const char *device_id,
         if (lock_records()) {
             int idx = find_record_locked(device_id);
             if (idx >= 0) {
-                capability_record_t *r = &s_records[idx];
+                schema_record_t *r = &s_records[idx];
                 r->staging_active = false;
                 memset(&r->staging, 0, sizeof(r->staging));
                 if (!r->has_committed) {
-                    r->committed.state = DEVICE_CAP_STATE_ERROR;
+                    r->committed.state = DEVICE_SCHEMA_STATE_ERROR;
                 }
-                r->operation_state = DEVICE_CAP_OP_IDLE;
+                r->operation_state = 0 /* IDLE */;
             }
             s_owner.active = false;
             unlock_records();
@@ -506,13 +315,13 @@ static void start_discovery(const char *device_id,
         if (lock_records()) {
             int idx = find_record_locked(device_id);
             if (idx >= 0) {
-                capability_record_t *r = &s_records[idx];
+                schema_record_t *r = &s_records[idx];
                 r->staging_active = false;
                 memset(&r->staging, 0, sizeof(r->staging));
                 if (!r->has_committed) {
-                    r->committed.state = DEVICE_CAP_STATE_ERROR;
+                    r->committed.state = DEVICE_SCHEMA_STATE_ERROR;
                 }
-                r->operation_state = DEVICE_CAP_OP_IDLE;
+                r->operation_state = 0 /* IDLE */;
             }
             s_owner.active = false;
             unlock_records();
@@ -527,7 +336,8 @@ static void start_discovery(const char *device_id,
     };
     strlcpy(query.type, "device_command", sizeof(query.type));
     strlcpy(query.device_id, device_id, sizeof(query.device_id));
-    strlcpy(query.command, DEVICE_CAP_RESERVED_COMMAND, sizeof(query.command));
+    strlcpy(query.command, DEVICE_SCHEMA_RESERVED_COMMAND,
+            sizeof(query.command));
 
     esp_err_t error = s_submitter(&query, discovery_done, context);
     if (error != ESP_OK) {
@@ -535,13 +345,13 @@ static void start_discovery(const char *device_id,
         if (lock_records()) {
             int idx = find_record_locked(device_id);
             if (idx >= 0) {
-                capability_record_t *r = &s_records[idx];
+                schema_record_t *r = &s_records[idx];
                 r->staging_active = false;
                 memset(&r->staging, 0, sizeof(r->staging));
                 if (!r->has_committed) {
-                    r->committed.state = DEVICE_CAP_STATE_ERROR;
+                    r->committed.state = DEVICE_SCHEMA_STATE_ERROR;
                 }
-                r->operation_state = DEVICE_CAP_OP_IDLE;
+                r->operation_state = 0 /* IDLE */;
             }
             s_owner.active = false;
             unlock_records();
@@ -555,45 +365,50 @@ static void start_discovery(const char *device_id,
 static bool message_device_matches(const char *device_id,
                                    const gw_message_t *message)
 {
-    return message->protocol_version >= 3 && message->has_device_id &&
+    return message->protocol_version == GW_PROTOCOL_VERSION &&
+           message->has_device_id &&
            strcmp(device_id, message->device_id) == 0;
 }
 
-/* ── BEGIN / ITEM / END handlers ────────────────────────────────────── */
+/* ── BEGIN / ITEM / FEATURE_ITEM / END handlers ─────────────────────── */
 
 static void handle_begin(const char *device_id, const gw_message_t *message)
 {
     if (!message_device_matches(device_id, message) ||
         !message->has_snapshot_id || !message->has_total ||
         !message->has_capability_revision ||
-        message->total > DEVICE_CAP_MAX_PER_DEVICE) {
+        message->total > DEVICE_SCHEMA_MAX_TOOLS) {
         return;
     }
     if (!lock_records()) return;
     int index = find_record_locked(device_id);
     if (index >= 0) {
-        capability_record_t *record = &s_records[index];
-        if (record->operation_state != DEVICE_CAP_OP_RUNNING) {
+        schema_record_t *record = &s_records[index];
+        if (record->operation_state != 2 /* RUNNING */) {
             unlock_records();
             return;
         }
         memset(&record->staging, 0, sizeof(record->staging));
         strlcpy(record->staging.device_id, device_id,
                 sizeof(record->staging.device_id));
-        record->staging.state = DEVICE_CAP_STATE_DISCOVERING;
+        record->staging.state = DEVICE_SCHEMA_STATE_DISCOVERING;
         record->staging.snapshot_id = message->snapshot_id;
         record->staging.revision = message->capability_revision;
-        record->staging_expected = message->total;
+        record->staging_expected_tools = message->total;
+        record->staging_expected_features =
+            message->has_feature_total ? message->feature_total : 0;
         record->staging_active = true;
-        ESP_LOGI(TAG, "[%s] CAP_BEGIN snapshot=%lu total=%u revision=%lu",
+        ESP_LOGI(TAG, "[%s] SCHEMA_BEGIN snapshot=%lu tools=%u features=%u rev=%lu",
                  device_id, (unsigned long)message->snapshot_id,
                  (unsigned)message->total,
+                 (unsigned)record->staging_expected_features,
                  (unsigned long)message->capability_revision);
     }
     unlock_records();
 }
 
-static void handle_item(const char *device_id, const gw_message_t *message)
+static void handle_tool_item(const char *device_id,
+                              const gw_message_t *message)
 {
     if (!message_device_matches(device_id, message) ||
         !message->has_snapshot_id || !message->has_sequence ||
@@ -601,8 +416,8 @@ static void handle_item(const char *device_id, const gw_message_t *message)
         return;
     }
 
-    device_capability_t item = {
-        .value_type = (device_cap_value_type_t)message->value_type,
+    device_schema_tool_t tool = {
+        .value_type = message->value_type,
         .flags = message->has_capability_flags
                      ? message->capability_flags
                      : 0,
@@ -610,51 +425,132 @@ static void handle_item(const char *device_id, const gw_message_t *message)
         .max_value = message->max_value,
         .step = message->step,
     };
-    strlcpy(item.command, message->command, sizeof(item.command));
-    strlcpy(item.label,
+    strlcpy(tool.command, message->command, sizeof(tool.command));
+    strlcpy(tool.label,
             message->capability_label[0] != '\0'
                 ? message->capability_label
                 : message->command,
-            sizeof(item.label));
-    strlcpy(item.unit, message->capability_unit, sizeof(item.unit));
+            sizeof(tool.label));
+    strlcpy(tool.unit, message->capability_unit, sizeof(tool.unit));
 
-    if (item.value_type == DEVICE_CAP_VALUE_INT &&
+    if (tool.value_type == 2 /* INT */ &&
         (!message->has_min_value || !message->has_max_value ||
          !message->has_step)) {
         return;
     }
-    if (!valid_capability(&item)) return;
+    if (!schema_valid_tool(&tool)) return;
 
     if (!lock_records()) return;
     int index = find_record_locked(device_id);
     if (index >= 0) {
-        capability_record_t *record = &s_records[index];
-        size_t next = record->staging.count;
+        schema_record_t *record = &s_records[index];
+        size_t next = record->staging.tool_count;
         bool valid_sequence =
             record->staging_active &&
             record->staging.snapshot_id == message->snapshot_id &&
-            message->sequence == next && next < record->staging_expected;
+            message->sequence == next && next < record->staging_expected_tools;
         if (valid_sequence) {
             for (size_t i = 0; i < next; i++) {
-                if (strcmp(record->staging.items[i].command,
-                           item.command) == 0) {
+                if (strcmp(record->staging.tools[i].command,
+                           tool.command) == 0) {
                     valid_sequence = false;
                     break;
                 }
             }
         }
         if (valid_sequence) {
-            record->staging.items[next] = item;
-            record->staging.count++;
+            record->staging.tools[next] = tool;
+            record->staging.tool_count++;
         } else {
-            ESP_LOGW(TAG, "[%s] CAP_ITEM invalid seq=%u", device_id,
+            ESP_LOGW(TAG, "[%s] SCHEMA_TOOL_ITEM invalid seq=%u", device_id,
                      (unsigned)message->sequence);
             record->staging_active = false;
             memset(&record->staging, 0, sizeof(record->staging));
             if (!record->has_committed) {
-                record->committed.state = DEVICE_CAP_STATE_ERROR;
+                record->committed.state = DEVICE_SCHEMA_STATE_ERROR;
             }
-            record->operation_state = DEVICE_CAP_OP_IDLE;
+            record->operation_state = 0 /* IDLE */;
+        }
+    }
+    unlock_records();
+}
+
+static void handle_feature_item(const char *device_id,
+                                 const gw_message_t *message)
+{
+    if (!message_device_matches(device_id, message) ||
+        !message->has_snapshot_id || !message->has_feature_id ||
+        !message->has_feature_type || !message->has_property_id) {
+        return;
+    }
+
+    if (!schema_valid_feature_id(message->feature_id)) return;
+
+    device_schema_feature_t feature = {
+        .feature_type = message->feature_type,
+        .feature_schema_version = message->has_feature_schema_version
+                                      ? message->feature_schema_version
+                                      : 0,
+        .feature_flags = message->has_feature_flags
+                             ? message->feature_flags
+                             : 0,
+        .property_id = message->property_id,
+        .feature_value_bool = message->has_feature_value_bool
+                                  ? message->feature_value_bool
+                                  : false,
+        .feature_value_int = message->has_feature_value_int
+                                 ? message->feature_value_int
+                                 : 0,
+        .writable_tool_index = -1,
+    };
+    strlcpy(feature.feature_id, message->feature_id,
+            sizeof(feature.feature_id));
+
+    /* Resolve writable tool index if feature_tool is provided. */
+    if (!lock_records()) return;
+    int index = find_record_locked(device_id);
+    if (index >= 0) {
+        schema_record_t *record = &s_records[index];
+        size_t next = record->staging.feature_count;
+        bool valid_sequence =
+            record->staging_active &&
+            record->staging.snapshot_id == message->snapshot_id &&
+            message->sequence == (record->staging_expected_tools + next) &&
+            next < record->staging_expected_features;
+        if (valid_sequence) {
+            /* Check duplicate feature_id. */
+            for (size_t i = 0; i < next; i++) {
+                if (strcmp(record->staging.features[i].feature_id,
+                           feature.feature_id) == 0) {
+                    valid_sequence = false;
+                    break;
+                }
+            }
+        }
+        if (valid_sequence) {
+            /* Resolve writable tool. */
+            if (message->has_feature_tool && message->feature_tool[0] != '\0') {
+                feature.writable_tool_index = schema_resolve_writable_tool(
+                    record->staging.tools, record->staging.tool_count,
+                    message->feature_tool);
+                if (feature.writable_tool_index < 0) {
+                    ESP_LOGW(TAG, "[%s] SCHEMA_FEATURE_ITEM tool '%s' not found",
+                             device_id, message->feature_tool);
+                    valid_sequence = false;
+                }
+            }
+        }
+        if (valid_sequence) {
+            record->staging.features[next] = feature;
+            record->staging.feature_count++;
+        } else {
+            ESP_LOGW(TAG, "[%s] SCHEMA_FEATURE_ITEM invalid", device_id);
+            record->staging_active = false;
+            memset(&record->staging, 0, sizeof(record->staging));
+            if (!record->has_committed) {
+                record->committed.state = DEVICE_SCHEMA_STATE_ERROR;
+            }
+            record->operation_state = 0 /* IDLE */;
         }
     }
     unlock_records();
@@ -667,7 +563,7 @@ static void handle_end(const char *device_id, const gw_message_t *message)
         return;
     }
 
-    device_capability_snapshot_t committed;
+    device_schema_snapshot_t committed;
     int persist_index = -1;
     bool changed = false;
     int64_t now_ms = esp_timer_get_time() / 1000;
@@ -675,11 +571,13 @@ static void handle_end(const char *device_id, const gw_message_t *message)
     if (!lock_records()) return;
     int index = find_record_locked(device_id);
     if (index >= 0) {
-        capability_record_t *record = &s_records[index];
-        bool complete = record->staging_active &&
-                        record->staging.snapshot_id == message->snapshot_id &&
-                        message->total == record->staging_expected &&
-                        record->staging.count == record->staging_expected;
+        schema_record_t *record = &s_records[index];
+        bool complete =
+            record->staging_active &&
+            record->staging.snapshot_id == message->snapshot_id &&
+            message->total == record->staging_expected_tools &&
+            record->staging.tool_count == record->staging_expected_tools &&
+            record->staging.feature_count == record->staging_expected_features;
         if (complete) {
             changed = !record->has_committed ||
                       !snapshot_content_equal(&record->committed,
@@ -688,11 +586,11 @@ static void handle_end(const char *device_id, const gw_message_t *message)
                 record->committed.revision == record->staging.revision &&
                 changed) {
                 ESP_LOGW(TAG,
-                         "[%s] CAP_REVISION_MISMATCH revision=%lu "
+                         "[%s] SCHEMA_REVISION_MISMATCH revision=%lu "
                          "content_changed=true",
                          device_id, (unsigned long)record->committed.revision);
             }
-            record->staging.state = DEVICE_CAP_STATE_READY;
+            record->staging.state = DEVICE_SCHEMA_STATE_READY;
             record->staging.updated_at_ms = now_ms;
             record->committed = record->staging;
             record->has_committed = true;
@@ -701,18 +599,19 @@ static void handle_end(const char *device_id, const gw_message_t *message)
             persist_index = index;
 
             ESP_LOGI(TAG,
-                     "[%s] CAP_END committed %u capabilities "
+                     "[%s] SCHEMA_END committed %u tools %u features "
                      "(revision=%lu changed=%d)",
-                     device_id, (unsigned)committed.count,
+                     device_id, (unsigned)committed.tool_count,
+                     (unsigned)committed.feature_count,
                      (unsigned long)committed.revision, (int)changed);
         } else {
-            ESP_LOGW(TAG, "[%s] CAP_END incomplete", device_id);
+            ESP_LOGW(TAG, "[%s] SCHEMA_END incomplete", device_id);
             record->staging_active = false;
             memset(&record->staging, 0, sizeof(record->staging));
             if (!record->has_committed) {
-                record->committed.state = DEVICE_CAP_STATE_ERROR;
+                record->committed.state = DEVICE_SCHEMA_STATE_ERROR;
             }
-            record->operation_state = DEVICE_CAP_OP_IDLE;
+            record->operation_state = 0 /* IDLE */;
         }
     }
     unlock_records();
@@ -722,7 +621,7 @@ static void handle_end(const char *device_id, const gw_message_t *message)
             if (lock_records()) {
                 int idx = find_record_locked(device_id);
                 if (idx >= 0 && s_records[idx].persist_dirty) {
-                    esp_err_t err = persist_record(idx, &committed);
+                    esp_err_t err = schema_persist_record(idx, &committed);
                     if (err == ESP_OK) {
                         s_records[idx].persist_dirty = false;
                     }
@@ -730,7 +629,7 @@ static void handle_end(const char *device_id, const gw_message_t *message)
                 unlock_records();
             }
         } else {
-            esp_err_t error = persist_record(persist_index, &committed);
+            esp_err_t error = schema_persist_record(persist_index, &committed);
             if (error != ESP_OK) {
                 ESP_LOGW(TAG, "[%s] NVS persist failed: %s (persist_dirty=true)",
                          device_id, esp_err_to_name(error));
@@ -742,12 +641,12 @@ static void handle_end(const char *device_id, const gw_message_t *message)
                     unlock_records();
                 }
             } else {
-                ESP_LOGI(TAG, "[%s] persisted capabilities to NVS", device_id);
+                ESP_LOGI(TAG, "[%s] persisted schema to NVS", device_id);
             }
         }
     }
 
-    /* Commit listener fires outside the capability mutex, after the persist
+    /* Commit listener fires outside the schema mutex, after the persist
      * decision, for every successful commit (changed or not). It must only
      * enqueue work — the exposure consumer relies on this contract. */
     if (persist_index >= 0 && s_commit_listener != NULL) {
@@ -766,13 +665,12 @@ static void handle_disconnect(const char *device_id)
         unlock_records();
         return;
     }
-    capability_record_t *record = &s_records[index];
+    schema_record_t *record = &s_records[index];
 
-    if (record->operation_state == DEVICE_CAP_OP_RUNNING &&
+    if (record->operation_state == 2 /* RUNNING */ &&
         s_owner.active &&
         strcmp(s_owner.device_id, device_id) == 0 &&
         s_owner.operation_id == record->operation_id) {
-        /* Owner device disconnect during running operation. */
         ESP_LOGW(TAG, "[%s] disconnect during running operation, "
                       "operation_id=%lu",
                  device_id, (unsigned long)record->operation_id);
@@ -780,41 +678,39 @@ static void handle_disconnect(const char *device_id)
         record->staging_active = false;
         memset(&record->staging, 0, sizeof(record->staging));
 
-        if (record->operation_kind == DEVICE_CAP_OP_MANUAL) {
-            record->refresh_active.state = DEVICE_CAP_REFRESH_IDLE;
+        if (record->operation_kind == 2 /* MANUAL */) {
+            record->refresh_active.state = DEVICE_SCHEMA_REFRESH_IDLE;
             record->refresh_active.generation = 0;
             record->refresh_last_completed.generation =
                 record->refresh_active.generation;
             record->refresh_last_completed.result =
-                DEVICE_CAP_REFRESH_RESULT_DISCONNECTED;
+                DEVICE_SCHEMA_REFRESH_RESULT_DISCONNECTED;
             record->refresh_last_completed.finished_at_ms =
                 esp_timer_get_time() / 1000;
         } else {
             if (!record->has_committed) {
-                record->committed.state = DEVICE_CAP_STATE_ERROR;
+                record->committed.state = DEVICE_SCHEMA_STATE_ERROR;
             }
         }
-        record->operation_state = DEVICE_CAP_OP_IDLE;
+        record->operation_state = 0 /* IDLE */;
         s_owner.active = false;
-    } else if (record->operation_state == DEVICE_CAP_OP_QUEUED) {
-        /* Queued device disconnect — cancel queued operation. */
+    } else if (record->operation_state == 1 /* QUEUED */) {
         ESP_LOGW(TAG, "[%s] disconnect while queued, cancelling", device_id);
 
-        if (record->operation_kind == DEVICE_CAP_OP_MANUAL) {
-            record->refresh_active.state = DEVICE_CAP_REFRESH_IDLE;
+        if (record->operation_kind == 2 /* MANUAL */) {
+            record->refresh_active.state = DEVICE_SCHEMA_REFRESH_IDLE;
             record->refresh_active.generation = 0;
             record->refresh_last_completed.result =
-                DEVICE_CAP_REFRESH_RESULT_DISCONNECTED;
+                DEVICE_SCHEMA_REFRESH_RESULT_DISCONNECTED;
             record->refresh_last_completed.finished_at_ms =
                 esp_timer_get_time() / 1000;
         } else {
             if (!record->has_committed) {
-                record->committed.state = DEVICE_CAP_STATE_ERROR;
+                record->committed.state = DEVICE_SCHEMA_STATE_ERROR;
             }
         }
-        record->operation_state = DEVICE_CAP_OP_IDLE;
+        record->operation_state = 0 /* IDLE */;
     }
-    /* If no capability operation, committed snapshot stays unchanged. */
 
     unlock_records();
     start_next_pending();
@@ -825,7 +721,7 @@ static void handle_disconnect(const char *device_id)
 static void handle_completion(const char *device_id,
                               uint32_t event_op_id,
                               uint32_t event_generation,
-                              device_cap_submit_result_t completion)
+                              device_schema_submit_result_t completion)
 {
     if (!lock_records()) return;
     int index = find_record_locked(device_id);
@@ -835,7 +731,7 @@ static void handle_completion(const char *device_id,
         start_next_pending();
         return;
     }
-    capability_record_t *record = &s_records[index];
+    schema_record_t *record = &s_records[index];
 
     if (!s_owner.active ||
         strcmp(s_owner.device_id, device_id) != 0 ||
@@ -848,64 +744,58 @@ static void handle_completion(const char *device_id,
     }
 
     if (record->has_committed &&
-        record->committed.state == DEVICE_CAP_STATE_READY &&
-        completion == DEVICE_CAP_SUBMIT_OK) {
-        /* Snapshot committed before final ACK — normal for capability flow. */
-    } else if (completion == DEVICE_CAP_SUBMIT_REJECTED ||
-               completion == DEVICE_CAP_SUBMIT_TIMEOUT) {
+        record->committed.state == DEVICE_SCHEMA_STATE_READY &&
+        completion == DEVICE_SCHEMA_SUBMIT_OK) {
+        /* Schema committed before final ACK — normal for schema flow. */
+    } else if (completion == DEVICE_SCHEMA_SUBMIT_REJECTED ||
+               completion == DEVICE_SCHEMA_SUBMIT_TIMEOUT ||
+               completion == DEVICE_SCHEMA_SUBMIT_BUSY ||
+               completion != DEVICE_SCHEMA_SUBMIT_OK) {
         if (!record->has_committed) {
-            record->committed.state = DEVICE_CAP_STATE_ERROR;
-        }
-    } else if (completion == DEVICE_CAP_SUBMIT_BUSY) {
-        if (!record->has_committed) {
-            record->committed.state = DEVICE_CAP_STATE_ERROR;
-        }
-    } else if (completion != DEVICE_CAP_SUBMIT_OK) {
-        if (!record->has_committed) {
-            record->committed.state = DEVICE_CAP_STATE_ERROR;
+            record->committed.state = DEVICE_SCHEMA_STATE_ERROR;
         }
     }
 
-    if (record->operation_kind == DEVICE_CAP_OP_MANUAL) {
-        device_cap_refresh_result_t refresh_result;
+    if (record->operation_kind == 2 /* MANUAL */) {
+        device_schema_refresh_result_t refresh_result;
         switch (completion) {
-        case DEVICE_CAP_SUBMIT_OK:
+        case DEVICE_SCHEMA_SUBMIT_OK:
             refresh_result = record->has_committed
-                                 ? DEVICE_CAP_REFRESH_RESULT_SUCCESS
-                                 : DEVICE_CAP_REFRESH_RESULT_INTERNAL_ERROR;
+                                 ? DEVICE_SCHEMA_REFRESH_RESULT_SUCCESS
+                                 : DEVICE_SCHEMA_REFRESH_RESULT_INTERNAL_ERROR;
             break;
-        case DEVICE_CAP_SUBMIT_BUSY:
-            refresh_result = DEVICE_CAP_REFRESH_RESULT_BUSY;
+        case DEVICE_SCHEMA_SUBMIT_BUSY:
+            refresh_result = DEVICE_SCHEMA_REFRESH_RESULT_BUSY;
             break;
-        case DEVICE_CAP_SUBMIT_TIMEOUT:
-            refresh_result = DEVICE_CAP_REFRESH_RESULT_TIMEOUT;
+        case DEVICE_SCHEMA_SUBMIT_TIMEOUT:
+            refresh_result = DEVICE_SCHEMA_REFRESH_RESULT_TIMEOUT;
             break;
-        case DEVICE_CAP_SUBMIT_NOT_CONNECTED:
-            refresh_result = DEVICE_CAP_REFRESH_RESULT_DISCONNECTED;
+        case DEVICE_SCHEMA_SUBMIT_NOT_CONNECTED:
+            refresh_result = DEVICE_SCHEMA_REFRESH_RESULT_DISCONNECTED;
             break;
-        case DEVICE_CAP_SUBMIT_TRANSPORT_ERROR:
-            refresh_result = DEVICE_CAP_REFRESH_RESULT_TRANSPORT_ERROR;
+        case DEVICE_SCHEMA_SUBMIT_TRANSPORT_ERROR:
+            refresh_result = DEVICE_SCHEMA_REFRESH_RESULT_TRANSPORT_ERROR;
             break;
-        case DEVICE_CAP_SUBMIT_REJECTED:
-            refresh_result = DEVICE_CAP_REFRESH_RESULT_UNSUPPORTED;
+        case DEVICE_SCHEMA_SUBMIT_REJECTED:
+            refresh_result = DEVICE_SCHEMA_REFRESH_RESULT_UNSUPPORTED;
             break;
         default:
-            refresh_result = DEVICE_CAP_REFRESH_RESULT_INTERNAL_ERROR;
+            refresh_result = DEVICE_SCHEMA_REFRESH_RESULT_INTERNAL_ERROR;
             break;
         }
-        record->refresh_active.state = DEVICE_CAP_REFRESH_IDLE;
+        record->refresh_active.state = DEVICE_SCHEMA_REFRESH_IDLE;
         record->refresh_active.generation = 0;
         record->refresh_last_completed.generation = event_generation;
         record->refresh_last_completed.result = refresh_result;
         record->refresh_last_completed.finished_at_ms =
             esp_timer_get_time() / 1000;
 
-        ESP_LOGI(TAG, "[%s] CAP_REFRESH_RESULT gen=%lu result=%s",
+        ESP_LOGI(TAG, "[%s] SCHEMA_REFRESH_RESULT gen=%lu result=%s",
                  device_id, (unsigned long)event_generation,
-                 device_capabilities_refresh_result_name(refresh_result));
+                 device_schema_refresh_result_name(refresh_result));
     }
 
-    record->operation_state = DEVICE_CAP_OP_IDLE;
+    record->operation_state = 0 /* IDLE */;
     s_owner.active = false;
     unlock_records();
     start_next_pending();
@@ -913,71 +803,79 @@ static void handle_completion(const char *device_id,
 
 /* ── Worker task ────────────────────────────────────────────────────── */
 
-static void capability_worker(void *arg)
+static void schema_worker(void *arg)
 {
     (void)arg;
-    capability_event_t event;
+    schema_event_t event;
     for (;;) {
-        if (xQueueReceive(s_queue, &event, portMAX_DELAY) != pdTRUE) continue;
+        if (xQueueReceive(s_queue, &event, pdMS_TO_TICKS(100)) != pdTRUE) {
+            if (s_shutdown) break;
+            continue;
+        }
+        if (s_shutdown) break;
         switch (event.type) {
-        case CAP_EVENT_READY: {
+        case SCHEMA_EVENT_READY: {
             if (!lock_records()) break;
             int index = find_record_locked(event.device_id);
             if (index < 0) {
                 unlock_records();
-                start_discovery(event.device_id, DEVICE_CAP_OP_INITIAL, 0);
+                start_discovery(event.device_id, 1 /* INITIAL */, 0);
                 break;
             }
-            capability_record_t *record = &s_records[index];
+            schema_record_t *record = &s_records[index];
             if (record->has_committed &&
-                record->committed.state == DEVICE_CAP_STATE_READY) {
-                ESP_LOGI(TAG, "[%s] CAP_READY_CACHE_HIT", event.device_id);
+                record->committed.state == DEVICE_SCHEMA_STATE_READY) {
+                ESP_LOGI(TAG, "[%s] SCHEMA_READY_CACHE_HIT", event.device_id);
                 unlock_records();
                 break;
             }
-            if (record->operation_state == DEVICE_CAP_OP_QUEUED ||
-                record->operation_state == DEVICE_CAP_OP_RUNNING) {
-                ESP_LOGI(TAG, "[%s] CAP_READY_DUP operation in progress",
+            if (record->operation_state == 1 /* QUEUED */ ||
+                record->operation_state == 2 /* RUNNING */) {
+                ESP_LOGI(TAG, "[%s] SCHEMA_READY_DUP operation in progress",
                          event.device_id);
                 unlock_records();
                 break;
             }
             if (record->has_committed &&
-                (record->committed.state == DEVICE_CAP_STATE_ERROR ||
-                 record->committed.state == DEVICE_CAP_STATE_UNSUPPORTED)) {
-                ESP_LOGI(TAG, "[%s] CAP_READY_NO_AUTO_RETRY state=%s",
+                (record->committed.state == DEVICE_SCHEMA_STATE_ERROR ||
+                 record->committed.state == DEVICE_SCHEMA_STATE_UNSUPPORTED)) {
+                ESP_LOGI(TAG, "[%s] SCHEMA_READY_NO_AUTO_RETRY state=%s",
                          event.device_id,
-                         device_capabilities_state_name(
+                         device_schema_state_name(
                              record->committed.state));
                 unlock_records();
                 break;
             }
             unlock_records();
-            ESP_LOGI(TAG, "[%s] CAP_READY_CACHE_MISS starting discovery",
+            ESP_LOGI(TAG, "[%s] SCHEMA_READY_CACHE_MISS starting discovery",
                      event.device_id);
-            start_discovery(event.device_id, DEVICE_CAP_OP_INITIAL, 0);
+            start_discovery(event.device_id, 1 /* INITIAL */, 0);
             break;
         }
-        case CAP_EVENT_REFRESH:
-            start_discovery(event.device_id, DEVICE_CAP_OP_MANUAL,
+        case SCHEMA_EVENT_REFRESH:
+            start_discovery(event.device_id, 2 /* MANUAL */,
                             event.refresh_generation);
             break;
-        case CAP_EVENT_DISCONNECT:
+        case SCHEMA_EVENT_DISCONNECT:
             handle_disconnect(event.device_id);
             break;
-        case CAP_EVENT_NOTIFY:
+        case SCHEMA_EVENT_NOTIFY:
             if (event.message != NULL) {
                 if (strcmp(event.message->type, "capabilities_begin") == 0) {
                     handle_begin(event.device_id, event.message);
-                } else if (strcmp(event.message->type, "capability_item") == 0) {
-                    handle_item(event.device_id, event.message);
+                } else if (strcmp(event.message->type,
+                                  "capability_item") == 0) {
+                    handle_tool_item(event.device_id, event.message);
+                } else if (strcmp(event.message->type,
+                                  "feature_item") == 0) {
+                    handle_feature_item(event.device_id, event.message);
                 } else {
                     handle_end(event.device_id, event.message);
                 }
                 gw_mem_free(event.message);
             }
             break;
-        case CAP_EVENT_COMPLETION:
+        case SCHEMA_EVENT_COMPLETION:
             handle_completion(event.device_id, event.operation_id,
                               event.refresh_generation, event.completion);
             break;
@@ -987,7 +885,7 @@ static void capability_worker(void *arg)
 
 /* ── Public API ─────────────────────────────────────────────────────── */
 
-esp_err_t device_capabilities_init(void)
+esp_err_t device_schema_init(void)
 {
     if (s_initialized) return ESP_ERR_INVALID_STATE;
     if (s_mutex == NULL) s_mutex = xSemaphoreCreateMutex();
@@ -1004,12 +902,12 @@ esp_err_t device_capabilities_init(void)
     s_next_operation_id = 0;
     s_next_global_generation = 0;
 
-    load_persisted();
+    schema_load_persisted(s_records);
 
-    s_queue = xQueueCreate(CAP_EVENT_QUEUE_DEPTH, sizeof(capability_event_t));
+    s_queue = xQueueCreate(SCHEMA_EVENT_QUEUE_DEPTH, sizeof(schema_event_t));
     if (s_queue == NULL) return ESP_ERR_NO_MEM;
-    if (xTaskCreate(capability_worker, "device_caps", CAP_WORKER_STACK, NULL,
-                    CAP_WORKER_PRIORITY, &s_worker) != pdPASS) {
+    if (xTaskCreate(schema_worker, "device_schema", SCHEMA_WORKER_STACK,
+                    NULL, SCHEMA_WORKER_PRIORITY, &s_worker) != pdPASS) {
         vQueueDelete(s_queue);
         s_queue = NULL;
         return ESP_ERR_NO_MEM;
@@ -1018,13 +916,13 @@ esp_err_t device_capabilities_init(void)
     return ESP_OK;
 }
 
-void device_capabilities_set_submitter(device_cap_submit_fn submitter)
+void device_schema_set_submitter(device_schema_submit_fn submitter)
 {
     s_submitter = submitter;
 }
 
-esp_err_t device_capabilities_register_commit_listener(
-    device_capability_commit_listener_t listener, void *context)
+esp_err_t device_schema_register_commit_listener(
+    device_schema_commit_listener_t listener, void *context)
 {
     if (!lock_records()) return ESP_ERR_TIMEOUT;
     s_commit_listener = listener;
@@ -1033,17 +931,17 @@ esp_err_t device_capabilities_register_commit_listener(
     return ESP_OK;
 }
 
-static esp_err_t enqueue_device_event(capability_event_type_t type,
-                                      const char *device_id,
-                                      uint32_t operation_id,
-                                      uint32_t refresh_generation)
+static esp_err_t enqueue_schema_event(schema_event_type_t type,
+                                       const char *device_id,
+                                       uint32_t operation_id,
+                                       uint32_t refresh_generation)
 {
     if (!s_initialized || s_queue == NULL) return ESP_ERR_INVALID_STATE;
     if (device_id == NULL || device_id[0] == '\0' ||
         strnlen(device_id, GW_MSG_DEVICE_ID_LEN) >= GW_MSG_DEVICE_ID_LEN) {
         return ESP_ERR_INVALID_ARG;
     }
-    capability_event_t event = {
+    schema_event_t event = {
         .type = type,
         .operation_id = operation_id,
         .refresh_generation = refresh_generation,
@@ -1057,22 +955,23 @@ static esp_err_t enqueue_device_event(capability_event_type_t type,
     return ESP_OK;
 }
 
-esp_err_t device_capabilities_on_ready(const char *device_id)
+esp_err_t device_schema_on_ready(const char *device_id)
 {
-    return enqueue_device_event(CAP_EVENT_READY, device_id, 0, 0);
+    return enqueue_schema_event(SCHEMA_EVENT_READY, device_id, 0, 0);
 }
 
-void device_capabilities_on_disconnect(const char *device_id)
+void device_schema_on_disconnect(const char *device_id)
 {
-    enqueue_device_event(CAP_EVENT_DISCONNECT, device_id, 0, 0);
+    enqueue_schema_event(SCHEMA_EVENT_DISCONNECT, device_id, 0, 0);
 }
 
-bool device_capabilities_on_notify(const char *device_id,
-                                   const gw_message_t *message)
+bool device_schema_on_notify(const char *device_id,
+                              const gw_message_t *message)
 {
     if (message == NULL ||
         (strcmp(message->type, "capabilities_begin") != 0 &&
          strcmp(message->type, "capability_item") != 0 &&
+         strcmp(message->type, "feature_item") != 0 &&
          strcmp(message->type, "capabilities_end") != 0)) {
         return false;
     }
@@ -1087,8 +986,8 @@ bool device_capabilities_on_notify(const char *device_id,
         unlock_records();
     }
 
-    capability_event_t event = {
-        .type = CAP_EVENT_NOTIFY,
+    schema_event_t event = {
+        .type = SCHEMA_EVENT_NOTIFY,
         .operation_id = op_id,
     };
     strlcpy(event.device_id, device_id, sizeof(event.device_id));
@@ -1097,7 +996,7 @@ bool device_capabilities_on_notify(const char *device_id,
                                 GW_MEM_EXTERNAL_PREFERRED);
     if (event.message == NULL) {
         __atomic_fetch_add(&s_q_message_alloc_fail, 1, __ATOMIC_RELAXED);
-        ESP_LOGE(TAG, "[%s] capability message alloc failed", device_id);
+        ESP_LOGE(TAG, "[%s] schema message alloc failed", device_id);
         return true;
     }
     *event.message = *message;
@@ -1108,7 +1007,7 @@ bool device_capabilities_on_notify(const char *device_id,
         int64_t now_us = esp_timer_get_time();
         if (now_us - s_last_drop_log_us > 5000000LL) {
             s_last_drop_log_us = now_us;
-            ESP_LOGW(TAG, "[%s] capability queue full (dropped total: %u)",
+            ESP_LOGW(TAG, "[%s] schema queue full (dropped total: %u)",
                      device_id,
                      (unsigned)__atomic_load_n(&s_q_dropped,
                                                __ATOMIC_RELAXED));
@@ -1127,7 +1026,7 @@ bool device_capabilities_on_notify(const char *device_id,
     return true;
 }
 
-void device_capabilities_get_queue_stats(device_cap_queue_stats_t *out)
+void device_schema_get_queue_stats(device_schema_queue_stats_t *out)
 {
     if (out == NULL) return;
     out->enqueued =
@@ -1140,8 +1039,8 @@ void device_capabilities_get_queue_stats(device_cap_queue_stats_t *out)
         __atomic_load_n(&s_q_message_alloc_fail, __ATOMIC_RELAXED);
 }
 
-esp_err_t device_capabilities_refresh(const char *device_id,
-                                      uint32_t *out_generation)
+esp_err_t device_schema_refresh(const char *device_id,
+                                 uint32_t *out_generation)
 {
     if (device_id == NULL || device_id[0] == '\0') return ESP_ERR_INVALID_ARG;
     if (!s_initialized || s_records == NULL) return ESP_ERR_INVALID_STATE;
@@ -1157,10 +1056,10 @@ esp_err_t device_capabilities_refresh(const char *device_id,
         unlock_records();
         return ESP_ERR_NO_MEM;
     }
-    capability_record_t *record = &s_records[index];
+    schema_record_t *record = &s_records[index];
 
-    if (record->operation_state == DEVICE_CAP_OP_QUEUED ||
-        record->operation_state == DEVICE_CAP_OP_RUNNING) {
+    if (record->operation_state == 1 /* QUEUED */ ||
+        record->operation_state == 2 /* RUNNING */) {
         unlock_records();
         return ESP_ERR_INVALID_STATE;
     }
@@ -1168,27 +1067,27 @@ esp_err_t device_capabilities_refresh(const char *device_id,
     uint32_t gen = next_generation();
     uint32_t op_id = next_operation_id();
 
-    record->operation_kind = DEVICE_CAP_OP_MANUAL;
-    record->operation_state = DEVICE_CAP_OP_QUEUED;
+    record->operation_kind = 2 /* MANUAL */;
+    record->operation_state = 1 /* QUEUED */;
     record->operation_id = op_id;
     record->refresh_active.generation = gen;
-    record->refresh_active.state = DEVICE_CAP_REFRESH_QUEUED;
+    record->refresh_active.state = DEVICE_SCHEMA_REFRESH_QUEUED;
 
     if (out_generation != NULL) *out_generation = gen;
 
-    ESP_LOGI(TAG, "[%s] CAP_REFRESH_RESERVE gen=%lu op_id=%lu",
+    ESP_LOGI(TAG, "[%s] SCHEMA_REFRESH_RESERVE gen=%lu op_id=%lu",
              device_id, (unsigned long)gen, (unsigned long)op_id);
 
     unlock_records();
 
-    esp_err_t err = enqueue_device_event(CAP_EVENT_REFRESH, device_id,
-                                         op_id, gen);
+    esp_err_t err = enqueue_schema_event(SCHEMA_EVENT_REFRESH, device_id,
+                                          op_id, gen);
     if (err != ESP_OK) {
         if (lock_records()) {
             int idx = find_record_locked(device_id);
             if (idx >= 0) {
-                s_records[idx].operation_state = DEVICE_CAP_OP_IDLE;
-                s_records[idx].refresh_active.state = DEVICE_CAP_REFRESH_IDLE;
+                s_records[idx].operation_state = 0 /* IDLE */;
+                s_records[idx].refresh_active.state = DEVICE_SCHEMA_REFRESH_IDLE;
                 s_records[idx].refresh_active.generation = 0;
             }
             unlock_records();
@@ -1199,8 +1098,8 @@ esp_err_t device_capabilities_refresh(const char *device_id,
     return ESP_OK;
 }
 
-esp_err_t device_capabilities_get(const char *device_id,
-                                  device_capability_snapshot_t *out_snapshot)
+esp_err_t device_schema_get(const char *device_id,
+                             device_schema_snapshot_t *out_snapshot)
 {
     if (device_id == NULL || out_snapshot == NULL) return ESP_ERR_INVALID_ARG;
     device_entry_t entry;
@@ -1210,7 +1109,7 @@ esp_err_t device_capabilities_get(const char *device_id,
     memset(out_snapshot, 0, sizeof(*out_snapshot));
     strlcpy(out_snapshot->device_id, device_id,
             sizeof(out_snapshot->device_id));
-    out_snapshot->state = DEVICE_CAP_STATE_UNKNOWN;
+    out_snapshot->state = DEVICE_SCHEMA_STATE_UNKNOWN;
     if (!lock_records()) return ESP_ERR_TIMEOUT;
     int index = find_record_locked(device_id);
     if (index >= 0) {
@@ -1221,10 +1120,10 @@ esp_err_t device_capabilities_get(const char *device_id,
     return ESP_OK;
 }
 
-esp_err_t device_capabilities_get_refresh_status(
+esp_err_t device_schema_get_refresh_status(
     const char *device_id,
-    device_cap_refresh_active_t *out_active,
-    device_cap_refresh_completed_t *out_completed)
+    device_schema_refresh_active_t *out_active,
+    device_schema_refresh_completed_t *out_completed)
 {
     if (device_id == NULL) return ESP_ERR_INVALID_ARG;
     if (!lock_records()) return ESP_ERR_TIMEOUT;
@@ -1243,64 +1142,64 @@ esp_err_t device_capabilities_get_refresh_status(
     return ESP_OK;
 }
 
-device_cap_validation_t device_capabilities_validate_command(
-    const gw_message_t *message, device_capability_t *out_capability)
+device_schema_validation_t device_schema_validate_command(
+    const gw_message_t *message, device_schema_tool_t *out_tool)
 {
     if (message == NULL || !message->has_device_id ||
         message->command[0] == '\0') {
-        return DEVICE_CAP_VALID_ARGUMENT;
+        return DEVICE_SCHEMA_VALID_ARGUMENT;
     }
-    if (strcmp(message->command, DEVICE_CAP_RESERVED_COMMAND) == 0) {
-        return DEVICE_CAP_VALID;
+    if (strcmp(message->command, DEVICE_SCHEMA_RESERVED_COMMAND) == 0) {
+        return DEVICE_SCHEMA_VALID;
     }
-    if (!lock_records()) return DEVICE_CAP_VALID_UNKNOWN;
+    if (!lock_records()) return DEVICE_SCHEMA_VALID_UNKNOWN;
     int index = find_record_locked(message->device_id);
     if (index < 0 || !s_records[index].has_committed ||
-        (s_records[index].committed.state != DEVICE_CAP_STATE_READY &&
-         s_records[index].committed.state != DEVICE_CAP_STATE_DISCOVERING)) {
+        (s_records[index].committed.state != DEVICE_SCHEMA_STATE_READY &&
+         s_records[index].committed.state != DEVICE_SCHEMA_STATE_DISCOVERING)) {
         unlock_records();
-        return DEVICE_CAP_VALID_UNKNOWN;
+        return DEVICE_SCHEMA_VALID_UNKNOWN;
     }
 
-    const device_capability_t *capability = NULL;
-    for (size_t i = 0; i < s_records[index].committed.count; i++) {
-        if (strcmp(s_records[index].committed.items[i].command,
+    const device_schema_tool_t *tool = NULL;
+    for (size_t i = 0; i < s_records[index].committed.tool_count; i++) {
+        if (strcmp(s_records[index].committed.tools[i].command,
                    message->command) == 0) {
-            capability = &s_records[index].committed.items[i];
+            tool = &s_records[index].committed.tools[i];
             break;
         }
     }
-    if (capability == NULL) {
+    if (tool == NULL) {
         unlock_records();
-        return DEVICE_CAP_VALID_UNSUPPORTED_COMMAND;
+        return DEVICE_SCHEMA_VALID_UNSUPPORTED_COMMAND;
     }
 
     bool valid_argument = false;
-    switch (capability->value_type) {
-    case DEVICE_CAP_VALUE_NONE:
+    switch (tool->value_type) {
+    case 0: /* NONE */
         valid_argument = !message->has_int_value && !message->has_bool_value;
         break;
-    case DEVICE_CAP_VALUE_BOOL:
+    case 1: /* BOOL */
         valid_argument = message->has_bool_value && !message->has_int_value;
         break;
-    case DEVICE_CAP_VALUE_INT: {
+    case 2: { /* INT */
         int64_t delta = (int64_t)message->int_value -
-                        (int64_t)capability->min_value;
+                        (int64_t)tool->min_value;
         valid_argument = message->has_int_value && !message->has_bool_value &&
-                         message->int_value >= capability->min_value &&
-                         message->int_value <= capability->max_value &&
-                         ((uint64_t)delta % capability->step == 0);
+                         message->int_value >= tool->min_value &&
+                         message->int_value <= tool->max_value &&
+                         ((uint64_t)delta % tool->step == 0);
         break;
     }
     }
-    if (valid_argument && out_capability != NULL) {
-        *out_capability = *capability;
+    if (valid_argument && out_tool != NULL) {
+        *out_tool = *tool;
     }
     unlock_records();
-    return valid_argument ? DEVICE_CAP_VALID : DEVICE_CAP_VALID_ARGUMENT;
+    return valid_argument ? DEVICE_SCHEMA_VALID : DEVICE_SCHEMA_VALID_ARGUMENT;
 }
 
-esp_err_t device_capabilities_forget(const char *device_id)
+esp_err_t device_schema_forget(const char *device_id)
 {
     if (device_id == NULL || device_id[0] == '\0') return ESP_ERR_INVALID_ARG;
 
@@ -1311,29 +1210,21 @@ esp_err_t device_capabilities_forget(const char *device_id)
         return ESP_OK;
     }
 
-    capability_record_t *record = &s_records[index];
-    if (record->operation_state == DEVICE_CAP_OP_QUEUED ||
-        record->operation_state == DEVICE_CAP_OP_RUNNING) {
+    schema_record_t *record = &s_records[index];
+    if (record->operation_state == 1 /* QUEUED */ ||
+        record->operation_state == 2 /* RUNNING */) {
         if (s_owner.active &&
             strcmp(s_owner.device_id, device_id) == 0 &&
             s_owner.operation_id == record->operation_id) {
             s_owner.active = false;
         }
-        record->operation_state = DEVICE_CAP_OP_IDLE;
+        record->operation_state = 0 /* IDLE */;
     }
     record->staging_active = false;
     memset(&record->staging, 0, sizeof(record->staging));
     unlock_records();
 
-    nvs_handle_t handle;
-    esp_err_t error = nvs_open(CAP_NVS_NAMESPACE, NVS_READWRITE, &handle);
-    if (error != ESP_OK) return error;
-    char key[8];
-    capability_nvs_key(index, key);
-    error = nvs_erase_key(handle, key);
-    if (error == ESP_ERR_NVS_NOT_FOUND) error = ESP_OK;
-    if (error == ESP_OK) error = nvs_commit(handle);
-    nvs_close(handle);
+    esp_err_t error = schema_erase_nvs(index);
 
     if (error != ESP_OK) {
         ESP_LOGW(TAG, "[%s] NVS erase failed: %s, RAM cache preserved",
@@ -1351,39 +1242,52 @@ esp_err_t device_capabilities_forget(const char *device_id)
     return ESP_OK;
 }
 
-const char *device_capabilities_state_name(device_cap_state_t state)
+const char *device_schema_state_name(device_schema_state_t state)
 {
     switch (state) {
-    case DEVICE_CAP_STATE_UNKNOWN: return "unknown";
-    case DEVICE_CAP_STATE_DISCOVERING: return "discovering";
-    case DEVICE_CAP_STATE_READY: return "ready";
-    case DEVICE_CAP_STATE_UNSUPPORTED: return "unsupported";
-    case DEVICE_CAP_STATE_ERROR: return "error";
+    case DEVICE_SCHEMA_STATE_UNKNOWN: return "unknown";
+    case DEVICE_SCHEMA_STATE_DISCOVERING: return "discovering";
+    case DEVICE_SCHEMA_STATE_READY: return "ready";
+    case DEVICE_SCHEMA_STATE_UNSUPPORTED: return "unsupported";
+    case DEVICE_SCHEMA_STATE_ERROR: return "error";
     default: return "unknown";
     }
 }
 
-const char *device_capabilities_refresh_result_name(
-    device_cap_refresh_result_t result)
+const char *device_schema_refresh_result_name(
+    device_schema_refresh_result_t result)
 {
     switch (result) {
-    case DEVICE_CAP_REFRESH_RESULT_NONE: return "none";
-    case DEVICE_CAP_REFRESH_RESULT_SUCCESS: return "success";
-    case DEVICE_CAP_REFRESH_RESULT_UNCHANGED: return "unchanged";
-    case DEVICE_CAP_REFRESH_RESULT_NOT_PERSISTED: return "not_persisted";
-    case DEVICE_CAP_REFRESH_RESULT_UNSUPPORTED: return "unsupported";
-    case DEVICE_CAP_REFRESH_RESULT_BUSY: return "busy";
-    case DEVICE_CAP_REFRESH_RESULT_TIMEOUT: return "timeout";
-    case DEVICE_CAP_REFRESH_RESULT_DISCONNECTED: return "disconnected";
-    case DEVICE_CAP_REFRESH_RESULT_TRANSPORT_ERROR: return "transport_error";
-    case DEVICE_CAP_REFRESH_RESULT_PROTOCOL_ERROR: return "protocol_error";
-    case DEVICE_CAP_REFRESH_RESULT_INTERNAL_ERROR: return "internal_error";
+    case DEVICE_SCHEMA_REFRESH_RESULT_NONE: return "none";
+    case DEVICE_SCHEMA_REFRESH_RESULT_SUCCESS: return "success";
+    case DEVICE_SCHEMA_REFRESH_RESULT_UNCHANGED: return "unchanged";
+    case DEVICE_SCHEMA_REFRESH_RESULT_NOT_PERSISTED: return "not_persisted";
+    case DEVICE_SCHEMA_REFRESH_RESULT_UNSUPPORTED: return "unsupported";
+    case DEVICE_SCHEMA_REFRESH_RESULT_BUSY: return "busy";
+    case DEVICE_SCHEMA_REFRESH_RESULT_TIMEOUT: return "timeout";
+    case DEVICE_SCHEMA_REFRESH_RESULT_DISCONNECTED: return "disconnected";
+    case DEVICE_SCHEMA_REFRESH_RESULT_TRANSPORT_ERROR: return "transport_error";
+    case DEVICE_SCHEMA_REFRESH_RESULT_PROTOCOL_ERROR: return "protocol_error";
+    case DEVICE_SCHEMA_REFRESH_RESULT_INTERNAL_ERROR: return "internal_error";
     default: return "unknown";
     }
 }
 
-void device_capabilities_reset_for_test(void)
+void device_schema_reset_for_test(void)
 {
+    /* Signal the worker to exit, then tear down queue/task. */
+    s_shutdown = true;
+    vTaskDelay(pdMS_TO_TICKS(200));  /* worker checks every 100 ms */
+    if (s_worker != NULL) {
+        vTaskDelete(s_worker);
+        s_worker = NULL;
+    }
+    if (s_queue != NULL) {
+        vQueueDelete(s_queue);
+        s_queue = NULL;
+    }
+    s_shutdown = false;
+
     if (lock_records()) {
         if (s_records != NULL) {
             memset(s_records, 0,
@@ -1392,6 +1296,7 @@ void device_capabilities_reset_for_test(void)
         memset(&s_owner, 0, sizeof(s_owner));
         s_next_operation_id = 0;
         s_next_global_generation = 0;
+        s_initialized = false;
         unlock_records();
     }
 }

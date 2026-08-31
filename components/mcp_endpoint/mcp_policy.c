@@ -2,7 +2,7 @@
 #include <stddef.h>
 #include <string.h>
 
-#include "device_capabilities.h"
+#include "device_schema.h"
 #include "device_store.h"
 
 #include "mcp_endpoint_internal.h"
@@ -27,26 +27,26 @@ mcp_policy_result_t mcp_policy_check_device_command(const char *device_id,
         return MCP_POLICY_DEVICE_UNAVAILABLE;
     }
 
-    // 2. Capabilities advertisement check
-    device_capability_snapshot_t snapshot;
-    esp_err_t cap_err = device_capabilities_get(device_id, &snapshot);
+    // 2. Schema advertisement check
+    device_schema_snapshot_t snapshot;
+    esp_err_t cap_err = device_schema_get(device_id, &snapshot);
     if (cap_err != ESP_OK) {
-        // Capabilities not available — cannot verify command
+        // Schema not available — cannot verify command
         return MCP_POLICY_CAPABILITY_UNKNOWN;
     }
 
-    if (snapshot.state != DEVICE_CAP_STATE_READY) {
+    if (snapshot.state != DEVICE_SCHEMA_STATE_READY) {
         return MCP_POLICY_CAPABILITY_UNKNOWN;
     }
 
     // 3. Command advertised?
     bool command_found = false;
     bool is_destructive = false;
-    for (size_t i = 0; i < snapshot.count; i++) {
-        if (strcmp(snapshot.items[i].command, command) == 0) {
+    for (size_t i = 0; i < snapshot.tool_count; i++) {
+        if (strcmp(snapshot.tools[i].command, command) == 0) {
             command_found = true;
             is_destructive =
-                (snapshot.items[i].flags & DEVICE_CAP_FLAG_DESTRUCTIVE) != 0;
+                (snapshot.tools[i].flags & DEVICE_SCHEMA_FLAG_DESTRUCTIVE) != 0;
             break;
         }
     }

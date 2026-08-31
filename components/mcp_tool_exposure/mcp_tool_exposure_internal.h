@@ -6,7 +6,7 @@
 #include <stdint.h>
 
 #include "cbor_codec.h"
-#include "device_capabilities.h"
+#include "device_schema.h"
 #include "esp_err.h"
 #include "mcp_tool_exposure.h"
 
@@ -38,7 +38,7 @@ esp_err_t mcp_tool_name_generate(const char *device_name, const char *command,
                                  char *out_name, size_t out_len);
 
 /* SHA-256 semantic digest (mcp_tool_digest.c) */
-void mcp_tool_digest_compute(const device_capability_t *cap,
+void mcp_tool_digest_compute(const device_schema_tool_t *cap,
                              uint8_t out[MCP_CAPABILITY_DIGEST_LEN]);
 
 bool mcp_tool_digest_match(const uint8_t a[MCP_CAPABILITY_DIGEST_LEN],

@@ -13,7 +13,7 @@
 #include "cbor_codec.h"
 #include "command_dispatcher.h"
 #include "device_store.h"
-#include "device_capabilities.h"
+#include "device_schema.h"
 #include "mcp_tool_exposure.h"
 #include "mcp_core.h"
 
@@ -255,7 +255,7 @@ const mcp_tool_desc_t *mcp_registry_find(const char *name);
 int mcp_registry_build_tools_list(cJSON *tools_array);
 
 // Dynamic tool schema builder from device capability (mcp_registry.c).
-cJSON *mcp_dynamic_tool_build_schema(const device_capability_t *cap);
+cJSON *mcp_dynamic_tool_build_schema(const device_schema_tool_t *cap);
 cJSON *mcp_dynamic_tool_build_json(const mcp_tool_binding_t *binding);
 
 // ---------------------------------------------------------------------------

@@ -7,7 +7,7 @@
 #include "cJSON.h"
 #include "esp_log.h"
 
-#include "device_capabilities.h"
+#include "device_schema.h"
 #include "device_store.h"
 #include "mcp_tool_exposure.h"
 #include "web_http.h"
@@ -29,8 +29,8 @@ static esp_err_t exposure_get_handler(httpd_req_t *request)
     }
 
     // Get capability snapshot.
-    device_capability_snapshot_t cap;
-    esp_err_t cap_err = device_capabilities_get(device_id, &cap);
+    device_schema_snapshot_t cap;
+    esp_err_t cap_err = device_schema_get(device_id, &cap);
     device_entry_t device = {0};
     bool has_display_name =
         device_store_get(device_id, &device) == DEVICE_STORE_OK &&
@@ -64,26 +64,24 @@ static esp_err_t exposure_get_handler(httpd_req_t *request)
         cJSON_AddItemToObject(root, "capacity", cap_obj);
     }
 
-    if (cap_err == ESP_OK && cap.has_committed && cap.count > 0) {
-        for (size_t i = 0; i < cap.count; i++) {
-            const device_capability_t *c = &cap.items[i];
+    if (cap_err == ESP_OK && cap.has_committed && cap.tool_count > 0) {
+        for (size_t i = 0; i < cap.tool_count; i++) {
+            const device_schema_tool_t *c = &cap.tools[i];
             cJSON *item = cJSON_CreateObject();
             if (item == NULL) continue;
 
             cJSON_AddStringToObject(item, "command", c->command);
             cJSON_AddStringToObject(item, "label", c->label);
 
-            const char *vt_str = c->value_type == DEVICE_CAP_VALUE_BOOL
-                                     ? "boolean"
-                                     : c->value_type == DEVICE_CAP_VALUE_INT
-                                           ? "integer"
+            const char *vt_str = c->value_type == 1 ? "boolean"
+                                     : c->value_type == 2 ? "integer"
                                            : "none";
             cJSON_AddStringToObject(item, "value_type", vt_str);
             cJSON_AddBoolToObject(item, "destructive",
-                                  (c->flags & DEVICE_CAP_FLAG_DESTRUCTIVE) != 0);
+                                  (c->flags & DEVICE_SCHEMA_FLAG_DESTRUCTIVE) != 0);
             cJSON_AddBoolToObject(item, "idempotent",
-                                  (c->flags & DEVICE_CAP_FLAG_IDEMPOTENT) != 0);
-            if (c->value_type == DEVICE_CAP_VALUE_INT) {
+                                  (c->flags & DEVICE_SCHEMA_FLAG_IDEMPOTENT) != 0);
+            if (c->value_type == 2) {
                 cJSON_AddNumberToObject(item, "minimum", c->min_value);
                 cJSON_AddNumberToObject(item, "maximum", c->max_value);
                 cJSON_AddNumberToObject(item, "step", c->step);

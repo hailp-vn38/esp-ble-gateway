@@ -21,7 +21,10 @@ enum {
     CBOR_KEY_INT_VALUE = 4,
     CBOR_KEY_BOOL_VALUE = 5,
     CBOR_KEY_NAME = 6,
-    CBOR_KEY_DEVICE_TYPE = 7,
+    /* 7 reserved since v4 (former device_type key). Never emitted by the
+     * encoder; targeted-lookup decoder ignores it if present. Do not
+     * renumber. */
+    CBOR_KEY_RESERVED_7 = 7,
     CBOR_KEY_BLE_ADDR = 8,
     CBOR_KEY_BLE_ADDR_TYPE = 9,
     CBOR_KEY_REQUEST_ID = 10,
@@ -36,6 +39,15 @@ enum {
     CBOR_KEY_CAPABILITY_LABEL = 19,
     CBOR_KEY_CAPABILITY_UNIT = 20,
     CBOR_KEY_CAPABILITY_REVISION = 21,
+    CBOR_KEY_FEATURE_ID = 22,
+    CBOR_KEY_FEATURE_TYPE = 23,
+    CBOR_KEY_FEATURE_SCHEMA_VERSION = 24,
+    CBOR_KEY_FEATURE_FLAGS = 25,
+    CBOR_KEY_PROPERTY_ID = 26,
+    CBOR_KEY_FEATURE_VALUE_BOOL = 27,
+    CBOR_KEY_FEATURE_VALUE_INT = 28,
+    CBOR_KEY_FEATURE_TOOL = 29,
+    CBOR_KEY_FEATURE_TOTAL = 30,
 };
 
 static bool valid_string(const char *value, size_t capacity, bool allow_empty)
@@ -89,16 +101,23 @@ static void format_ble_addr(const uint8_t address[6], char output[18])
 int cbor_codec_encode(const gw_message_t *msg, uint8_t *out_buf, size_t out_buf_cap)
 {
     if (msg == NULL || out_buf == NULL || out_buf_cap == 0 ||
-        msg->protocol_version > GW_PROTOCOL_VERSION ||
         !valid_string(msg->type, sizeof(msg->type), false) ||
         !valid_string(msg->command, sizeof(msg->command), false) ||
         (msg->has_device_id && !valid_string(msg->device_id, sizeof(msg->device_id), false)) ||
         !valid_string(msg->name, sizeof(msg->name), true) ||
-        !valid_string(msg->device_type, sizeof(msg->device_type), true) ||
         !valid_string(msg->capability_label,
                       sizeof(msg->capability_label), true) ||
         !valid_string(msg->capability_unit,
-                      sizeof(msg->capability_unit), true)) {
+                      sizeof(msg->capability_unit), true) ||
+        !valid_string(msg->feature_id, sizeof(msg->feature_id), true) ||
+        !valid_string(msg->feature_tool, sizeof(msg->feature_tool), true)) {
+        return -1;
+    }
+
+    // Strict v4: the encoder only emits the current protocol version.
+    if (msg->protocol_version != GW_PROTOCOL_VERSION) {
+        ESP_LOGE(TAG, "Unsupported protocol version: %u",
+                 (unsigned)msg->protocol_version);
         return -1;
     }
 
@@ -106,7 +125,7 @@ int cbor_codec_encode(const gw_message_t *msg, uint8_t *out_buf, size_t out_buf_
     QCBOREncode_Init(&context, (UsefulBuf){out_buf, out_buf_cap});
     QCBOREncode_OpenMap(&context);
     QCBOREncode_AddUInt64ToMapN(&context, CBOR_KEY_PROTOCOL_VERSION,
-                                msg->protocol_version ? msg->protocol_version : GW_PROTOCOL_VERSION);
+                                msg->protocol_version);
     QCBOREncode_AddSZStringToMapN(&context, CBOR_KEY_TYPE, msg->type);
     if (msg->has_device_id) {
         QCBOREncode_AddSZStringToMapN(&context, CBOR_KEY_DEVICE_ID, msg->device_id);
@@ -120,9 +139,7 @@ int cbor_codec_encode(const gw_message_t *msg, uint8_t *out_buf, size_t out_buf_
     if (msg->name[0] != '\0') {
         QCBOREncode_AddSZStringToMapN(&context, CBOR_KEY_NAME, msg->name);
     }
-    if (msg->device_type[0] != '\0') {
-        QCBOREncode_AddSZStringToMapN(&context, CBOR_KEY_DEVICE_TYPE, msg->device_type);
-    }
+    // Key 7 (CBOR_KEY_RESERVED_7) is never emitted since v4.
     if (msg->has_ble_addr) {
         QCBOREncode_AddBytesToMapN(&context, CBOR_KEY_BLE_ADDR,
                                    (UsefulBufC){msg->ble_addr, sizeof(msg->ble_addr)});
@@ -171,6 +188,42 @@ int cbor_codec_encode(const gw_message_t *msg, uint8_t *out_buf, size_t out_buf_
         QCBOREncode_AddUInt64ToMapN(&context, CBOR_KEY_CAPABILITY_REVISION,
                                     msg->capability_revision);
     }
+    if (msg->has_feature_id) {
+        QCBOREncode_AddSZStringToMapN(&context, CBOR_KEY_FEATURE_ID,
+                                      msg->feature_id);
+    }
+    if (msg->has_feature_type) {
+        QCBOREncode_AddUInt64ToMapN(&context, CBOR_KEY_FEATURE_TYPE,
+                                    msg->feature_type);
+    }
+    if (msg->has_feature_schema_version) {
+        QCBOREncode_AddUInt64ToMapN(&context, CBOR_KEY_FEATURE_SCHEMA_VERSION,
+                                    msg->feature_schema_version);
+    }
+    if (msg->has_feature_flags) {
+        QCBOREncode_AddUInt64ToMapN(&context, CBOR_KEY_FEATURE_FLAGS,
+                                    msg->feature_flags);
+    }
+    if (msg->has_property_id) {
+        QCBOREncode_AddUInt64ToMapN(&context, CBOR_KEY_PROPERTY_ID,
+                                    msg->property_id);
+    }
+    if (msg->has_feature_value_bool) {
+        QCBOREncode_AddBoolToMapN(&context, CBOR_KEY_FEATURE_VALUE_BOOL,
+                                  msg->feature_value_bool);
+    }
+    if (msg->has_feature_value_int) {
+        QCBOREncode_AddInt64ToMapN(&context, CBOR_KEY_FEATURE_VALUE_INT,
+                                   msg->feature_value_int);
+    }
+    if (msg->has_feature_tool) {
+        QCBOREncode_AddSZStringToMapN(&context, CBOR_KEY_FEATURE_TOOL,
+                                      msg->feature_tool);
+    }
+    if (msg->has_feature_total) {
+        QCBOREncode_AddUInt64ToMapN(&context, CBOR_KEY_FEATURE_TOTAL,
+                                    msg->feature_total);
+    }
     QCBOREncode_CloseMap(&context);
 
     UsefulBufC encoded;
@@ -217,11 +270,17 @@ int cbor_codec_decode(const uint8_t *buf, size_t len, gw_message_t *out_msg)
     QCBORDecode_EnterMap(&context, NULL);
     if (QCBORDecode_GetAndResetError(&context) != QCBOR_SUCCESS) return -1;
 
-    uint64_t protocol_version = GW_PROTOCOL_VERSION;
+    uint64_t protocol_version = 0;
+    bool has_protocol_version = false;
     QCBORDecode_GetUInt64InMapN(&context, CBOR_KEY_PROTOCOL_VERSION, &protocol_version);
     QCBORError error = QCBORDecode_GetAndResetError(&context);
-    if (error != QCBOR_SUCCESS && error != QCBOR_ERR_LABEL_NOT_FOUND) return -1;
-    if (protocol_version == 0 || protocol_version > GW_PROTOCOL_VERSION) {
+    if (error == QCBOR_SUCCESS) {
+        has_protocol_version = true;
+    } else if (error != QCBOR_ERR_LABEL_NOT_FOUND) {
+        return -1;
+    }
+    // Strict v4: the version must be explicit and exact; v1/v2/v3 reject.
+    if (!has_protocol_version || protocol_version != GW_PROTOCOL_VERSION) {
         ESP_LOGE(TAG, "Unsupported protocol version: %llu",
                  (unsigned long long)protocol_version);
         return -1;
@@ -281,13 +340,7 @@ int cbor_codec_decode(const uint8_t *buf, size_t len, gw_message_t *out_msg)
         return -1;
     }
 
-    error = get_optional_text(&context, CBOR_KEY_DEVICE_TYPE, &optional_value);
-    if (error == QCBOR_SUCCESS) {
-        if (copy_text(optional_value, out_msg->device_type,
-                      sizeof(out_msg->device_type), true) != 0) return -1;
-    } else if (error != QCBOR_ERR_LABEL_NOT_FOUND) {
-        return -1;
-    }
+    // CBOR key 7 is reserved since v4: never looked up, therefore ignored.
 
     UsefulBufC address_value = NULLUsefulBufC;
     QCBORDecode_GetByteStringInMapN(&context, CBOR_KEY_BLE_ADDR, &address_value);
@@ -386,6 +439,72 @@ int cbor_codec_decode(const uint8_t *buf, size_t len, gw_message_t *out_msg)
         out_msg->has_capability_revision = 1;
     } else if (error != QCBOR_ERR_LABEL_NOT_FOUND) return -1;
 
+    // Protocol v4 semantic feature fields.
+    error = get_optional_text(&context, CBOR_KEY_FEATURE_ID, &optional_value);
+    if (error == QCBOR_SUCCESS) {
+        if (copy_text(optional_value, out_msg->feature_id,
+                      sizeof(out_msg->feature_id), false) != 0) return -1;
+        out_msg->has_feature_id = 1;
+    } else if (error != QCBOR_ERR_LABEL_NOT_FOUND) return -1;
+
+    error = get_optional_uint(&context, CBOR_KEY_FEATURE_TYPE, &optional_uint);
+    if (error == QCBOR_SUCCESS) {
+        if (optional_uint > UINT8_MAX) return -1;
+        out_msg->feature_type = (uint8_t)optional_uint;
+        out_msg->has_feature_type = 1;
+    } else if (error != QCBOR_ERR_LABEL_NOT_FOUND) return -1;
+
+    error = get_optional_uint(&context, CBOR_KEY_FEATURE_SCHEMA_VERSION,
+                              &optional_uint);
+    if (error == QCBOR_SUCCESS) {
+        if (optional_uint > UINT16_MAX) return -1;
+        out_msg->feature_schema_version = (uint16_t)optional_uint;
+        out_msg->has_feature_schema_version = 1;
+    } else if (error != QCBOR_ERR_LABEL_NOT_FOUND) return -1;
+
+    error = get_optional_uint(&context, CBOR_KEY_FEATURE_FLAGS, &optional_uint);
+    if (error == QCBOR_SUCCESS) {
+        if (optional_uint > UINT16_MAX) return -1;
+        out_msg->feature_flags = (uint16_t)optional_uint;
+        out_msg->has_feature_flags = 1;
+    } else if (error != QCBOR_ERR_LABEL_NOT_FOUND) return -1;
+
+    error = get_optional_uint(&context, CBOR_KEY_PROPERTY_ID, &optional_uint);
+    if (error == QCBOR_SUCCESS) {
+        if (optional_uint > UINT8_MAX) return -1;
+        out_msg->property_id = (uint8_t)optional_uint;
+        out_msg->has_property_id = 1;
+    } else if (error != QCBOR_ERR_LABEL_NOT_FOUND) return -1;
+
+    bool optional_bool = false;
+    QCBORDecode_GetBoolInMapN(&context, CBOR_KEY_FEATURE_VALUE_BOOL, &optional_bool);
+    error = QCBORDecode_GetAndResetError(&context);
+    if (error == QCBOR_SUCCESS) {
+        out_msg->feature_value_bool = optional_bool;
+        out_msg->has_feature_value_bool = 1;
+    } else if (error != QCBOR_ERR_LABEL_NOT_FOUND) return -1;
+
+    error = get_optional_int(&context, CBOR_KEY_FEATURE_VALUE_INT, &optional_int);
+    if (error == QCBOR_SUCCESS) {
+        if (optional_int < INT32_MIN || optional_int > INT32_MAX) return -1;
+        out_msg->feature_value_int = (int32_t)optional_int;
+        out_msg->has_feature_value_int = 1;
+    } else if (error != QCBOR_ERR_LABEL_NOT_FOUND) return -1;
+
+    error = get_optional_text(&context, CBOR_KEY_FEATURE_TOOL, &optional_value);
+    if (error == QCBOR_SUCCESS) {
+        if (copy_text(optional_value, out_msg->feature_tool,
+                      sizeof(out_msg->feature_tool), false) != 0) return -1;
+        out_msg->has_feature_tool = 1;
+    } else if (error != QCBOR_ERR_LABEL_NOT_FOUND) return -1;
+
+    error = get_optional_uint(&context, CBOR_KEY_FEATURE_TOTAL, &optional_uint);
+    if (error == QCBOR_SUCCESS) {
+        if (optional_uint > UINT16_MAX) return -1;
+        out_msg->feature_total = (uint16_t)optional_uint;
+        out_msg->has_feature_total = 1;
+    } else if (error != QCBOR_ERR_LABEL_NOT_FOUND) return -1;
+
     QCBORDecode_ExitMap(&context);
     if (QCBORDecode_Finish(&context) != QCBOR_SUCCESS) return -1;
 
@@ -403,8 +522,7 @@ int cbor_codec_msg_to_json(const gw_message_t *msg, char *out_json, size_t out_j
 
     cJSON *root = cJSON_CreateObject();
     if (root == NULL) return -1;
-    cJSON_AddNumberToObject(root, "protocol_version",
-                            msg->protocol_version ? msg->protocol_version : GW_PROTOCOL_VERSION);
+    cJSON_AddNumberToObject(root, "protocol_version", msg->protocol_version);
     cJSON_AddStringToObject(root, "type", msg->type);
     if (msg->has_device_id) cJSON_AddStringToObject(root, "device_id", msg->device_id);
     cJSON_AddStringToObject(root, "command", msg->command);
@@ -412,9 +530,6 @@ int cbor_codec_msg_to_json(const gw_message_t *msg, char *out_json, size_t out_j
     cJSON_AddNumberToObject(root, "int_value", msg->int_value);
     cJSON_AddBoolToObject(root, "bool_value", msg->bool_value != 0);
     if (msg->name[0] != '\0') cJSON_AddStringToObject(root, "name", msg->name);
-    if (msg->device_type[0] != '\0') {
-        cJSON_AddStringToObject(root, "device_type", msg->device_type);
-    }
     if (msg->has_ble_addr) {
         char address[18];
         format_ble_addr(msg->ble_addr, address);
@@ -443,6 +558,22 @@ int cbor_codec_msg_to_json(const gw_message_t *msg, char *out_json, size_t out_j
         cJSON_AddNumberToObject(root, "capability_revision",
                                msg->capability_revision);
     }
+    if (msg->has_feature_id) cJSON_AddStringToObject(root, "feature_id", msg->feature_id);
+    if (msg->has_feature_type) cJSON_AddNumberToObject(root, "feature_type", msg->feature_type);
+    if (msg->has_feature_schema_version) {
+        cJSON_AddNumberToObject(root, "feature_schema_version",
+                                msg->feature_schema_version);
+    }
+    if (msg->has_feature_flags) cJSON_AddNumberToObject(root, "feature_flags", msg->feature_flags);
+    if (msg->has_property_id) cJSON_AddNumberToObject(root, "property_id", msg->property_id);
+    if (msg->has_feature_value_bool) {
+        cJSON_AddBoolToObject(root, "feature_value_bool", msg->feature_value_bool);
+    }
+    if (msg->has_feature_value_int) {
+        cJSON_AddNumberToObject(root, "feature_value_int", msg->feature_value_int);
+    }
+    if (msg->has_feature_tool) cJSON_AddStringToObject(root, "feature_tool", msg->feature_tool);
+    if (msg->has_feature_total) cJSON_AddNumberToObject(root, "feature_total", msg->feature_total);
 
     bool printed = cJSON_PrintPreallocated(root, out_json, (int)out_json_cap, false);
     cJSON_Delete(root);
@@ -503,16 +634,15 @@ int cbor_codec_json_to_msg(const char *json_str, gw_message_t *out_msg)
     if (field_result < 0) goto cleanup;
     out_msg->has_device_id = field_result == 0 && out_msg->device_id[0] != '\0';
 
-    if (copy_json_string(root, "name", out_msg->name, sizeof(out_msg->name), false) < 0 ||
-        copy_json_string(root, "device_type", out_msg->device_type,
-                         sizeof(out_msg->device_type), false) < 0) {
+    if (copy_json_string(root, "name", out_msg->name, sizeof(out_msg->name), false) < 0) {
         goto cleanup;
     }
 
     const cJSON *protocol = cJSON_GetObjectItemCaseSensitive(root, "protocol_version");
     if (protocol != NULL) {
-        if (!cJSON_IsNumber(protocol) || protocol->valuedouble < 1 ||
-            protocol->valuedouble > GW_PROTOCOL_VERSION ||
+        // Strict v4: only the current protocol version is accepted.
+        if (!cJSON_IsNumber(protocol) ||
+            protocol->valuedouble != (double)GW_PROTOCOL_VERSION ||
             protocol->valuedouble != (double)protocol->valueint) {
             goto cleanup;
         }
@@ -610,6 +740,56 @@ int cbor_codec_json_to_msg(const char *json_str, gw_message_t *out_msg)
     if (present) {
         out_msg->capability_revision = (uint32_t)numeric;
         out_msg->has_capability_revision = 1;
+    }
+
+    if (copy_json_string(root, "feature_id", out_msg->feature_id,
+                         sizeof(out_msg->feature_id), false) < 0 ||
+        copy_json_string(root, "feature_tool", out_msg->feature_tool,
+                         sizeof(out_msg->feature_tool), false) < 0) {
+        goto cleanup;
+    }
+    if (optional_json_integer(root, "feature_type", 0, UINT8_MAX,
+                              &numeric, &present) != 0) goto cleanup;
+    if (present) {
+        out_msg->feature_type = (uint8_t)numeric;
+        out_msg->has_feature_type = 1;
+    }
+    if (optional_json_integer(root, "feature_schema_version", 0, UINT16_MAX,
+                              &numeric, &present) != 0) goto cleanup;
+    if (present) {
+        out_msg->feature_schema_version = (uint16_t)numeric;
+        out_msg->has_feature_schema_version = 1;
+    }
+    if (optional_json_integer(root, "feature_flags", 0, UINT16_MAX,
+                              &numeric, &present) != 0) goto cleanup;
+    if (present) {
+        out_msg->feature_flags = (uint16_t)numeric;
+        out_msg->has_feature_flags = 1;
+    }
+    if (optional_json_integer(root, "property_id", 0, UINT8_MAX,
+                              &numeric, &present) != 0) goto cleanup;
+    if (present) {
+        out_msg->property_id = (uint8_t)numeric;
+        out_msg->has_property_id = 1;
+    }
+    if (optional_json_integer(root, "feature_value_int", INT32_MIN, INT32_MAX,
+                              &numeric, &present) != 0) goto cleanup;
+    if (present) {
+        out_msg->feature_value_int = (int32_t)numeric;
+        out_msg->has_feature_value_int = 1;
+    }
+    if (optional_json_integer(root, "feature_total", 0, UINT16_MAX,
+                              &numeric, &present) != 0) goto cleanup;
+    if (present) {
+        out_msg->feature_total = (uint16_t)numeric;
+        out_msg->has_feature_total = 1;
+    }
+    const cJSON *feature_bool_item =
+        cJSON_GetObjectItemCaseSensitive(root, "feature_value_bool");
+    if (feature_bool_item != NULL) {
+        if (!cJSON_IsBool(feature_bool_item)) goto cleanup;
+        out_msg->feature_value_bool = cJSON_IsTrue(feature_bool_item);
+        out_msg->has_feature_value_bool = 1;
     }
 
     const cJSON *address_item = cJSON_GetObjectItemCaseSensitive(root, "ble_addr");

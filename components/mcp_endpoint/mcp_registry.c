@@ -198,7 +198,7 @@ int mcp_registry_build_tools_list(cJSON *tools_array)
 // Dynamic tool schema builder from device capability
 // ---------------------------------------------------------------------------
 
-cJSON *mcp_dynamic_tool_build_schema(const device_capability_t *cap)
+cJSON *mcp_dynamic_tool_build_schema(const device_schema_tool_t *cap)
 {
     cJSON *schema = new_object_schema();
     if (schema == NULL) return NULL;
@@ -208,7 +208,7 @@ cJSON *mcp_dynamic_tool_build_schema(const device_capability_t *cap)
         return NULL;
     }
 
-    if (cap->value_type == DEVICE_CAP_VALUE_NONE) {
+    if (cap->value_type == 0 /* NONE */) {
         // No arguments needed — empty object.
         return schema;
     }
@@ -219,9 +219,9 @@ cJSON *mcp_dynamic_tool_build_schema(const device_capability_t *cap)
         return NULL;
     }
 
-    if (cap->value_type == DEVICE_CAP_VALUE_BOOL) {
+    if (cap->value_type == 1 /* BOOL */) {
         cJSON_AddStringToObject(value_prop, "type", "boolean");
-    } else if (cap->value_type == DEVICE_CAP_VALUE_INT) {
+    } else if (cap->value_type == 2 /* INT */) {
         cJSON_AddStringToObject(value_prop, "type", "integer");
         cJSON_AddNumberToObject(value_prop, "minimum", cap->min_value);
         cJSON_AddNumberToObject(value_prop, "maximum", cap->max_value);
@@ -286,8 +286,8 @@ cJSON *mcp_dynamic_tool_build_json(const mcp_tool_binding_t *binding)
 
     // Annotations (§19.4).
     cJSON_AddBoolToObject(annotations, "readOnlyHint", false);
-    bool destructive = (binding->capability.flags & DEVICE_CAP_FLAG_DESTRUCTIVE) != 0;
-    bool idempotent = (binding->capability.flags & DEVICE_CAP_FLAG_IDEMPOTENT) != 0;
+    bool destructive = (binding->capability.flags & DEVICE_SCHEMA_FLAG_DESTRUCTIVE) != 0;
+    bool idempotent = (binding->capability.flags & DEVICE_SCHEMA_FLAG_IDEMPOTENT) != 0;
     // Older MCP clients read ToolAnnotations.title instead of Tool.title.
     cJSON_AddStringToObject(annotations, "title", binding->tool_name);
     cJSON_AddBoolToObject(annotations, "destructiveHint", destructive);

@@ -2,6 +2,13 @@
 
 ESP-IDF firmware for ESP32-S3 (BLE Central gateway with Web UI / REST / JSON-RPC). Verified against ESP-IDF 6.1.0, 16 MiB flash. Design docs and README are in Vietnamese.
 
+## Protocol v4 + device_schema migration — phase tracking
+
+- Migration plan lives in `docs/ESP32_BLE_GATEWAY_PROTOCOL_V4_DEVICE_SCHEMA_DEVELOPMENT_PLAN_v1.1.md` (detailed checklists) and `docs/ESP32 BLE Gateway — Protocol v4 + Device Schema Development Plan.md`.
+- The BLE Device repo is at `~/Desktop/esp-ble-device` (sibling of this repo).
+- **Whenever a phase (V4-01, V4-02, …) is completed, immediately mark its checklists as `[x]` and add a "✅ DONE (date)" marker to the phase heading in BOTH plan docs before doing anything else.**
+- Progress: V4-01 ✅ done (2026-08-31, device repo strict v4), V4-02 ✅ done (2026-08-31, gateway codec strict v4), V4-03 ✅ done (2026-08-31, replaced device_capabilities with device_schema). Both device and gateway now only emit/accept protocol v4.
+
 ## Build
 
 Requires ESP-IDF environment (`idf.py` on PATH). QCBOR is a git submodule — run first after clone or it will be missing:
@@ -40,6 +47,6 @@ Dashboard source lives in `components/web_server/www_src/` — assembled into a 
 ## Architecture notes
 
 - Boot has two modes: provisioning mode (no valid Wi-Fi creds) initializes only NVS/Wi-Fi APSTA/captive DNS/HTTP config routes (SSID: `ESP-GW-<MAC>`, password `gateway123`); Device Store, Dispatcher, BLE Central, reconnect supervisor, and MCP endpoint initialize only after STA mode gets an IP. Anything touching those modules must handle being called in either mode.
-- BLE wire format is CBOR with numeric map keys; schema lives in `components/cbor_codec/cbor_codec.c`. Gateway protocol version is 3 (defined as `GW_PROTOCOL_VERSION` in `cbor_codec.h`), still accepts v1/v2 messages. Peripheral devices implement service `0xABF0`, char `0xABF1` (write), `0xABF2` (notify).
-- Components: `device_store` (NVS registry), `device_capabilities` (capability cache/discovery/validation with operation token serializer), `wifi_provisioning`, `ble_central` (NimBLE), `cbor_codec`, `command_dispatcher` (registry + per-device ACK routing + JSON ACK payload propagation), `command_executor` (worker task for commands), `web_server`, `mcp_endpoint` (JSON-RPC subset at `POST /mcp`, no auth — LAN only), `mcp_tool_exposure` (dynamic tool exposure/catalog), `mcp_ws_bridge` (WebSocket bridge for MCP), `memory_policy`, `board_io`, `gateway_status`, `qcbor_lib` (submodule wrapper).
+- BLE wire format is CBOR with numeric map keys; schema lives in `components/cbor_codec/cbor_codec.c`. Gateway protocol version is 4 (defined as `GW_PROTOCOL_VERSION` in `cbor_codec.h`), rejects v1/v2/v3 messages. Peripheral devices implement service `0xABF0`, char `0xABF1` (write), `0xABF2` (notify).
+- Components: `device_store` (NVS registry), `device_schema` (tools+features discovery/validation/persistence), `wifi_provisioning`, `ble_central` (NimBLE), `cbor_codec`, `command_dispatcher` (registry + per-device ACK routing + JSON ACK payload propagation), `command_executor` (worker task for commands), `web_server`, `mcp_endpoint` (JSON-RPC subset at `POST /mcp`, no auth — LAN only), `mcp_tool_exposure` (dynamic tool exposure/catalog), `mcp_ws_bridge` (WebSocket bridge for MCP), `memory_policy`, `board_io`, `gateway_status`, `qcbor_lib` (submodule wrapper).
 - HTTP server receive timeout (`CONFIG_HTTPD_RECV_TIMEOUT_SEC=5`) is coupled to the command ACK timeout — don't lower it below ACK wait + buffer.

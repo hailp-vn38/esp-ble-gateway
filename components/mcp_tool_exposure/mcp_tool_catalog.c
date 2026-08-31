@@ -19,7 +19,7 @@ typedef struct {
     char tool_name[MCP_DYNAMIC_TOOL_NAME_MAX + 1];
     char device_id[GW_MSG_DEVICE_ID_LEN];
     char command[GW_MSG_COMMAND_LEN];
-    device_capability_t capability;
+    device_schema_tool_t capability;
 } catalog_entry_t;
 
 /* Runtime-allocated so memory_policy places it in PSRAM (Plan v1.1 §11.2). */

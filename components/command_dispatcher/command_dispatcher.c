@@ -83,8 +83,7 @@ int command_dispatcher_get_registered_names(
 // Command ingress validation (refactor plan §15.1).
 static bool validate_command_message(const gw_message_t *msg)
 {
-    if (msg->protocol_version < 1 ||
-        msg->protocol_version > GW_PROTOCOL_VERSION) {
+    if (msg->protocol_version != GW_PROTOCOL_VERSION) {
         return false;
     }
     size_t type_len = strnlen(msg->type, sizeof(msg->type));
@@ -139,8 +138,7 @@ void command_dispatcher_on_device_notify(const char *device_id,
 {
     // Notification ingress validation (refactor plan §15.2).
     if (device_id == NULL || device_id[0] == '\0' || msg == NULL ||
-        msg->protocol_version < 1 ||
-        msg->protocol_version > GW_PROTOCOL_VERSION) {
+        msg->protocol_version != GW_PROTOCOL_VERSION) {
         ESP_LOGW(TAG, "[NOTIFY_DROPPED] invalid notification arguments");
         return;
     }

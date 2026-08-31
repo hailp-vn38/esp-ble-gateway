@@ -12,7 +12,7 @@
 #include "command_dispatcher.h"
 #include "command_dispatcher_internal.h"
 #include "device_store.h"
-#include "device_capabilities.h"
+#include "device_schema.h"
 #include "mcp_tool_exposure.h"
 
 static const char *TAG = "dispatcher";
@@ -57,9 +57,10 @@ static void cmd_add_device(const gw_message_t *msg, dispatch_result_t *result)
     }
 
     const char *name = msg->name[0] != '\0' ? msg->name : msg->device_id;
-    const char *device_type = msg->device_type[0] != '\0' ? msg->device_type : "generic";
+    // Messages no longer carry a device-level type (protocol v4); new
+    // devices start untyped until device_schema replaces it (V4-03+).
     device_store_result_t store_rc =
-        device_store_add(msg->device_id, name, device_type);
+        device_store_add(msg->device_id, name, "generic");
     if (store_rc != DEVICE_STORE_OK) {
         command_dispatcher_set_text_result(result, status_for_store_result(store_rc),
                                            "Could not add device %s",
@@ -128,14 +129,14 @@ static void cmd_delete_device(const gw_message_t *msg, dispatch_result_t *result
                  msg->device_id, esp_err_to_name(exposure_rc));
     }
 
-    /* Step 2: capability forget MUST succeed (failure-safe per spec §14/§16). */
-    esp_err_t capability_rc = device_capabilities_forget(msg->device_id);
-    if (capability_rc != ESP_OK) {
-        ESP_LOGE(TAG, "[DEVICE_DELETE_FAILED] device=%s capability forget failed: %s",
-                 msg->device_id, esp_err_to_name(capability_rc));
+    /* Step 2: schema forget MUST succeed (failure-safe per spec §14/§16). */
+    esp_err_t schema_rc = device_schema_forget(msg->device_id);
+    if (schema_rc != ESP_OK) {
+        ESP_LOGE(TAG, "[DEVICE_DELETE_FAILED] device=%s schema forget failed: %s",
+                 msg->device_id, esp_err_to_name(schema_rc));
         command_dispatcher_set_text_result(result,
                                            DISPATCH_STATUS_INTERNAL_ERROR,
-                                           "Could not forget capabilities for %s",
+                                           "Could not forget schema for %s",
                                            msg->device_id);
         return;
     }
@@ -170,16 +171,15 @@ static void cmd_edit_device(const gw_message_t *msg, dispatch_result_t *result)
     }
 
     const char *name = msg->name[0] != '\0' ? msg->name : NULL;
-    const char *device_type = msg->device_type[0] != '\0' ? msg->device_type : NULL;
-    if (name == NULL && device_type == NULL) {
+    if (name == NULL) {
         command_dispatcher_set_text_result(result,
                                            DISPATCH_STATUS_INVALID_ARGUMENT,
-                                           "Provide name or device_type to edit");
+                                           "Provide name to edit");
         return;
     }
 
     device_store_result_t edit_rc =
-        device_store_edit(msg->device_id, name, device_type);
+        device_store_edit(msg->device_id, name, NULL);
     if (edit_rc != DEVICE_STORE_OK) {
         command_dispatcher_set_text_result(result,
                                            status_for_store_result(edit_rc),
@@ -297,8 +297,8 @@ static void cmd_list_device_capabilities(const gw_message_t *msg,
         return;
     }
 
-    device_capability_snapshot_t snapshot;
-    esp_err_t error = device_capabilities_get(msg->device_id, &snapshot);
+    device_schema_snapshot_t snapshot;
+    esp_err_t error = device_schema_get(msg->device_id, &snapshot);
     if (error == ESP_ERR_NOT_FOUND) {
         command_dispatcher_set_text_result(result, DISPATCH_STATUS_NOT_FOUND,
                                            "Device %s not found",
@@ -308,22 +308,25 @@ static void cmd_list_device_capabilities(const gw_message_t *msg,
     if (error != ESP_OK) {
         command_dispatcher_set_text_result(result,
                                            DISPATCH_STATUS_INTERNAL_ERROR,
-                                           "Could not read device capabilities");
+                                           "Could not read device schema");
         return;
     }
 
-    device_cap_refresh_active_t refresh_active;
-    device_cap_refresh_completed_t refresh_completed;
-    device_capabilities_get_refresh_status(msg->device_id,
-                                           &refresh_active,
-                                           &refresh_completed);
+    device_schema_refresh_active_t refresh_active;
+    device_schema_refresh_completed_t refresh_completed;
+    device_schema_get_refresh_status(msg->device_id,
+                                     &refresh_active,
+                                     &refresh_completed);
 
     cJSON *root = cJSON_CreateObject();
-    cJSON *commands = cJSON_CreateArray();
+    cJSON *tools_arr = cJSON_CreateArray();
+    cJSON *features_arr = cJSON_CreateArray();
     cJSON *refresh_obj = cJSON_CreateObject();
-    if (root == NULL || commands == NULL || refresh_obj == NULL) {
+    if (root == NULL || tools_arr == NULL || features_arr == NULL ||
+        refresh_obj == NULL) {
         cJSON_Delete(root);
-        cJSON_Delete(commands);
+        cJSON_Delete(tools_arr);
+        cJSON_Delete(features_arr);
         cJSON_Delete(refresh_obj);
         command_dispatcher_set_text_result(result,
                                            DISPATCH_STATUS_INTERNAL_ERROR,
@@ -333,9 +336,10 @@ static void cmd_list_device_capabilities(const gw_message_t *msg,
 
     cJSON_AddStringToObject(root, "device_id", snapshot.device_id);
     cJSON_AddStringToObject(root, "state",
-                           device_capabilities_state_name(snapshot.state));
+                           device_schema_state_name(snapshot.state));
     cJSON_AddNumberToObject(root, "revision", snapshot.revision);
-    cJSON_AddItemToObject(root, "commands", commands);
+    cJSON_AddItemToObject(root, "tools", tools_arr);
+    cJSON_AddItemToObject(root, "features", features_arr);
 
     /* Refresh status. */
     cJSON *active_obj = cJSON_CreateObject();
@@ -343,8 +347,8 @@ static void cmd_list_device_capabilities(const gw_message_t *msg,
     if (active_obj != NULL && completed_obj != NULL) {
         const char *refresh_state_str = "idle";
         switch (refresh_active.state) {
-        case DEVICE_CAP_REFRESH_QUEUED: refresh_state_str = "queued"; break;
-        case DEVICE_CAP_REFRESH_RUNNING: refresh_state_str = "running"; break;
+        case DEVICE_SCHEMA_REFRESH_QUEUED: refresh_state_str = "queued"; break;
+        case DEVICE_SCHEMA_REFRESH_RUNNING: refresh_state_str = "running"; break;
         default: refresh_state_str = "idle"; break;
         }
         cJSON_AddNumberToObject(active_obj, "generation",
@@ -356,7 +360,7 @@ static void cmd_list_device_capabilities(const gw_message_t *msg,
                                refresh_completed.generation);
         cJSON_AddStringToObject(
             completed_obj, "result",
-            device_capabilities_refresh_result_name(
+            device_schema_refresh_result_name(
                 refresh_completed.result));
         cJSON_AddNumberToObject(completed_obj, "finished_at_ms",
                                refresh_completed.finished_at_ms);
@@ -367,31 +371,48 @@ static void cmd_list_device_capabilities(const gw_message_t *msg,
     }
     cJSON_AddItemToObject(root, "refresh", refresh_obj);
 
-    for (size_t i = 0; i < snapshot.count; i++) {
-        const device_capability_t *capability = &snapshot.items[i];
+    for (size_t i = 0; i < snapshot.tool_count; i++) {
+        const device_schema_tool_t *tool = &snapshot.tools[i];
         cJSON *item = cJSON_CreateObject();
         if (item == NULL) continue;
-        cJSON_AddStringToObject(item, "name", capability->command);
-        cJSON_AddStringToObject(item, "label", capability->label);
+        cJSON_AddStringToObject(item, "command", tool->command);
+        cJSON_AddStringToObject(item, "label", tool->label);
         const char *value_type =
-            capability->value_type == DEVICE_CAP_VALUE_BOOL
-                ? "boolean"
-                : capability->value_type == DEVICE_CAP_VALUE_INT ? "integer"
-                                                                  : "none";
+            tool->value_type == 1 ? "boolean"
+                                  : tool->value_type == 2 ? "integer"
+                                                          : "none";
         cJSON_AddStringToObject(item, "value_type", value_type);
         cJSON_AddBoolToObject(item, "idempotent",
-                              (capability->flags &
-                               DEVICE_CAP_FLAG_IDEMPOTENT) != 0);
+                              (tool->flags &
+                               DEVICE_SCHEMA_FLAG_IDEMPOTENT) != 0);
         cJSON_AddBoolToObject(item, "destructive",
-                              (capability->flags &
-                               DEVICE_CAP_FLAG_DESTRUCTIVE) != 0);
-        if (capability->value_type == DEVICE_CAP_VALUE_INT) {
-            cJSON_AddNumberToObject(item, "minimum", capability->min_value);
-            cJSON_AddNumberToObject(item, "maximum", capability->max_value);
-            cJSON_AddNumberToObject(item, "step", capability->step);
-            cJSON_AddStringToObject(item, "unit", capability->unit);
+                              (tool->flags &
+                               DEVICE_SCHEMA_FLAG_DESTRUCTIVE) != 0);
+        if (tool->value_type == 2) {
+            cJSON_AddNumberToObject(item, "minimum", tool->min_value);
+            cJSON_AddNumberToObject(item, "maximum", tool->max_value);
+            cJSON_AddNumberToObject(item, "step", tool->step);
+            cJSON_AddStringToObject(item, "unit", tool->unit);
         }
-        cJSON_AddItemToArray(commands, item);
+        cJSON_AddItemToArray(tools_arr, item);
+    }
+
+    for (size_t i = 0; i < snapshot.feature_count; i++) {
+        const device_schema_feature_t *feat = &snapshot.features[i];
+        cJSON *item = cJSON_CreateObject();
+        if (item == NULL) continue;
+        cJSON_AddStringToObject(item, "feature_id", feat->feature_id);
+        cJSON_AddNumberToObject(item, "feature_type", feat->feature_type);
+        cJSON_AddNumberToObject(item, "property_id", feat->property_id);
+        cJSON_AddNumberToObject(item, "schema_version",
+                               feat->feature_schema_version);
+        if (feat->writable_tool_index >= 0 &&
+            (size_t)feat->writable_tool_index < snapshot.tool_count) {
+            cJSON_AddStringToObject(
+                item, "writable_command",
+                snapshot.tools[feat->writable_tool_index].command);
+        }
+        cJSON_AddItemToArray(features_arr, item);
     }
 
     bool printed = cJSON_PrintPreallocated(root, result->payload,
@@ -400,7 +421,7 @@ static void cmd_list_device_capabilities(const gw_message_t *msg,
     if (!printed) {
         command_dispatcher_set_text_result(result,
                                            DISPATCH_STATUS_INTERNAL_ERROR,
-                                           "Capability list is too large");
+                                           "Schema list is too large");
         return;
     }
     result->status = DISPATCH_STATUS_OK;

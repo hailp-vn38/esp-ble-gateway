@@ -10,7 +10,7 @@
 
 #include "cbor_codec.h"
 #include "command_dispatcher.h"
-#include "device_capabilities.h"
+#include "device_schema.h"
 #include "memory_policy.h"
 #include "mcp_endpoint_internal.h"
 #include "mcp_tool_exposure.h"
@@ -189,7 +189,7 @@ static mcp_resolve_status_t normalize_arguments(const cJSON *arguments,
     cJSON_AddStringToObject(normalized, "command", command);
     const char *optional_fields[] = {
         "protocol_version", "device_id", "int_value", "bool_value", "name",
-        "device_type", "ble_addr", "ble_addr_type"
+        "ble_addr", "ble_addr_type"
     };
     bool copied = true;
     for (size_t i = 0; i < sizeof(optional_fields) / sizeof(optional_fields[0]); i++) {
@@ -354,9 +354,9 @@ mcp_resolve_status_t mcp_tools_resolve(const cJSON *params, gw_message_t *msg,
         }
 
         // Verify capability still matches (§36 — semantic digest).
-        device_capability_snapshot_t cap;
-        if (device_capabilities_get(binding.device_id, &cap) != ESP_OK ||
-            !cap.has_committed || cap.count == 0) {
+        device_schema_snapshot_t cap;
+        if (device_schema_get(binding.device_id, &cap) != ESP_OK ||
+            !cap.has_committed || cap.tool_count == 0) {
             snprintf(denial_text, denial_len,
                      "Tool capability changed and requires review");
             *error = (mcp_rpc_error_t){MCP_ERR_CAPABILITY_UNKNOWN,
@@ -364,10 +364,10 @@ mcp_resolve_status_t mcp_tools_resolve(const cJSON *params, gw_message_t *msg,
             return MCP_RESOLVE_ALLOWLIST_DENIED;
         }
 
-        const device_capability_t *target = NULL;
-        for (size_t i = 0; i < cap.count; i++) {
-            if (strcmp(cap.items[i].command, binding.command) == 0) {
-                target = &cap.items[i];
+        const device_schema_tool_t *target = NULL;
+        for (size_t i = 0; i < cap.tool_count; i++) {
+            if (strcmp(cap.tools[i].command, binding.command) == 0) {
+                target = &cap.tools[i];
                 break;
             }
         }
@@ -400,7 +400,7 @@ mcp_resolve_status_t mcp_tools_resolve(const cJSON *params, gw_message_t *msg,
 
         // Dynamic argument normalization (§33): map value → int_value/bool_value.
         const cJSON *value_item = cJSON_GetObjectItemCaseSensitive(source, "value");
-        if (target->value_type == DEVICE_CAP_VALUE_BOOL) {
+        if (target->value_type == 1 /* BOOL */) {
             if (value_item != NULL && cJSON_IsBool(value_item)) {
                 msg->has_bool_value = true;
                 msg->bool_value = cJSON_IsTrue(value_item);
@@ -408,7 +408,7 @@ mcp_resolve_status_t mcp_tools_resolve(const cJSON *params, gw_message_t *msg,
                 *error = (mcp_rpc_error_t){-32602, "value must be a boolean"};
                 return MCP_RESOLVE_INVALID;
             }
-        } else if (target->value_type == DEVICE_CAP_VALUE_INT) {
+        } else if (target->value_type == 2 /* INT */) {
             if (value_item != NULL && cJSON_IsNumber(value_item)) {
                 msg->has_int_value = true;
                 msg->int_value = value_item->valueint;
@@ -417,27 +417,27 @@ mcp_resolve_status_t mcp_tools_resolve(const cJSON *params, gw_message_t *msg,
                 return MCP_RESOLVE_INVALID;
             }
         }
-        // DEVICE_CAP_VALUE_NONE: no value argument expected.
+        // VALUE_NONE (0): no value argument expected.
 
         // Validate arguments (§34 — defense in depth).
-        device_capability_t validated_cap;
-        device_cap_validation_t val =
-            device_capabilities_validate_command(msg, &validated_cap);
-        if (val == DEVICE_CAP_VALID_UNKNOWN) {
+        device_schema_tool_t validated_tool;
+        device_schema_validation_t val =
+            device_schema_validate_command(msg, &validated_tool);
+        if (val == DEVICE_SCHEMA_VALID_UNKNOWN) {
             snprintf(denial_text, denial_len,
                      "Device is currently unavailable");
             *error = (mcp_rpc_error_t){MCP_ERR_DEVICE_UNAVAILABLE,
                                        "device unavailable"};
             return MCP_RESOLVE_ALLOWLIST_DENIED;
         }
-        if (val == DEVICE_CAP_VALID_UNSUPPORTED_COMMAND) {
+        if (val == DEVICE_SCHEMA_VALID_UNSUPPORTED_COMMAND) {
             snprintf(denial_text, denial_len,
                      "Tool capability changed and requires review");
             *error = (mcp_rpc_error_t){MCP_ERR_CAPABILITY_UNKNOWN,
                                        "command not supported"};
             return MCP_RESOLVE_ALLOWLIST_DENIED;
         }
-        if (val == DEVICE_CAP_VALID_ARGUMENT) {
+        if (val == DEVICE_SCHEMA_VALID_ARGUMENT) {
             *error = (mcp_rpc_error_t){-32602, "invalid argument"};
             snprintf(denial_text, denial_len,
                      "Invalid argument for command '%s'", binding.command);

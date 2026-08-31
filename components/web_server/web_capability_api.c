@@ -8,7 +8,7 @@
 #include "esp_log.h"
 
 #include "command_dispatcher.h"
-#include "device_capabilities.h"
+#include "device_schema.h"
 #include "ble_central.h"
 #include "web_http.h"
 
@@ -53,8 +53,8 @@ static esp_err_t capabilities_refresh_handler(httpd_req_t *request)
     }
 
     /* Preflight: device exists? */
-    device_capability_snapshot_t snapshot;
-    esp_err_t snapshot_error = device_capabilities_get(device_id, &snapshot);
+    device_schema_snapshot_t snapshot;
+    esp_err_t snapshot_error = device_schema_get(device_id, &snapshot);
     if (snapshot_error == ESP_ERR_NOT_FOUND) {
         cJSON_Delete(json);
         return web_send_api_error_code(request, "404 Not Found",
@@ -74,7 +74,7 @@ static esp_err_t capabilities_refresh_handler(httpd_req_t *request)
     }
 
     uint32_t generation = 0;
-    esp_err_t error = device_capabilities_refresh(device_id, &generation);
+    esp_err_t error = device_schema_refresh(device_id, &generation);
     cJSON_Delete(json);
     if (error == ESP_ERR_NOT_FOUND) {
         return web_send_api_error_code(request, "404 Not Found",

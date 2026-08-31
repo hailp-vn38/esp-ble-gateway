@@ -4,7 +4,7 @@
 
 #include "mcp_tool_exposure_internal.h"
 
-void mcp_tool_digest_compute(const device_capability_t *cap,
+void mcp_tool_digest_compute(const device_schema_tool_t *cap,
                              uint8_t out[MCP_CAPABILITY_DIGEST_LEN])
 {
     psa_hash_operation_t op = PSA_HASH_OPERATION_INIT;

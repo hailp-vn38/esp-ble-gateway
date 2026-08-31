@@ -13,7 +13,7 @@
 #endif
 
 #include "device_store.h"
-#include "device_capabilities.h"
+#include "device_schema.h"
 #include "memory_policy.h"
 #include "mcp_tool_exposure.h"
 #include "mcp_tool_exposure_internal.h"
@@ -164,8 +164,8 @@ static void on_capability_committed(const char *device_id, uint32_t revision,
 
 static void reconcile_device(const char *device_id)
 {
-    device_capability_snapshot_t cap;
-    esp_err_t cap_err = device_capabilities_get(device_id, &cap);
+    device_schema_snapshot_t cap;
+    esp_err_t cap_err = device_schema_get(device_id, &cap);
 
     /* Iterate persisted records for this device. */
     for (size_t i = s_persisted_count; i > 0; ) {
@@ -173,7 +173,7 @@ static void reconcile_device(const char *device_id)
         mcp_exposure_persisted_record_t *rec = &s_persisted[i];
         if (strcmp(rec->device_id, device_id) != 0) continue;
 
-        if (cap_err != ESP_OK || !cap.has_committed || cap.count == 0) {
+        if (cap_err != ESP_OK || !cap.has_committed || cap.tool_count == 0) {
             /* Device or capability missing. */
             if (rec->state == MCP_EXPOSURE_ENABLED) {
                 rec->state = MCP_EXPOSURE_NEEDS_REVIEW;
@@ -191,11 +191,11 @@ static void reconcile_device(const char *device_id)
 
         /* Find matching capability command. */
         bool found = false;
-        for (size_t c = 0; c < cap.count; c++) {
-            if (strcmp(cap.items[c].command, rec->command) == 0) {
+        for (size_t c = 0; c < cap.tool_count; c++) {
+            if (strcmp(cap.tools[c].command, rec->command) == 0) {
                 found = true;
                 uint8_t digest[MCP_CAPABILITY_DIGEST_LEN];
-                mcp_tool_digest_compute(&cap.items[c], digest);
+                mcp_tool_digest_compute(&cap.tools[c], digest);
 
                 if (!mcp_tool_digest_match(digest, rec->capability_digest)) {
                     /* Semantic digest changed. */
@@ -309,9 +309,9 @@ static void boot_reconcile(void)
         }
 
         /* Check capability snapshot exists. */
-        device_capability_snapshot_t cap;
-        if (device_capabilities_get(rec->device_id, &cap) != ESP_OK ||
-            !cap.has_committed || cap.count == 0) {
+        device_schema_snapshot_t cap;
+        if (device_schema_get(rec->device_id, &cap) != ESP_OK ||
+            !cap.has_committed || cap.tool_count == 0) {
             rec->state = MCP_EXPOSURE_NEEDS_REVIEW;
             rec->reason = MCP_EXPOSURE_REASON_DEVICE_MISSING;
             continue;
@@ -319,11 +319,11 @@ static void boot_reconcile(void)
 
         /* Check command exists and digest matches. */
         bool cmd_found = false;
-        for (size_t c = 0; c < cap.count; c++) {
-            if (strcmp(cap.items[c].command, rec->command) == 0) {
+        for (size_t c = 0; c < cap.tool_count; c++) {
+            if (strcmp(cap.tools[c].command, rec->command) == 0) {
                 cmd_found = true;
                 uint8_t digest[MCP_CAPABILITY_DIGEST_LEN];
-                mcp_tool_digest_compute(&cap.items[c], digest);
+                mcp_tool_digest_compute(&cap.tools[c], digest);
 
                 bool digest_matches =
                     mcp_tool_digest_match(digest, rec->capability_digest);
@@ -337,8 +337,8 @@ static void boot_reconcile(void)
                         strlcpy(binding.tool_name, tool_name, sizeof(binding.tool_name));
                         strlcpy(binding.device_id, rec->device_id, sizeof(binding.device_id));
                         strlcpy(binding.command, rec->command, sizeof(binding.command));
-                        memcpy(&binding.capability, &cap.items[c],
-                               sizeof(device_capability_t));
+                        memcpy(&binding.capability, &cap.tools[c],
+                               sizeof(device_schema_tool_t));
                         if (mcp_tool_catalog_add(&binding) == ESP_OK) {
                             add_enabled_locked(tool_name, rec->device_id,
                                                rec->command,
@@ -454,7 +454,7 @@ esp_err_t mcp_tool_exposure_init(void)
     boot_reconcile();
 
     /* Register capability commit listener. */
-    err = device_capabilities_register_commit_listener(
+    err = device_schema_register_commit_listener(
         on_capability_committed, NULL);
     if (err != ESP_OK) {
         ESP_LOGW(TAG, "Failed to register commit listener: %s",
@@ -485,9 +485,9 @@ esp_err_t mcp_tool_exposure_enable(
     }
 
     /* Check committed capability snapshot. */
-    device_capability_snapshot_t cap;
-    if (device_capabilities_get(device_id, &cap) != ESP_OK ||
-        !cap.has_committed || cap.count == 0) {
+    device_schema_snapshot_t cap;
+    if (device_schema_get(device_id, &cap) != ESP_OK ||
+        !cap.has_committed || cap.tool_count == 0) {
         xSemaphoreGive(s_mutex);
         ESP_LOGW(TAG, "Cannot enable: no committed capabilities for %s",
                  device_id);
@@ -495,10 +495,10 @@ esp_err_t mcp_tool_exposure_enable(
     }
 
     /* Find matching capability. */
-    const device_capability_t *target = NULL;
-    for (size_t i = 0; i < cap.count; i++) {
-        if (strcmp(cap.items[i].command, command) == 0) {
-            target = &cap.items[i];
+    const device_schema_tool_t *target = NULL;
+    for (size_t i = 0; i < cap.tool_count; i++) {
+        if (strcmp(cap.tools[i].command, command) == 0) {
+            target = &cap.tools[i];
             break;
         }
     }
@@ -508,7 +508,7 @@ esp_err_t mcp_tool_exposure_enable(
     }
 
     /* Destructive policy check. */
-    if ((target->flags & DEVICE_CAP_FLAG_DESTRUCTIVE) != 0) {
+    if ((target->flags & DEVICE_SCHEMA_FLAG_DESTRUCTIVE) != 0) {
         if (!CONFIG_MCP_DYNAMIC_ALLOW_DESTRUCTIVE) {
             xSemaphoreGive(s_mutex);
             ESP_LOGW(TAG, "Destructive command '%s' blocked by policy",
@@ -586,7 +586,7 @@ esp_err_t mcp_tool_exposure_enable(
     strlcpy(binding.tool_name, tool_name, sizeof(binding.tool_name));
     strlcpy(binding.device_id, device_id, sizeof(binding.device_id));
     strlcpy(binding.command, command, sizeof(binding.command));
-    memcpy(&binding.capability, target, sizeof(device_capability_t));
+    memcpy(&binding.capability, target, sizeof(device_schema_tool_t));
     mcp_tool_catalog_add(&binding);
 
     xSemaphoreGive(s_mutex);
@@ -760,8 +760,8 @@ esp_err_t mcp_tool_exposure_refresh_device_name(const char *device_id)
         return ESP_ERR_NOT_FOUND;
     }
 
-    device_capability_snapshot_t cap;
-    if (device_capabilities_get(device_id, &cap) != ESP_OK ||
+    device_schema_snapshot_t cap;
+    if (device_schema_get(device_id, &cap) != ESP_OK ||
         !cap.has_committed) {
         return ESP_ERR_INVALID_STATE;
     }
@@ -781,8 +781,8 @@ esp_err_t mcp_tool_exposure_refresh_device_name(const char *device_id)
                                             desired, sizeof(desired));
         if (validation != ESP_OK) break;
         bool command_found = false;
-        for (size_t c = 0; c < cap.count; c++) {
-            if (strcmp(cap.items[c].command, s_enabled[i].command) == 0) {
+        for (size_t c = 0; c < cap.tool_count; c++) {
+            if (strcmp(cap.tools[c].command, s_enabled[i].command) == 0) {
                 command_found = true;
                 break;
             }
@@ -830,10 +830,10 @@ esp_err_t mcp_tool_exposure_refresh_device_name(const char *device_id)
                                desired, sizeof(desired));
         if (strcmp(desired, enabled->tool_name) == 0) continue;
 
-        const device_capability_t *target = NULL;
-        for (size_t c = 0; c < cap.count; c++) {
-            if (strcmp(cap.items[c].command, enabled->command) == 0) {
-                target = &cap.items[c];
+        const device_schema_tool_t *target = NULL;
+        for (size_t c = 0; c < cap.tool_count; c++) {
+            if (strcmp(cap.tools[c].command, enabled->command) == 0) {
+                target = &cap.tools[c];
                 break;
             }
         }
@@ -849,7 +849,7 @@ esp_err_t mcp_tool_exposure_refresh_device_name(const char *device_id)
         strlcpy(binding.device_id, enabled->device_id,
                 sizeof(binding.device_id));
         strlcpy(binding.command, enabled->command, sizeof(binding.command));
-        memcpy(&binding.capability, target, sizeof(binding.capability));
+        memcpy(&binding.capability, target, sizeof(device_schema_tool_t));
 
         mcp_tool_catalog_remove(previous);
         result = mcp_tool_catalog_add(&binding);

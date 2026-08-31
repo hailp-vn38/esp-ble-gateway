@@ -72,17 +72,10 @@ static int fill_device_message(const cJSON *json, gw_message_t *message,
         if (name == NULL) return -1;
         strlcpy(message->name, name, sizeof(message->name));
     }
-    if (cJSON_GetObjectItemCaseSensitive(json, "type") != NULL) {
-        const char *type = web_get_json_string(
-            json, "type", sizeof(message->device_type), true);
-        if (type == NULL) return -1;
-        strlcpy(message->device_type, type, sizeof(message->device_type));
-    }
+    // "type" is no longer part of the device API: protocol v4 messages
+    // carry no device-level type (plan §5/§19).
     if (require_metadata && message->name[0] == '\0') {
         strlcpy(message->name, message->device_id, sizeof(message->name));
-    }
-    if (require_metadata && message->device_type[0] == '\0') {
-        strlcpy(message->device_type, "generic", sizeof(message->device_type));
     }
 
     if (cJSON_GetObjectItemCaseSensitive(json, "ble_addr") != NULL) {

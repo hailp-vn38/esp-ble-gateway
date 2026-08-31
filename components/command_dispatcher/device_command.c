@@ -9,7 +9,7 @@
 #include "command_dispatcher.h"
 #include "command_dispatcher_internal.h"
 #include "device_request_manager.h"
-#include "device_capabilities.h"
+#include "device_schema.h"
 
 static const char *TAG = "dispatcher";
 
@@ -47,16 +47,16 @@ void device_command_handle(const gw_message_t *msg, dispatch_result_t *result)
 {
     // Boundary validation for device_id/command presence already ran in
     // command_dispatcher_handle(); only transport readiness is checked here.
-    device_cap_validation_t validation =
-        device_capabilities_validate_command(msg, NULL);
-    if (validation == DEVICE_CAP_VALID_UNSUPPORTED_COMMAND) {
+    device_schema_validation_t validation =
+        device_schema_validate_command(msg, NULL);
+    if (validation == DEVICE_SCHEMA_VALID_UNSUPPORTED_COMMAND) {
         command_dispatcher_set_text_result(
             result, DISPATCH_STATUS_UNSUPPORTED_COMMAND,
             "Device %s does not advertise command '%s'", msg->device_id,
             msg->command);
         return;
     }
-    if (validation == DEVICE_CAP_VALID_ARGUMENT) {
+    if (validation == DEVICE_SCHEMA_VALID_ARGUMENT) {
         command_dispatcher_set_text_result(
             result, DISPATCH_STATUS_INVALID_COMMAND_ARGUMENT,
             "Invalid argument for command '%s'", msg->command);
@@ -84,12 +84,8 @@ void device_command_handle(const gw_message_t *msg, dispatch_result_t *result)
     // The caller's message is immutable: correlation metadata belongs to the
     // dispatcher, so a local wire copy carries the freshly assigned request_id.
     gw_message_t wire_msg = *msg;
-    // Devices without a committed capability snapshot may still run the v2
-    // firmware. Keep ordinary commands on v2 until discovery proves v3;
-    // describe_capabilities itself and commands validated from a snapshot use
-    // v3. This preserves the pre-capability wire contract for legacy peers.
-    wire_msg.protocol_version =
-        validation == DEVICE_CAP_VALID_UNKNOWN ? 2 : GW_PROTOCOL_VERSION;
+    // Strict v4: every outbound command advertises the current protocol.
+    wire_msg.protocol_version = GW_PROTOCOL_VERSION;
     wire_msg.request_id = pending->request_id;
     wire_msg.has_request_id = 1;
 
