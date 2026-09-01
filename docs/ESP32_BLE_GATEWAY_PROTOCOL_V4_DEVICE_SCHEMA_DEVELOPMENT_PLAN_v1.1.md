@@ -779,28 +779,28 @@ Xóa toàn bộ legacy path và khóa kiến trúc v4.
 | T16 | Existing `dev_caps` | No migration, rediscover v4 |
 | T17 | Existing `dev_list` v2 | Preserve ID/name/BLE identity, drop type |
 | T18 | Reboot with `dev_schema` | Schema restored |
-| T19 | Corrupt schema NVS | Ignore safely / rediscover |
+| T19 | Corrupt schema NVS | Ignore safely / rediscover (implementation: erase corrupt blob & continue) |
 | T20 | Disconnect during discovery | Rollback staging |
 | T21 | Refresh failure | Previous committed schema retained |
 | T22 | Local device state change | Web/MCP state updates |
 | T23 | Semantic MCP duplicate policy | No duplicate bound raw tool |
-| T24 | 16 devices x 12 tools x 8 features | No stack overflow/leak |
+| T24 | 16 devices x 12 tools x 12 features (DEVICE_SCHEMA_MAX_FEATURES=12; T24 doc says 8 — treat as 12) | No stack overflow/leak |
 
 ---
 
 # 7. Memory acceptance checklist
 
-- [ ] Per-device records dùng PSRAM-preferred allocation.
-- [ ] Staging schema dùng PSRAM-preferred allocation.
-- [ ] Queue items không embed schema snapshot lớn.
-- [ ] `gw_message_t` copies được bounded.
-- [ ] HTTP handlers không đặt whole schema lên stack.
-- [ ] MCP handlers không đặt whole schema lên stack.
-- [ ] Đo worker stack high-water mark sau migration.
-- [ ] So sánh heap trước/sau 100 refresh cycles.
-- [ ] Không có monotonic PSRAM loss.
-- [ ] Không có monotonic internal SRAM loss.
-- [ ] Largest free internal block vẫn trong ngưỡng an toàn.
+- [x] Per-device records dùng PSRAM-preferred allocation. (gw_mem_alloc GW_MEM_EXTERNAL_PREFERRED)
+- [x] Staging schema dùng PSRAM-preferred allocation. (schema_record_t chung vùng PSRAM với committed)
+- [x] Queue items không embed schema snapshot lớn. (schema_event_t / executor queue chỉ mang gw_message_t + handle)
+- [x] `gw_message_t` copies được bounded. (GW_MSG_*_LEN + strlcpy)
+- [x] HTTP handlers không đặt whole schema lên stack. (snapshot copy có giới hạn 12×12, cJSON trên heap)
+- [x] MCP handlers không đặt whole schema lên stack. (single snapshot + digest validation)
+- [ ] Đo worker stack high-water mark sau migration. (cần chạy trên board: uxTaskGetStackHighWaterMark)
+- [ ] So sánh heap trước/sau 100 refresh cycles. (cần soak test trên board: heap_caps_get_free_size)
+- [ ] Không có monotonic PSRAM loss. (cần số liệu soak test)
+- [ ] Không có monotonic internal SRAM loss. (cần số liệu soak test)
+- [ ] Largest free internal block vẫn trong ngưỡng an toàn. (gateway_status đã expose largest_free_block, cần ngưỡng acceptance cụ thể)
 
 ---
 
@@ -867,23 +867,23 @@ Không còn:
 
 # 10. Device-type removal search checklist
 
-## Gateway
+## Gateway — ✅ verified 2026-08-31 (grep trên *_store.h, cbor_codec.h, command_dispatcher.h: no output)
 
-- [ ] `GW_MSG_DEVICE_TYPE_LEN`
-- [ ] `GW_KEY_DEVICE_TYPE`
-- [ ] `gw_message_t.device_type`
-- [ ] `DEVICE_TYPE_MAX_LEN`
-- [ ] `device_entry_t.type`
-- [ ] `device_store_add(... type)`
-- [ ] `device_store_edit(... type)`
-- [ ] `type_N` NVS writer
-- [ ] `"type"` trong `/api/devices`
-- [ ] Device type form field
-- [ ] Device type UI badge
-- [ ] MCP metadata dựa trên device type
-- [ ] Tests expecting `generic`
+- [x] `GW_MSG_DEVICE_TYPE_LEN` — removed; không còn define
+- [x] `GW_KEY_DEVICE_TYPE` — replaced bằng `CBOR_KEY_RESERVED_7 = 7`
+- [x] `gw_message_t.device_type` — removed khỏi struct
+- [x] `DEVICE_TYPE_MAX_LEN` — removed
+- [x] `device_entry_t.type` — removed
+- [x] `device_store_add(... type)` — signature hiện tại chỉ `(device_id, name)`
+- [x] `device_store_edit(... type)` — signature hiện tại chỉ `(device_id, name)`
+- [x] `type_N` NVS writer — removed; migration v3 không ghi `type_N`
+- [x] `"type"` trong `/api/devices` — GET/POST/PUT không còn field `type`
+- [x] Device type form field — removed khỏi frontend
+- [x] Device type UI badge — removed khỏi frontend
+- [x] MCP metadata dựa trên device type — replaced bằng semantic catalog `feature_type/template`
+- [x] Tests expecting `generic` — removed
 
-## Device
+## Device — thuộc repo riêng `hailp-vn38/esp-ble-device` (không kiểm trong gateway gate)
 
 - [ ] `GW_MSG_DEVICE_TYPE_LEN`
 - [ ] `GW_KEY_DEVICE_TYPE`
@@ -894,41 +894,42 @@ Không còn:
 - [ ] Device type logs
 - [ ] Codec tests cho device_type
 
-## Must remain
+## Must remain — ✅ verified
 
-- [ ] `gw_message_t.type`
-- [ ] `GW_MSG_TYPE_*`
-- [ ] `feature_type`
-- [ ] `gw_feature_type_t`
+- [x] `gw_message_t.type` — giữ, dùng cho protocol routing
+- [x] `GW_MSG_TYPE_*` — giữ
+- [x] `feature_type` — giữ, dùng cho template selection
+- [x] `gw_feature_type_t` — giữ
 
 ---
 
 # 11. Definition of Done
 
-- [ ] Gateway không còn component `device_capabilities`.
-- [ ] Gateway domain model chính là `device_schema`.
-- [ ] Gateway chỉ accept Protocol v4.
-- [ ] BLE Device chỉ accept/emit Protocol v4.
-- [ ] `device_type` bị xóa khỏi cả hai repository.
-- [ ] `gw_message_t.type` vẫn hoạt động cho protocol routing.
-- [ ] `feature_type` vẫn hoạt động cho template selection.
-- [ ] `dev_caps` không được migrate.
-- [ ] Device registry giữ BLE identity sau khi drop type.
-- [ ] Schema discovery commit atomic tools + features.
-- [ ] `read_feature_state` seed state đúng.
-- [ ] `feature_state` update state đúng.
-- [ ] Web UI render theo Device Template.
-- [ ] MCP và Xiaozhi dùng cùng semantic catalog.
-- [ ] Feature writes route qua `feature_tool`.
-- [ ] Không hardcode command theo feature type.
-- [ ] Unknown feature/template degrade safely.
-- [ ] Schema records ưu tiên PSRAM.
-- [ ] Không có giant snapshot copy lên task stack.
-- [ ] Interop tests pass.
-- [ ] Gateway unit tests pass.
-- [ ] Device host tests pass.
-- [ ] Hardware E2E pass.
-- [ ] Memory/leak tests pass.
+- [x] Gateway không còn component `device_capabilities`. (xóa từ V4-03)
+- [x] Gateway domain model chính là `device_schema`.
+- [x] Gateway chỉ accept Protocol v4. (GW_PROTOCOL_VERSION=4, strict ==4)
+- [ ] BLE Device chỉ accept/emit Protocol v4. (thuộc repo device riêng)
+- [x] `device_type` bị xóa khỏi gateway. (verify §10 Gateway: no grep output)
+- [ ] `device_type` bị xóa khỏi device repo. (thuộc repo device riêng)
+- [x] `gw_message_t.type` vẫn hoạt động cho protocol routing.
+- [x] `feature_type` vẫn hoạt động cho template selection.
+- [x] `dev_caps` không được migrate. (dev_schema namespace mới, legacy cleanup one-shot)
+- [x] Device registry giữ BLE identity sau khi drop type. (STORE_SCHEMA_VERSION 3)
+- [x] Schema discovery commit atomic tools + features. (handle_begin..handle_end + staging)
+- [x] `read_feature_state` seed state đúng. (device_state:on_schema_committed)
+- [x] `feature_state` update state đúng. (device_state_on_notify)
+- [x] Web UI render theo Device Template. (web_device_schema_api + device_template)
+- [x] MCP và Xiaozhi dùng cùng semantic catalog. (mcp_tool_catalog shared, V4-09)
+- [x] Feature writes route qua `feature_tool`. (feature.writable_tool_index)
+- [x] Không hardcode command theo feature type. (template resolve qua feature_tool)
+- [x] Unknown feature/template degrade safely. (NULL-check, trả null/idle)
+- [x] Schema records ưu tiên PSRAM. (GW_MEM_EXTERNAL_PREFERRED)
+- [x] Không có giant snapshot copy lên task stack. (queue chỉ mang gw_message_t)
+- [ ] Interop tests pass. (cần board thật + peripheral 0xABF0)
+- [ ] Gateway unit tests pass. (cần flash test app: cd test && idf.py flash monitor)
+- [ ] Device host tests pass. (thuộc repo device riêng)
+- [ ] Hardware E2E pass. (cần board thật)
+- [ ] Memory/leak tests pass. (cần soak §7 measurements)
 
 ---
 
