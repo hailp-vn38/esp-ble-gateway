@@ -16,7 +16,7 @@ esp_err_t web_gateway_api_register(httpd_handle_t server);
 
 esp_err_t web_device_api_register(httpd_handle_t server);
 esp_err_t web_command_api_register(httpd_handle_t server);
-esp_err_t web_capability_api_register(httpd_handle_t server);
+esp_err_t web_device_schema_api_register(httpd_handle_t server);
 
 esp_err_t web_system_api_register_gateway(httpd_handle_t server);
 esp_err_t web_system_api_register_provisioning(httpd_handle_t server);

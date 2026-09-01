@@ -14,6 +14,15 @@ const i18n = {
             'device_detail.capability_stale': 'Refresh needed',
             'device_detail.capability_error': 'Unavailable',
             'device_detail.capability_unknown': 'Unknown',
+            'device_detail.features': 'Features',
+            'device_detail.features_desc': 'Semantic features detected from this device\'s schema.',
+            'device_detail.schema_ready': 'Schema ready',
+            'device_detail.schema_loading': 'Discovering',
+            'device_detail.schema_stale': 'Refresh needed',
+            'device_detail.schema_error': 'Unavailable',
+            'device_detail.schema_unknown': 'Unknown',
+            'device_detail.schema_updated': 'Schema updated',
+            'device_detail.loading_features': 'Loading features…',
             'device_detail.controls': 'Device Controls',
             'device_detail.controls_desc': 'Available functions reported by this device.',
             'device_detail.refresh': 'Refresh',
@@ -35,6 +44,14 @@ const i18n = {
             'device_detail.no_capabilities_desc': 'The gateway has not received a command list from this device.',
             'device_detail.refresh_capabilities': 'Refresh capabilities',
             'device_detail.capabilities_load_error': 'Could not load capabilities',
+            'device_detail.no_features': 'No features detected',
+            'device_detail.no_features_desc': 'The gateway has not received a schema from this device.',
+            'device_detail.refresh_schema': 'Refresh schema',
+            'device_detail.schema_load_error': 'Could not load device schema',
+            'device_detail.unsupported': 'Unsupported',
+            'device_detail.no_write_tool': 'No write tool available',
+            'device_detail.turn_on': 'Turn On',
+            'device_detail.turn_off': 'Turn Off',
             'device_detail.retry': 'Try again',
             'device_detail.command_completed': 'Command completed',
             'device_detail.mcp_tools': 'MCP Tools',
@@ -192,6 +209,15 @@ const i18n = {
             'device_detail.capability_stale': 'Cần làm mới',
             'device_detail.capability_error': 'Không khả dụng',
             'device_detail.capability_unknown': 'Chưa xác định',
+            'device_detail.features': 'Tính năng',
+            'device_detail.features_desc': 'Các tính năng ngữ nghĩa được phát hiện từ schema của thiết bị.',
+            'device_detail.schema_ready': 'Schema sẵn sàng',
+            'device_detail.schema_loading': 'Đang khám phá',
+            'device_detail.schema_stale': 'Cần làm mới',
+            'device_detail.schema_error': 'Không khả dụng',
+            'device_detail.schema_unknown': 'Chưa xác định',
+            'device_detail.schema_updated': 'Schema đã cập nhật',
+            'device_detail.loading_features': 'Đang tải tính năng…',
             'device_detail.controls': 'Điều khiển thiết bị',
             'device_detail.controls_desc': 'Các chức năng được thiết bị công bố.',
             'device_detail.refresh': 'Làm mới',
@@ -213,6 +239,14 @@ const i18n = {
             'device_detail.no_capabilities_desc': 'Gateway chưa nhận được danh sách command từ thiết bị.',
             'device_detail.refresh_capabilities': 'Làm mới capabilities',
             'device_detail.capabilities_load_error': 'Không thể tải capabilities',
+            'device_detail.no_features': 'Không phát hiện tính năng nào',
+            'device_detail.no_features_desc': 'Gateway chưa nhận được schema từ thiết bị.',
+            'device_detail.refresh_schema': 'Làm mới schema',
+            'device_detail.schema_load_error': 'Không thể tải schema thiết bị',
+            'device_detail.unsupported': 'Không hỗ trợ',
+            'device_detail.no_write_tool': 'Không có tool ghi',
+            'device_detail.turn_on': 'Bật',
+            'device_detail.turn_off': 'Tắt',
             'device_detail.retry': 'Thử lại',
             'device_detail.command_completed': 'Command đã hoàn tất',
             'device_detail.mcp_tools': 'MCP Tools',
@@ -367,19 +401,19 @@ const i18n = {
         localStorage.setItem('lang', lang);
         this.applyTranslations();
         if (state.selectedDeviceDetail) {
-            const capabilityState = devices.currentCapabilityState;
+            const schemaState = devices.currentSchemaState;
             devices.renderConnectionState(state.selectedDeviceDetail);
-            devices.renderCapabilityState(capabilityState);
-            if (capabilityState === 'loading') {
-                const controls = document.getElementById('capability-controls');
-                controls.replaceChildren();
-                devices.renderCapabilitiesLoading(controls);
-            } else if (capabilityState === 'error') {
-                void devices.loadCapabilities(state.selectedDeviceDetail);
+            devices.renderSchemaState(schemaState);
+            if (schemaState === 'loading') {
+                const container = document.getElementById('feature-cards');
+                container.replaceChildren();
+                devices.renderFeaturesLoading(container);
+            } else if (schemaState === 'error') {
+                void devices.loadSchema(state.selectedDeviceDetail);
             } else {
-                devices.renderCapabilities(devices.currentCapabilities, state.selectedDeviceDetail);
+                devices.renderFeatures(devices.currentFeatures, devices.currentTools, state.selectedDeviceDetail);
             }
-            if (capabilityState !== 'error') {
+            if (schemaState !== 'error') {
                 void mcpTools.loadDevice(state.selectedDeviceDetail.id);
             }
         }

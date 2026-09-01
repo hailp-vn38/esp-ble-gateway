@@ -21,9 +21,9 @@ esp_err_t web_gateway_api_register(httpd_handle_t server)
         ESP_LOGE(TAG, "command API: %s", esp_err_to_name(err));
         return err;
     }
-    err = web_capability_api_register(server);
+    err = web_device_schema_api_register(server);
     if (err != ESP_OK) {
-        ESP_LOGE(TAG, "capability API: %s", esp_err_to_name(err));
+        ESP_LOGE(TAG, "device schema API: %s", esp_err_to_name(err));
         return err;
     }
     err = web_exposure_api_register(server);

@@ -60,7 +60,7 @@ idf_component_register(
          "web_gateway_api.c"
          "web_device_api.c"
          "web_command_api.c"
-         "web_capability_api.c"
+         "web_device_schema_api.c"
          "web_exposure_api.c"
          "web_system_api.c"
          "web_wifi_api.c"
@@ -70,8 +70,8 @@ idf_component_register(
     INCLUDE_DIRS "include"
     REQUIRES esp_http_server cbor_codec command_dispatcher command_executor
              device_store gateway_status wifi_provisioning
-             ble_central device_schema mcp_tool_exposure
-             mcp_ws_bridge
+             ble_central device_schema device_template device_state
+             mcp_tool_exposure mcp_ws_bridge
              espressif__cjson esp_system esp_timer freertos
              esp_wifi esp_app_format nvs_flash
     EMBED_FILES

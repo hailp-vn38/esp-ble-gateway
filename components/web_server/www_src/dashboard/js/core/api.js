@@ -70,11 +70,11 @@ const api = {
             })
         });
     },
-    getCapabilities(deviceId) {
-        return this.request(`/api/capabilities?device_id=${encodeURIComponent(deviceId)}`);
+    getDeviceSchema(deviceId) {
+        return this.request(`/api/devices/schema?device_id=${encodeURIComponent(deviceId)}`);
     },
-    refreshCapabilities(deviceId) {
-        return this.request('/api/capabilities/refresh', {
+    refreshDeviceSchema(deviceId) {
+        return this.request('/api/devices/schema/refresh', {
             method: 'POST',
             headers: {'Content-Type': 'application/json'},
             body: JSON.stringify({device_id: deviceId})

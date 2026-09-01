@@ -21,17 +21,17 @@
 
                 <div id="detail-summary" class="grid grid-cols-1 sm:grid-cols-2 gap-4">
                     <div class="bg-white p-4 rounded-xl border border-gray-200 shadow-sm"><p data-i18n="device_detail.connection" class="text-xs font-semibold uppercase tracking-wide text-gray-500">Connection</p><div id="detail-summary-connection" class="mt-2 text-sm font-semibold"></div></div>
-                    <div class="bg-white p-4 rounded-xl border border-gray-200 shadow-sm"><p data-i18n="device_detail.capabilities" class="text-xs font-semibold uppercase tracking-wide text-gray-500">Capabilities</p><div id="detail-summary-capabilities" class="mt-2 text-sm font-semibold"></div></div>
+                    <div class="bg-white p-4 rounded-xl border border-gray-200 shadow-sm"><p data-i18n="device_detail.features" class="text-xs font-semibold uppercase tracking-wide text-gray-500">Features</p><div id="detail-summary-schema" class="mt-2 text-sm font-semibold"></div></div>
                 </div>
 
                 <section id="device-controls-card" class="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
                     <div class="flex flex-col sm:flex-row sm:items-start justify-between gap-4 p-5 border-b border-gray-100">
-                        <div><h3 data-i18n="device_detail.controls" class="font-semibold text-gray-900">Device Controls</h3><p data-i18n="device_detail.controls_desc" class="text-xs text-gray-500 mt-1">Available functions reported by this device.</p></div>
-                        <button id="btn-refresh-capabilities" onclick="devices.refreshCapabilities()" class="inline-flex items-center justify-center px-3 py-2 bg-brand-50 text-brand-600 rounded-lg hover:bg-brand-100 transition-colors text-xs font-medium flex-shrink-0 disabled:opacity-50 disabled:cursor-not-allowed"><i class="ph ph-arrows-clockwise mr-1.5"></i><span data-i18n="device_detail.refresh">Refresh</span></button>
+                        <div><h3 data-i18n="device_detail.features" class="font-semibold text-gray-900">Features</h3><p data-i18n="device_detail.features_desc" class="text-xs text-gray-500 mt-1">Semantic features detected from this device's schema.</p></div>
+                        <button id="btn-refresh-schema" onclick="devices.refreshSchema()" class="inline-flex items-center justify-center px-3 py-2 bg-brand-50 text-brand-600 rounded-lg hover:bg-brand-100 transition-colors text-xs font-medium flex-shrink-0 disabled:opacity-50 disabled:cursor-not-allowed"><i class="ph ph-arrows-clockwise mr-1.5"></i><span data-i18n="device_detail.refresh">Refresh</span></button>
                     </div>
                     <div class="p-5">
-                        <div id="capability-offline-notice" class="hidden mb-4 rounded-lg border border-gray-200 bg-gray-50 p-4 text-sm text-gray-600"><p data-i18n="device_detail.offline_notice" class="font-medium text-gray-800">This device is currently offline.</p><p data-i18n="device_detail.offline_controls_desc" class="text-xs mt-1">Commands cannot run until the device reconnects.</p></div>
-                        <div id="capability-controls" class="space-y-3" aria-live="polite"></div>
+                        <div id="feature-offline-notice" class="hidden mb-4 rounded-lg border border-gray-200 bg-gray-50 p-4 text-sm text-gray-600"><p data-i18n="device_detail.offline_notice" class="font-medium text-gray-800">This device is currently offline.</p><p data-i18n="device_detail.offline_controls_desc" class="text-xs mt-1">Commands cannot run until the device reconnects.</p></div>
+                        <div id="feature-cards" class="space-y-3" aria-live="polite"></div>
                     </div>
                 </section>
 

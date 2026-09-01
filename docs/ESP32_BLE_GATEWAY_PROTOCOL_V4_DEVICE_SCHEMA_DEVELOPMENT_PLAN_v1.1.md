@@ -630,28 +630,28 @@ Web render theo semantic features thay vì capability list/device type.
 
 ### Checklist API
 
-- [ ] Remove/rename `list_device_capabilities`.
-- [ ] Add `get_device_schema`.
-- [ ] Add `refresh_device_schema` nếu cần.
-- [ ] `web_capability_api.c` -> `web_device_schema_api.c`.
-- [ ] API trả schema state.
-- [ ] API trả revision.
-- [ ] API trả `tools[]`.
-- [ ] API trả `features[]`.
-- [ ] API trả template id.
-- [ ] API trả current state/state_valid.
-- [ ] API không trả device type.
+- [x] Remove/rename `list_device_capabilities`.
+- [x] Add `get_device_schema`.
+- [x] Add `refresh_device_schema` nếu cần.
+- [x] `web_capability_api.c` -> `web_device_schema_api.c`.
+- [x] API trả schema state.
+- [x] API trả revision.
+- [x] API trả `tools[]`.
+- [x] API trả `features[]`.
+- [x] API trả template id.
+- [x] API trả current state/state_valid.
+- [x] API không trả device type.
 
 ### Checklist frontend
 
-- [ ] Device detail load schema API.
-- [ ] Render feature cards.
-- [ ] Implement `on_off_light.v1` toggle.
-- [ ] Toggle write qua semantic binding.
+- [x] Device detail load schema API.
+- [x] Render feature cards.
+- [x] Implement `on_off_light.v1` toggle.
+- [x] Toggle write qua semantic binding.
 - [ ] UI update sau ACK/event.
-- [ ] Unknown template hiển thị unsupported.
-- [ ] Có optional Advanced/Raw Tools section.
-- [ ] Feature-bound raw tool không duplicate mặc định.
+- [x] Unknown template hiển thị unsupported.
+- [x] Có optional Advanced/Raw Tools section.
+- [x] Feature-bound raw tool không duplicate mặc định.
 
 ### Checklist test
 
@@ -663,8 +663,8 @@ Web render theo semantic features thay vì capability list/device type.
 
 ### Exit criteria
 
-- [ ] Web UI dùng feature/template làm presentation source.
-- [ ] Không còn UI branch theo device type.
+- [x] Web UI dùng feature/template làm presentation source.
+- [x] Không còn UI branch theo device type.
 
 ---
 
