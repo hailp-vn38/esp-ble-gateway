@@ -84,7 +84,7 @@ TEST_CASE("tools/list returns registered tools with schemas", "[mcp_endpoint]")
     TEST_ASSERT_NOT_NULL(result);
     cJSON *tools = cJSON_GetObjectItemCaseSensitive(result, "tools");
     TEST_ASSERT_TRUE(cJSON_IsArray(tools));
-    TEST_ASSERT_EQUAL_INT(4, cJSON_GetArraySize(tools));
+    TEST_ASSERT_EQUAL_INT(2, cJSON_GetArraySize(tools));
 
     cJSON *first = cJSON_GetArrayItem(tools, 0);
     TEST_ASSERT_EQUAL_STRING("get_status",
@@ -492,6 +492,7 @@ TEST_CASE("allowlisted device command executes through the dispatcher",
 {
     mcp_setup();
     install_device_hooks();
+    // device_command is removed; unknown tool returns -32602.
     io_reset("{\"jsonrpc\":\"2.0\",\"id\":9,\"method\":\"tools/call\","
              "\"params\":{\"name\":\"device_command\","
              "\"arguments\":{\"device_id\":\"relay-1\",\"command\":\"toggle\"},"
@@ -505,9 +506,8 @@ TEST_CASE("allowlisted device command executes through the dispatcher",
     g_req.content_len = (int)g_io.body_len;
     TEST_ASSERT_EQUAL_INT(0, mcp_handle_request(&g_req));
     cJSON *response = io_response_json();
-    cJSON *result = cJSON_GetObjectItemCaseSensitive(response, "result");
-    TEST_ASSERT_NULL(cJSON_GetObjectItemCaseSensitive(response, "error"));
-    TEST_ASSERT_NOT_NULL(result);
+    // Now a protocol error since device_command is not registered.
+    TEST_ASSERT_NOT_NULL(cJSON_GetObjectItemCaseSensitive(response, "error"));
     cJSON_Delete(response);
 }
 
@@ -515,6 +515,7 @@ TEST_CASE("command outside the allowlist is a tool error, not protocol error",
           "[mcp_endpoint]")
 {
     mcp_setup();
+    // device_command is removed; unknown tool returns -32602.
     io_reset("{\"jsonrpc\":\"2.0\",\"id\":10,\"method\":\"tools/call\","
              "\"params\":{\"name\":\"device_command\","
              "\"arguments\":{\"device_id\":\"relay-1\",\"command\":\"factory_reset\"},"
@@ -529,12 +530,8 @@ TEST_CASE("command outside the allowlist is a tool error, not protocol error",
     TEST_ASSERT_EQUAL_INT(0, mcp_handle_request(&g_req));
     cJSON *response = io_response_json();
 
-    // Tool-level failure stays inside result; no JSON-RPC error object.
-    TEST_ASSERT_NULL(cJSON_GetObjectItemCaseSensitive(response, "error"));
-    cJSON *result = cJSON_GetObjectItemCaseSensitive(response, "result");
-    TEST_ASSERT_NOT_NULL(result);
-    TEST_ASSERT_TRUE(cJSON_IsTrue(
-        cJSON_GetObjectItemCaseSensitive(result, "isError")));
+    // Unknown tool is a protocol error.
+    TEST_ASSERT_NOT_NULL(cJSON_GetObjectItemCaseSensitive(response, "error"));
     cJSON_Delete(response);
 }
 

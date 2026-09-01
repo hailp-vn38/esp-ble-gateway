@@ -443,8 +443,8 @@ TEST_CASE("tools/list only contains control profile tools",
     TEST_ASSERT_NOT_NULL(tools);
     TEST_ASSERT_TRUE(cJSON_IsArray(tools));
 
-    // 4 control profile tools only
-    TEST_ASSERT_EQUAL_INT(4, cJSON_GetArraySize(tools));
+    // 2 control profile tools only (get_status + list_devices)
+    TEST_ASSERT_EQUAL_INT(2, cJSON_GetArraySize(tools));
 
     // No tool_names on wire (§12.9)
     TEST_ASSERT_NULL(cJSON_GetObjectItemCaseSensitive(result, "tool_names"));
