@@ -61,10 +61,11 @@ esp_err_t schema_persist_record(int index,
     if (error != ESP_OK) return error;
     char key[8];
     schema_nvs_key(index, key);
-    size_t blob_size = offsetof(persisted_schema_t, tools) +
-                       snapshot->tool_count * sizeof(persisted.tools[0]) +
-                       snapshot->feature_count * sizeof(persisted.features[0]);
-    error = nvs_set_blob(handle, key, &persisted, blob_size);
+    /* Always write the full struct so the on-disk layout matches the struct
+       layout.  A compact blob (header + N tools + M features) would misalign
+       when tool_count < MAX_TOOLS because features[] sits at a fixed offset
+       past MAX_TOOLS slots in the struct. */
+    error = nvs_set_blob(handle, key, &persisted, sizeof(persisted));
     if (error == ESP_OK) error = nvs_commit(handle);
     nvs_close(handle);
     return error;
@@ -97,11 +98,11 @@ void schema_load_persisted(schema_record_t *records)
             continue;
         }
         error = nvs_get_blob(handle, key, &persisted, &length);
-        size_t expected_length =
-            offsetof(persisted_schema_t, tools) +
-            persisted.tool_count * sizeof(persisted.tools[0]) +
-            persisted.feature_count * sizeof(persisted.features[0]);
-        if (error != ESP_OK || length != expected_length ||
+        /* Reject compact blobs — their features would land in the wrong
+           struct offset.  They are re-persisted as full-struct on next
+           discovery cycle. */
+        if (error != ESP_OK ||
+            length != sizeof(persisted_schema_t) ||
             persisted.schema_version != SCHEMA_STORE_SCHEMA_VERSION ||
             persisted.tool_count > DEVICE_SCHEMA_MAX_TOOLS ||
             persisted.feature_count > DEVICE_SCHEMA_MAX_FEATURES ||
@@ -162,4 +163,39 @@ esp_err_t schema_erase_nvs(int index)
     if (error == ESP_OK) error = nvs_commit(handle);
     nvs_close(handle);
     return error;
+}
+
+/* ── Legacy dev_caps cleanup ────────────────────────────────────────── */
+/* V4-04: Erase stale capability-v3 NVS entries.  Non-blocking: if the
+   old namespace doesn't exist or cleanup fails, log and continue. */
+
+#define LEGACY_CAPS_NAMESPACE "dev_caps"
+
+void schema_cleanup_legacy_caps(void)
+{
+    nvs_handle_t handle;
+    esp_err_t error = nvs_open(LEGACY_CAPS_NAMESPACE, NVS_READWRITE, &handle);
+    if (error == ESP_ERR_NVS_NOT_FOUND) return;
+    if (error != ESP_OK) {
+        ESP_LOGW(TAG, "Could not open legacy caps namespace: %s",
+                 esp_err_to_name(error));
+        return;
+    }
+    bool any_erased = false;
+    for (int i = 0; i < DEVICE_STORE_MAX_DEVICES; i++) {
+        char key[8];
+        snprintf(key, sizeof(key), "cap%02u", (unsigned)i);
+        esp_err_t err = nvs_erase_key(handle, key);
+        if (err == ESP_OK) {
+            any_erased = true;
+        } else if (err != ESP_ERR_NVS_NOT_FOUND) {
+            ESP_LOGW(TAG, "Could not erase legacy key %s: %s",
+                     key, esp_err_to_name(err));
+        }
+    }
+    if (any_erased) {
+        nvs_commit(handle);
+        ESP_LOGI(TAG, "Cleaned up legacy dev_caps namespace");
+    }
+    nvs_close(handle);
 }

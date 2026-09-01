@@ -10,6 +10,7 @@
 #include "cbor_codec.h"
 #include "device_schema.h"
 #include "device_store.h"
+#include "nvs.h"
 
 /* ── Helpers ────────────────────────────────────────────────────────── */
 
@@ -528,4 +529,148 @@ TEST_CASE("forget clears committed schema", "[device_schema]")
 
     TEST_ASSERT_EQUAL_INT(ESP_OK, device_schema_get("dev6", &snap));
     TEST_ASSERT_FALSE(snap.has_committed);
+}
+
+/* ── Persistence tests (V4-04) ──────────────────────────────────────── */
+
+/* Helper: commit a minimal schema for "dev7", then tear down in-memory
+   state.  On the next init, NVS should restore the committed schema. */
+static void commit_schema_for_dev7(void)
+{
+    reset_and_init();
+    device_store_add("dev7", "Persist7", "switch");
+    device_schema_set_submitter(test_submitter);
+    s_submit_called = false;
+
+    TEST_ASSERT_EQUAL_INT(ESP_OK, device_schema_on_ready("dev7"));
+    vTaskDelay(pdMS_TO_TICKS(200));
+
+    gw_message_t begin = make_begin("dev7", 700, 1, 1, 5);
+    TEST_ASSERT_TRUE(device_schema_on_notify("dev7", &begin));
+    vTaskDelay(pdMS_TO_TICKS(50));
+
+    gw_message_t tool0 = make_tool_item("dev7", 700, 0, "toggle", 0, 0,
+                                        0, 0, 0);
+    TEST_ASSERT_TRUE(device_schema_on_notify("dev7", &tool0));
+    vTaskDelay(pdMS_TO_TICKS(50));
+
+    gw_message_t feat0 = make_feature_item("dev7", 700, 1, "led_state",
+                                           GW_FEATURE_ON_OFF_LIGHT,
+                                           GW_PROP_ON_OFF, "toggle");
+    TEST_ASSERT_TRUE(device_schema_on_notify("dev7", &feat0));
+    vTaskDelay(pdMS_TO_TICKS(50));
+
+    gw_message_t end = make_end("dev7", 700, 1);
+    TEST_ASSERT_TRUE(device_schema_on_notify("dev7", &end));
+    vTaskDelay(pdMS_TO_TICKS(200));
+
+    complete_discovery();
+    vTaskDelay(pdMS_TO_TICKS(200));
+
+    device_schema_snapshot_t snap = {0};
+    TEST_ASSERT_EQUAL_INT(ESP_OK, device_schema_get("dev7", &snap));
+    TEST_ASSERT_TRUE(snap.has_committed);
+}
+
+TEST_CASE("reboot: valid dev_schema loaded from NVS", "[device_schema]")
+{
+    /* Commit schema, then reset in-memory only (simulates reboot). */
+    commit_schema_for_dev7();
+    device_schema_reset_for_test();
+
+    /* Re-init — should load from NVS. */
+    TEST_ASSERT_EQUAL_INT(ESP_OK, device_schema_init());
+
+    /* Device must be re-registered in device_store for load to succeed. */
+    device_store_add("dev7", "Persist7", "switch");
+
+    /* Re-init again so schema_load_persisted runs with device registered. */
+    device_schema_reset_for_test();
+    TEST_ASSERT_EQUAL_INT(ESP_OK, device_schema_init());
+
+    device_schema_snapshot_t snap = {0};
+    TEST_ASSERT_EQUAL_INT(ESP_OK, device_schema_get("dev7", &snap));
+    TEST_ASSERT_TRUE(snap.has_committed);
+    TEST_ASSERT_EQUAL_INT(DEVICE_SCHEMA_STATE_READY, snap.state);
+    TEST_ASSERT_EQUAL_INT(1, (int)snap.tool_count);
+    TEST_ASSERT_EQUAL_INT(1, (int)snap.feature_count);
+    TEST_ASSERT_EQUAL_INT(5, (int)snap.revision);
+    TEST_ASSERT_EQUAL_STRING("toggle", snap.tools[0].command);
+    TEST_ASSERT_EQUAL_STRING("led_state", snap.features[0].feature_id);
+}
+
+TEST_CASE("corrupt dev_schema blob ignored safely", "[device_schema]")
+{
+    /* Write garbage blob into dev_schema NVS. */
+    nvs_handle_t handle;
+    TEST_ASSERT_EQUAL_INT(ESP_OK,
+        nvs_open("dev_schema", NVS_READWRITE, &handle));
+    uint8_t garbage[64];
+    memset(garbage, 0xAA, sizeof(garbage));
+    TEST_ASSERT_EQUAL_INT(ESP_OK,
+        nvs_set_blob(handle, "sch00", garbage, sizeof(garbage)));
+    TEST_ASSERT_EQUAL_INT(ESP_OK, nvs_commit(handle));
+    nvs_close(handle);
+
+    /* Init must not crash — corrupt record is skipped. */
+    device_schema_reset_for_test();
+    TEST_ASSERT_EQUAL_INT(ESP_OK, device_schema_init());
+
+    device_schema_snapshot_t snap = {0};
+    TEST_ASSERT_EQUAL_INT(ESP_ERR_NOT_FOUND,
+                          device_schema_get("nonexistent", &snap));
+}
+
+TEST_CASE("legacy dev_caps not loaded into schema", "[device_schema]")
+{
+    /* Write an old-style cap00 blob. */
+    nvs_handle_t handle;
+    TEST_ASSERT_EQUAL_INT(ESP_OK,
+        nvs_open("dev_caps", NVS_READWRITE, &handle));
+    uint8_t old_blob[32];
+    memset(old_blob, 0xBB, sizeof(old_blob));
+    TEST_ASSERT_EQUAL_INT(ESP_OK,
+        nvs_set_blob(handle, "cap00", old_blob, sizeof(old_blob)));
+    TEST_ASSERT_EQUAL_INT(ESP_OK, nvs_commit(handle));
+    nvs_close(handle);
+
+    /* Init — legacy namespace is not read by dev_schema. */
+    device_schema_reset_for_test();
+    TEST_ASSERT_EQUAL_INT(ESP_OK, device_schema_init());
+
+    /* No schema record should be loaded from old keys. */
+    device_schema_snapshot_t snap = {0};
+    TEST_ASSERT_EQUAL_INT(ESP_ERR_NOT_FOUND,
+                          device_schema_get("nonexistent", &snap));
+}
+
+TEST_CASE("legacy dev_caps erased after init", "[device_schema]")
+{
+    /* Plant old cap00 + cap01 keys. */
+    nvs_handle_t handle;
+    TEST_ASSERT_EQUAL_INT(ESP_OK,
+        nvs_open("dev_caps", NVS_READWRITE, &handle));
+    uint8_t old_blob[16];
+    memset(old_blob, 0xCC, sizeof(old_blob));
+    TEST_ASSERT_EQUAL_INT(ESP_OK,
+        nvs_set_blob(handle, "cap00", old_blob, sizeof(old_blob)));
+    TEST_ASSERT_EQUAL_INT(ESP_OK,
+        nvs_set_blob(handle, "cap01", old_blob, sizeof(old_blob)));
+    TEST_ASSERT_EQUAL_INT(ESP_OK, nvs_commit(handle));
+    nvs_close(handle);
+
+    /* Init triggers cleanup. */
+    device_schema_reset_for_test();
+    TEST_ASSERT_EQUAL_INT(ESP_OK, device_schema_init());
+    vTaskDelay(pdMS_TO_TICKS(100));
+
+    /* Verify old keys are gone. */
+    TEST_ASSERT_EQUAL_INT(ESP_OK,
+        nvs_open("dev_caps", NVS_READONLY, &handle));
+    size_t len = 0;
+    TEST_ASSERT_EQUAL_INT(ESP_ERR_NVS_NOT_FOUND,
+        nvs_get_blob(handle, "cap00", NULL, &len));
+    TEST_ASSERT_EQUAL_INT(ESP_ERR_NVS_NOT_FOUND,
+        nvs_get_blob(handle, "cap01", NULL, &len));
+    nvs_close(handle);
 }

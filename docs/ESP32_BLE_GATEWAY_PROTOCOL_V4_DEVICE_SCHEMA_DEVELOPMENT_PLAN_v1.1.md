@@ -462,35 +462,35 @@ Persist schema mới và loại bỏ hoàn toàn capability-v3 cache.
 
 ### Checklist implementation
 
-- [ ] Tạo namespace `dev_schema`.
-- [ ] Tạo `DEVICE_SCHEMA_STORE_VERSION = 1`.
-- [ ] Persist committed schema בלבד.
-- [ ] Persist `tool_count`.
-- [ ] Persist `feature_count`.
-- [ ] Persist revision.
-- [ ] Persist tools.
-- [ ] Persist features.
-- [ ] Dùng variable-length blob nếu phù hợp.
-- [ ] Không persist staging.
-- [ ] Không persist runtime feature state.
-- [ ] Không load `dev_caps` vào schema mới.
-- [ ] Không viết migration capability-v3 -> schema-v4.
-- [ ] Optional cleanup erase `dev_caps`.
-- [ ] Cleanup lỗi không block boot.
+- [x] Tạo namespace `dev_schema`.
+- [x] Tạo `DEVICE_SCHEMA_STORE_VERSION = 1`.
+- [x] Persist committed schema saja.
+- [x] Persist `tool_count`.
+- [x] Persist `feature_count`.
+- [x] Persist revision.
+- [x] Persist tools.
+- [x] Persist features.
+- [x] Dùng variable-length blob nếu phù hợp.
+- [x] Không persist staging.
+- [x] Không persist runtime feature state.
+- [x] Không load `dev_caps` vào schema mới.
+- [x] Không viết migration capability-v3 -> schema-v4.
+- [x] Optional cleanup erase `dev_caps`.
+- [x] Cleanup lỗi không block boot.
 
 ### Checklist test
 
-- [ ] NVS sạch -> discovery bình thường.
-- [ ] Reboot với valid `dev_schema` -> load được.
-- [ ] Corrupt `dev_schema` -> ignore safely.
-- [ ] Existing `dev_caps` -> không migrate.
-- [ ] Existing `dev_caps` -> rediscover v4 thành công.
-- [ ] Cleanup `dev_caps` không ảnh hưởng `dev_list`.
+- [x] NVS sạch -> discovery bình thường.
+- [x] Reboot với valid `dev_schema` -> load được.
+- [x] Corrupt `dev_schema` -> ignore safely.
+- [x] Existing `dev_caps` -> không migrate.
+- [x] Existing `dev_caps` -> rediscover v4 thành công.
+- [x] Cleanup `dev_caps` không ảnh hưởng `dev_list`.
 
 ### Exit criteria
 
-- [ ] Không còn code load/migrate v3 capability blob.
-- [ ] Schema persistence độc lập hoạt động.
+- [x] Không còn code load/migrate v3 capability blob.
+- [x] Schema persistence độc lập hoạt động.
 
 ---
 

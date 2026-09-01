@@ -66,7 +66,7 @@ static device_schema_submit_fn s_submitter;
 static device_schema_commit_listener_t s_commit_listener;
 static void *s_commit_listener_context;
 static bool s_initialized;
-static bool s_shutdown;  /* test-only: signals worker to exit */
+static volatile bool s_shutdown;  /* test-only: signals worker to exit */
 static schema_global_owner_t s_owner;
 static uint32_t s_next_operation_id;
 static uint32_t s_next_global_generation;
@@ -881,6 +881,10 @@ static void schema_worker(void *arg)
             break;
         }
     }
+    /* Worker must never return — FreeRTOS aborts tasks that do.
+       After s_shutdown breaks the loop, park here until the idle task
+       cleans up or reset_for_test orphans us. */
+    for (;;) { vTaskDelay(portMAX_DELAY); }
 }
 
 /* ── Public API ─────────────────────────────────────────────────────── */
@@ -903,14 +907,21 @@ esp_err_t device_schema_init(void)
     s_next_global_generation = 0;
 
     schema_load_persisted(s_records);
+    schema_cleanup_legacy_caps();
 
-    s_queue = xQueueCreate(SCHEMA_EVENT_QUEUE_DEPTH, sizeof(schema_event_t));
-    if (s_queue == NULL) return ESP_ERR_NO_MEM;
-    if (xTaskCreate(schema_worker, "device_schema", SCHEMA_WORKER_STACK,
-                    NULL, SCHEMA_WORKER_PRIORITY, &s_worker) != pdPASS) {
-        vQueueDelete(s_queue);
-        s_queue = NULL;
-        return ESP_ERR_NO_MEM;
+    /* Create queue and worker only on the first init.  Test reset preserves
+       them so tests don't accumulate orphaned FreeRTOS tasks. */
+    if (s_queue == NULL) {
+        s_queue = xQueueCreate(SCHEMA_EVENT_QUEUE_DEPTH, sizeof(schema_event_t));
+        if (s_queue == NULL) return ESP_ERR_NO_MEM;
+    }
+    if (s_worker == NULL) {
+        if (xTaskCreate(schema_worker, "device_schema", SCHEMA_WORKER_STACK,
+                        NULL, SCHEMA_WORKER_PRIORITY, &s_worker) != pdPASS) {
+            vQueueDelete(s_queue);
+            s_queue = NULL;
+            return ESP_ERR_NO_MEM;
+        }
     }
     s_initialized = true;
     return ESP_OK;
@@ -1275,18 +1286,18 @@ const char *device_schema_refresh_result_name(
 
 void device_schema_reset_for_test(void)
 {
-    /* Signal the worker to exit, then tear down queue/task. */
-    s_shutdown = true;
-    vTaskDelay(pdMS_TO_TICKS(200));  /* worker checks every 100 ms */
-    if (s_worker != NULL) {
-        vTaskDelete(s_worker);
-        s_worker = NULL;
-    }
+    /* Drain any pending events from the queue without touching the worker.
+       The worker stays alive and idle between tests — no orphaned tasks,
+       no "should not return" abort.  device_schema_init() skips queue/task
+       creation when they already exist. */
     if (s_queue != NULL) {
-        vQueueDelete(s_queue);
-        s_queue = NULL;
+        schema_event_t event;
+        while (xQueueReceive(s_queue, &event, 0) == pdTRUE) {
+            if (event.type == SCHEMA_EVENT_NOTIFY && event.message != NULL) {
+                gw_mem_free(event.message);
+            }
+        }
     }
-    s_shutdown = false;
 
     if (lock_records()) {
         if (s_records != NULL) {

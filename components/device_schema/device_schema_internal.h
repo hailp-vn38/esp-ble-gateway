@@ -41,5 +41,6 @@ esp_err_t schema_persist_record(int index,
                                 const device_schema_snapshot_t *snapshot);
 void schema_load_persisted(schema_record_t *records);
 esp_err_t schema_erase_nvs(int index);
+void schema_cleanup_legacy_caps(void);
 
 #endif /* DEVICE_SCHEMA_INTERNAL_H */
