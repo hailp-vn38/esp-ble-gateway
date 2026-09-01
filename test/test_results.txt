@@ -1,27 +1,21 @@
 
   Component                  PASS  FAIL  Total  Status
   ───────────────────────────────────────────────────────
-  ble_central                 288     0    288  [32mALL PASS[0m
-  board_io                    768     0    768  [32mALL PASS[0m
-  cbor_codec                  108     0    108  [32mALL PASS[0m
-  command_dispatcher          346    12    358  [31m12 FAILED[0m
-  command_executor             44     0     44  [32mALL PASS[0m
-  device_schema               110     0    110  [32mALL PASS[0m
+  ble_central                  31     0     31  [32mALL PASS[0m
+  board_io                     64     0     64  [32mALL PASS[0m
+  cbor_codec                    9     0      9  [32mALL PASS[0m
+  command_dispatcher           31     0     31  [32mALL PASS[0m
+  command_executor              4     0      4  [32mALL PASS[0m
+  device_schema                22     0     22  [32mALL PASS[0m
+  device_state                 11     0     11  [32mALL PASS[0m
+  device_store                 10     0     10  [32mALL PASS[0m
+  device_template               7     0      7  [32mALL PASS[0m
+  mcp_endpoint                 55     0     55  [32mALL PASS[0m
+  mcp_ws_bridge                18     0     18  [32mALL PASS[0m
+  memory_policy                 4     0      4  [32mALL PASS[0m
+  web_server                    6     0      6  [32mALL PASS[0m
+  wifi_provisioning            28     0     28  [32mALL PASS[0m
   ───────────────────────────────────────────────────────
-  [31mTOTAL                      1664    12   1676[0m
+  [31mTOTAL                       300     0    300[0m
 
-  [31mUnity summary missing: test suite did not finish.[0m
-  [31mFailed tests:[0m
-    line 288: device command completes with matching ACK: Expected 2 Was 4. Function [dispatcher]
-    line 288: device command completes with matching ACK: Expected 2 Was 4. Function [dispatcher]
-    line 288: device command completes with matching ACK: Expected 2 Was 4. Function [dispatcher]
-    line 288: device command completes with matching ACK: Expected 2 Was 4. Function [dispatcher]
-    line 288: device command completes with matching ACK: Expected 2 Was 4. Function [dispatcher]
-    line 288: device command completes with matching ACK: Expected 2 Was 4. Function [dispatcher]
-    line 288: device command completes with matching ACK: Expected 2 Was 4. Function [dispatcher]
-    line 288: device command completes with matching ACK: Expected 2 Was 4. Function [dispatcher]
-    line 288: device command completes with matching ACK: Expected 2 Was 4. Function [dispatcher]
-    line 288: device command completes with matching ACK: Expected 2 Was 4. Function [dispatcher]
-    line 288: device command completes with matching ACK: Expected 2 Was 4. Function [dispatcher]
-    line 288: device command completes with matching ACK: Expected 2 Was 4. Function [dispatcher]
-
+  Unity summary: 292 Tests 0 Failures 0 Ignored

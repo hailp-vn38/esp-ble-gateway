@@ -2,12 +2,12 @@
 
 ESP-IDF firmware for ESP32-S3 (BLE Central gateway with Web UI / REST / JSON-RPC). Verified against ESP-IDF 6.1.0, 16 MiB flash. Design docs and README are in Vietnamese.
 
-## Protocol v4 + device_schema migration — phase tracking
+## Phase tracking rule
+Mọi migration/feature lớn được chia theo phase phải có một plan doc riêng trong docs/ chứa checklist chi tiết cho từng phase (mã phase dạng <PREFIX>-01, <PREFIX>-02, …). Nếu có nhiều bản plan doc (tóm tắt + chi tiết) cho cùng một việc, tất cả đều phải được cập nhật đồng bộ.
 
-- Migration plan lives in `docs/ESP32_BLE_GATEWAY_PROTOCOL_V4_DEVICE_SCHEMA_DEVELOPMENT_PLAN_v1.1.md` (detailed checklists) and `docs/ESP32 BLE Gateway — Protocol v4 + Device Schema Development Plan.md`.
-- The BLE Device repo is at `~/Desktop/esp-ble-device` (sibling of this repo).
-- **Whenever a phase (V4-01, V4-02, …) is completed, immediately mark its checklists as `[x]` and add a "✅ DONE (date)" marker to the phase heading in BOTH plan docs before doing anything else.**
-- Progress: V4-01 ✅ done (2026-08-31, device repo strict v4), V4-02 ✅ done (2026-08-31, gateway codec strict v4), V4-03 ✅ done (2026-08-31, replaced device_capabilities with device_schema). Both device and gateway now only emit/accept protocol v4.
+Ngay khi một phase hoàn thành, trước khi làm bất kỳ việc gì khác: mở plan doc tương ứng, đánh [x] toàn bộ checklist của phase đó, và thêm "✅ DONE (YYYY-MM-DD)" vào heading của phase đó — trong TẤT CẢ plan doc liên quan đến việc này.
+
+Không cần liệt kê tiến độ trong agent.md — plan doc là nguồn sự thật duy nhất về trạng thái từng phase. Trước khi bắt đầu hoặc tiếp tục bất kỳ phase nào, đọc plan doc để biết phase nào đã DONE, đang làm, hay chưa bắt đầu.
 
 ## Build
 
