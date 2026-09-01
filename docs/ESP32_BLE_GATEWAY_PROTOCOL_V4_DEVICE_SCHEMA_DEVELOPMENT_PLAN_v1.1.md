@@ -550,34 +550,34 @@ Tạo feature/property runtime state độc lập với schema.
 
 ### Checklist implementation
 
-- [ ] Tạo `components/device_state`.
-- [ ] State key = `(device_id, feature_id, property_id)`.
-- [ ] Hỗ trợ BOOL.
-- [ ] Hỗ trợ INT.
-- [ ] Có `valid` flag.
-- [ ] Có update timestamp.
-- [ ] Không persist NVS.
-- [ ] Implement `device_state_on_notify`.
-- [ ] Consume `feature_state` event.
-- [ ] Route theo gateway connection `device_id`.
-- [ ] Không dùng native model ID để route state.
+- [x] Tạo `components/device_state`.
+- [x] State key = `(device_id, feature_id, property_id)`.
+- [x] Hỗ trợ BOOL.
+- [x] Hỗ trợ INT.
+- [x] Có `valid` flag.
+- [x] Có update timestamp.
+- [x] Không persist NVS.
+- [x] Implement `device_state_on_notify`.
+- [x] Consume `feature_state` event.
+- [x] Route theo gateway connection `device_id`.
+- [x] Không dùng native model ID để route state.
 
 ### Checklist state seed
 
-- [ ] Sau schema commit enumerate readable features.
-- [ ] Gửi `read_feature_state`.
-- [ ] Include `feature_id`.
-- [ ] Include `property_id`.
-- [ ] ACK bool update đúng state.
-- [ ] ACK int update đúng state.
-- [ ] Read failure không invalidate schema.
+- [x] Sau schema commit enumerate readable features.
+- [x] Gửi `read_feature_state`.
+- [x] Include `feature_id`.
+- [x] Include `property_id`.
+- [x] ACK bool update đúng state.
+- [x] ACK int update đúng state.
+- [x] Read failure không invalidate schema.
 
 ### Checklist test
 
 - [ ] LED state seed đúng sau connect.
-- [ ] Local action tạo `feature_state`.
-- [ ] Gateway update state không cần rediscovery.
-- [ ] Hai device cùng `feature_id=led_main` không cross-update.
+- [x] Local action tạo `feature_state`.
+- [x] Gateway update state không cần rediscovery.
+- [x] Hai device cùng `feature_id=led_main` không cross-update.
 - [ ] Disconnect/reconnect reseed đúng.
 
 ### Exit criteria

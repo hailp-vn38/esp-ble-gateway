@@ -3,7 +3,8 @@ idf_component_register(
          "gateway_ota_validate.c"
     INCLUDE_DIRS "."
     PRIV_REQUIRES esp_psram
-    REQUIRES device_store device_schema wifi_provisioning ble_central cbor_codec
+    REQUIRES device_store device_schema device_state wifi_provisioning
+             ble_central cbor_codec
              command_dispatcher command_executor web_server mcp_endpoint
              mcp_tool_exposure mcp_ws_bridge
              nvs_flash esp_wifi esp_event bt esp_http_server

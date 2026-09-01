@@ -144,6 +144,10 @@ typedef void (*device_schema_commit_listener_t)(const char *device_id,
                                                  uint32_t revision,
                                                  void *context);
 
+typedef void (*device_schema_commit_listener2_t)(const char *device_id,
+                                                  uint32_t revision,
+                                                  void *context);
+
 /* ── Public API ─────────────────────────────────────────────────────── */
 
 esp_err_t device_schema_init(void);
@@ -151,6 +155,9 @@ void device_schema_set_submitter(device_schema_submit_fn submitter);
 
 esp_err_t device_schema_register_commit_listener(
     device_schema_commit_listener_t listener, void *context);
+
+esp_err_t device_schema_register_commit_listener2(
+    device_schema_commit_listener2_t listener, void *context);
 
 esp_err_t device_schema_on_ready(const char *device_id);
 void device_schema_on_disconnect(const char *device_id);

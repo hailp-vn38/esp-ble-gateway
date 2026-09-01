@@ -10,6 +10,7 @@
 #include "command_executor.h"
 #include "device_store.h"
 #include "device_schema.h"
+#include "device_state.h"
 #include "gateway_ota_validate.h"
 #include "mcp_endpoint.h"
 #include "mcp_tool_exposure.h"
@@ -22,6 +23,7 @@ static const char *TAG = "app_main";
 static void on_device_notify(const char *device_id, const gw_message_t *msg)
 {
     if (device_schema_on_notify(device_id, msg)) return;
+    if (device_state_on_notify(device_id, msg)) return;
     command_dispatcher_on_device_notify(device_id, msg);
 }
 
@@ -30,6 +32,12 @@ static void on_device_ready(const char *device_id)
     if (device_schema_on_ready(device_id) != ESP_OK) {
         ESP_LOGW(TAG, "[%s] schema discovery could not be queued", device_id);
     }
+}
+
+static void on_device_disconnect(const char *device_id)
+{
+    device_schema_on_disconnect(device_id);
+    device_state_forget(device_id);
 }
 
 typedef struct {
@@ -198,6 +206,10 @@ void app_main(void)
         ESP_LOGE(TAG, "Device schema manager initialization failed");
         return;
     }
+    if (device_state_init() != ESP_OK) {
+        ESP_LOGE(TAG, "Device state initialization failed");
+        return;
+    }
     if (mcp_tool_exposure_init() != ESP_OK) {
         ESP_LOGE(TAG, "MCP tool exposure initialization failed");
         return;
@@ -220,7 +232,7 @@ void app_main(void)
         return;
     }
     ble_central_set_lifecycle_callbacks(on_device_ready,
-                                        device_schema_on_disconnect);
+                                        on_device_disconnect);
     if (ble_central_start_reconnect_supervisor() != 0) {
         ESP_LOGE(TAG, "BLE reconnect supervisor could not be started");
         return;

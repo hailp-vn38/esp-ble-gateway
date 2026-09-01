@@ -65,6 +65,8 @@ static TaskHandle_t s_worker;
 static device_schema_submit_fn s_submitter;
 static device_schema_commit_listener_t s_commit_listener;
 static void *s_commit_listener_context;
+static device_schema_commit_listener2_t s_commit_listener2;
+static void *s_commit_listener2_context;
 static bool s_initialized;
 static volatile bool s_shutdown;  /* test-only: signals worker to exit */
 static schema_global_owner_t s_owner;
@@ -653,6 +655,10 @@ static void handle_end(const char *device_id, const gw_message_t *message)
         s_commit_listener(device_id, committed.revision,
                           s_commit_listener_context);
     }
+    if (persist_index >= 0 && s_commit_listener2 != NULL) {
+        s_commit_listener2(device_id, committed.revision,
+                           s_commit_listener2_context);
+    }
 }
 
 /* ── Disconnect handling ────────────────────────────────────────────── */
@@ -903,6 +909,8 @@ esp_err_t device_schema_init(void)
     memset(s_records, 0,
            DEVICE_STORE_MAX_DEVICES * sizeof(*s_records));
     memset(&s_owner, 0, sizeof(s_owner));
+    s_commit_listener2 = NULL;
+    s_commit_listener2_context = NULL;
     s_next_operation_id = 0;
     s_next_global_generation = 0;
 
@@ -938,6 +946,16 @@ esp_err_t device_schema_register_commit_listener(
     if (!lock_records()) return ESP_ERR_TIMEOUT;
     s_commit_listener = listener;
     s_commit_listener_context = context;
+    unlock_records();
+    return ESP_OK;
+}
+
+esp_err_t device_schema_register_commit_listener2(
+    device_schema_commit_listener2_t listener, void *context)
+{
+    if (!lock_records()) return ESP_ERR_TIMEOUT;
+    s_commit_listener2 = listener;
+    s_commit_listener2_context = context;
     unlock_records();
     return ESP_OK;
 }
