@@ -595,30 +595,30 @@ Map semantic feature sang presentation/control template.
 
 ### Checklist implementation
 
-- [ ] Tạo `components/device_template`.
-- [ ] Tạo static template registry.
-- [ ] Lookup bằng `(feature_type, schema_version)`.
-- [ ] Không lookup bằng device type.
-- [ ] Không lookup bằng raw command name.
-- [ ] Implement `on_off_light.v1`.
-- [ ] Primary property = `GW_PROP_ON_OFF`.
-- [ ] Semantic name = `light`.
-- [ ] Write qua `feature.write_tool`.
-- [ ] Không hardcode `set_led`.
-- [ ] Unknown template trả unsupported, không crash.
+- [x] Tạo `components/device_template`.
+- [x] Tạo static template registry.
+- [x] Lookup bằng `(feature_type, schema_version)`.
+- [x] Không lookup bằng device type.
+- [x] Không lookup bằng raw command name.
+- [x] Implement `on_off_light.v1`.
+- [x] Primary property = `GW_PROP_ON_OFF`.
+- [x] Semantic name = `light`.
+- [x] Write qua `feature.write_tool`.
+- [x] Không hardcode `set_led`.
+- [x] Unknown template trả unsupported, không crash.
 
 ### Checklist test
 
-- [ ] `ON_OFF_LIGHT + schema 1` resolve đúng.
-- [ ] `feature_tool=set_led` write đúng.
-- [ ] `feature_tool=power` vẫn dùng same template.
-- [ ] Unknown schema version degrade safe.
-- [ ] Unknown feature type degrade safe.
+- [x] `ON_OFF_LIGHT + schema 1` resolve đúng.
+- [x] `feature_tool=set_led` write đúng.
+- [x] `feature_tool=power` vẫn dùng same template.
+- [x] Unknown schema version degrade safe.
+- [x] Unknown feature type degrade safe.
 
 ### Exit criteria
 
-- [ ] Semantic layer không phụ thuộc device category.
-- [ ] Template registry không yêu cầu runtime JSON parser/heap.
+- [x] Semantic layer không phụ thuộc device category.
+- [x] Template registry không yêu cầu runtime JSON parser/heap.
 
 ---
 
