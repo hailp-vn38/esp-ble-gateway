@@ -7,6 +7,6 @@ idf_component_register(
     INCLUDE_DIRS "include"
     PRIV_INCLUDE_DIRS "."
     REQUIRES cbor_codec ble_central device_store device_schema device_state
-             gateway_status freertos mcp_tool_exposure
+             gateway_status freertos mcp_tool_exposure gateway_events
              espressif__cjson
 )

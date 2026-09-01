@@ -6,6 +6,9 @@
 #include "device_schema.h"
 #include "esp_log.h"
 #include "esp_timer.h"
+#include "freertos/FreeRTOS.h"
+#include "freertos/semphr.h"
+#include "gateway_events.h"
 
 static const char *TAG = "device_state";
 
@@ -13,8 +16,19 @@ static const char *TAG = "device_state";
 
 static device_state_entry_t s_entries[DEVICE_STATE_MAX_ENTRIES];
 static size_t s_count;
+static SemaphoreHandle_t s_mutex;
 
 /* ── Helpers ────────────────────────────────────────────────────────── */
+
+static void lock_state(void)
+{
+    xSemaphoreTake(s_mutex, pdMS_TO_TICKS(1000));
+}
+
+static void unlock_state(void)
+{
+    xSemaphoreGive(s_mutex);
+}
 
 static device_state_entry_t *find_entry(const char *device_id,
                                          const char *feature_id,
@@ -91,6 +105,14 @@ esp_err_t device_state_init(void)
     memset(s_entries, 0, sizeof(s_entries));
     s_count = 0;
 
+    if (s_mutex == NULL) {
+        s_mutex = xSemaphoreCreateMutex();
+        if (s_mutex == NULL) {
+            ESP_LOGE(TAG, "mutex creation failed");
+            return ESP_ERR_NO_MEM;
+        }
+    }
+
     esp_err_t err = device_schema_register_commit_listener2(
         on_schema_committed, NULL);
     if (err != ESP_OK) {
@@ -115,11 +137,14 @@ bool device_state_on_notify(const char *device_id, const gw_message_t *msg)
         return false;
     }
 
+    lock_state();
+
     device_state_entry_t *entry = find_entry(device_id, msg->feature_id,
                                               msg->property_id);
     if (entry == NULL) {
         entry = allocate_entry();
         if (entry == NULL) {
+            unlock_state();
             ESP_LOGW(TAG, "[%s] state table full, dropping %s",
                      device_id, msg->feature_id);
             return true;
@@ -139,6 +164,25 @@ bool device_state_on_notify(const char *device_id, const gw_message_t *msg)
     entry->valid = true;
     entry->updated_at_ms = esp_timer_get_time() / 1000;
 
+    /* Copy values for event before unlock */
+    gateway_event_t ev = {0};
+    ev.type = GW_EVENT_FEATURE_STATE;
+    strlcpy(ev.device_id, device_id, sizeof(ev.device_id));
+    strlcpy(ev.feature_id, msg->feature_id, sizeof(ev.feature_id));
+    ev.property_id = msg->property_id;
+    ev.updated_at_ms = entry->updated_at_ms;
+    if (msg->has_feature_value_bool) {
+        ev.value_kind = GW_EVENT_VALUE_BOOL;
+        ev.bool_value = msg->feature_value_bool;
+    } else if (msg->has_feature_value_int) {
+        ev.value_kind = GW_EVENT_VALUE_INT;
+        ev.int_value = msg->feature_value_int;
+    }
+
+    unlock_state();
+
+    gateway_events_publish(&ev);
+
     ESP_LOGI(TAG, "[%s] feature=%s prop=%u state updated",
              device_id, msg->feature_id, msg->property_id);
 
@@ -153,32 +197,37 @@ esp_err_t device_state_get(const char *device_id,
     if (out == NULL) {
         return ESP_ERR_INVALID_ARG;
     }
+
+    lock_state();
     const device_state_entry_t *entry = find_entry(device_id, feature_id,
                                                     property_id);
-    if (entry == NULL || !entry->valid) {
-        return ESP_ERR_NOT_FOUND;
+    bool valid = (entry != NULL && entry->valid);
+    if (valid) {
+        *out = *entry;
     }
-    *out = *entry;
-    return ESP_OK;
+    unlock_state();
+
+    return valid ? ESP_OK : ESP_ERR_NOT_FOUND;
 }
 
-esp_err_t device_state_get_all(const char *device_id,
-                               device_state_view_t *out_view)
+esp_err_t device_state_snapshot(const char *device_id,
+                                device_state_snapshot_t *out_snapshot)
 {
-    if (out_view == NULL) {
+    if (out_snapshot == NULL) {
         return ESP_ERR_INVALID_ARG;
     }
-    out_view->entries = NULL;
-    out_view->count = 0;
+    out_snapshot->count = 0;
 
-    for (size_t i = 0; i < s_count; i++) {
+    lock_state();
+
+    for (size_t i = 0; i < s_count && out_snapshot->count < DEVICE_STATE_SNAPSHOT_MAX; i++) {
         if (strcmp(s_entries[i].device_id, device_id) == 0) {
-            if (out_view->entries == NULL) {
-                out_view->entries = &s_entries[i];
-            }
-            out_view->count++;
+            out_snapshot->entries[out_snapshot->count] = s_entries[i];
+            out_snapshot->count++;
         }
     }
+
+    unlock_state();
     return ESP_OK;
 }
 
@@ -187,6 +236,8 @@ void device_state_forget(const char *device_id)
     if (device_id == NULL) {
         return;
     }
+
+    lock_state();
 
     size_t write = 0;
     for (size_t read = 0; read < s_count; read++) {
@@ -202,10 +253,14 @@ void device_state_forget(const char *device_id)
                  device_id, s_count - write);
     }
     s_count = write;
+
+    unlock_state();
 }
 
 void device_state_reset_for_test(void)
 {
+    lock_state();
     memset(s_entries, 0, sizeof(s_entries));
     s_count = 0;
+    unlock_state();
 }

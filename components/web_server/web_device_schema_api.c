@@ -131,8 +131,8 @@ static esp_err_t schema_get_handler(httpd_req_t *request)
     }
 
     /* Features array with template + state enrichment */
-    device_state_view_t state_view;
-    device_state_get_all(device_id, &state_view);
+    device_state_snapshot_t state_snapshot;
+    device_state_snapshot(device_id, &state_snapshot);
 
     cJSON *features_arr = cJSON_AddArrayToObject(response, "features");
     if (features_arr != NULL) {
@@ -145,8 +145,8 @@ static esp_err_t schema_get_handler(httpd_req_t *request)
             cJSON *state_obj = cJSON_AddObjectToObject(feat_json, "state");
             if (state_obj != NULL) {
                 bool found = false;
-                for (size_t s = 0; s < state_view.count; s++) {
-                    const device_state_entry_t *entry = &state_view.entries[s];
+                for (size_t s = 0; s < state_snapshot.count; s++) {
+                    const device_state_entry_t *entry = &state_snapshot.entries[s];
                     if (strcmp(entry->feature_id,
                                snapshot.features[i].feature_id) == 0 &&
                         entry->property_id ==

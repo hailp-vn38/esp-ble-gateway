@@ -6,7 +6,7 @@ idf_component_register(
     REQUIRES device_store device_schema device_state wifi_provisioning
              ble_central cbor_codec
              command_dispatcher command_executor web_server mcp_endpoint
-             mcp_tool_exposure mcp_ws_bridge
+             mcp_tool_exposure mcp_ws_bridge gateway_events
              nvs_flash esp_wifi esp_event bt esp_http_server
              board_io app_update
 )

@@ -11,6 +11,7 @@
 #include "device_store.h"
 #include "device_schema.h"
 #include "device_state.h"
+#include "gateway_events.h"
 #include "gateway_ota_validate.h"
 #include "mcp_endpoint.h"
 #include "mcp_tool_exposure.h"
@@ -29,6 +30,12 @@ static void on_device_notify(const char *device_id, const gw_message_t *msg)
 
 static void on_device_ready(const char *device_id)
 {
+    gateway_event_t ev = {0};
+    ev.type = GW_EVENT_DEVICE_CONNECTION;
+    strlcpy(ev.device_id, device_id, sizeof(ev.device_id));
+    ev.bool_value = true;
+    gateway_events_publish(&ev);
+
     if (device_schema_on_ready(device_id) != ESP_OK) {
         ESP_LOGW(TAG, "[%s] schema discovery could not be queued", device_id);
     }
@@ -36,6 +43,12 @@ static void on_device_ready(const char *device_id)
 
 static void on_device_disconnect(const char *device_id)
 {
+    gateway_event_t ev = {0};
+    ev.type = GW_EVENT_DEVICE_CONNECTION;
+    strlcpy(ev.device_id, device_id, sizeof(ev.device_id));
+    ev.bool_value = false;
+    gateway_events_publish(&ev);
+
     device_schema_on_disconnect(device_id);
     device_state_forget(device_id);
 }
@@ -212,6 +225,10 @@ void app_main(void)
     }
     if (mcp_tool_exposure_init() != ESP_OK) {
         ESP_LOGE(TAG, "MCP tool exposure initialization failed");
+        return;
+    }
+    if (gateway_events_init() != ESP_OK) {
+        ESP_LOGE(TAG, "Gateway events initialization failed");
         return;
     }
     if (command_dispatcher_init() != 0) {

@@ -8,6 +8,7 @@
 #include "esp_err.h"
 
 #define DEVICE_STATE_MAX_ENTRIES 96
+#define DEVICE_STATE_SNAPSHOT_MAX 12  /* matches DEVICE_SCHEMA_MAX_FEATURES */
 
 /* ── State entry ────────────────────────────────────────────────────── */
 
@@ -21,12 +22,12 @@ typedef struct {
     int64_t updated_at_ms;  /* esp_timer_get_time() / 1000 */
 } device_state_entry_t;
 
-/* ── View (zero-copy, points into internal storage) ─────────────────── */
+/* ── Snapshot (copy-out, safe across mutations) ──────────────────────── */
 
 typedef struct {
-    const device_state_entry_t *entries;
+    device_state_entry_t entries[DEVICE_STATE_SNAPSHOT_MAX];
     size_t count;
-} device_state_view_t;
+} device_state_snapshot_t;
 
 /* ── Public API ─────────────────────────────────────────────────────── */
 
@@ -48,11 +49,12 @@ esp_err_t device_state_get(const char *device_id,
                            device_state_entry_t *out);
 
 /**
- * Get all state entries for a device. out_view->entries points to internal
- * storage (valid until next mutation). Count may be 0.
+ * Get all state entries for a device (copy-out snapshot).
+ * Entries are copied into out_snapshot->entries; safe across mutations.
+ * Count may be 0.
  */
-esp_err_t device_state_get_all(const char *device_id,
-                               device_state_view_t *out_view);
+esp_err_t device_state_snapshot(const char *device_id,
+                                device_state_snapshot_t *out_snapshot);
 
 /** Clear all state entries for a device (called on disconnect). */
 void device_state_forget(const char *device_id);

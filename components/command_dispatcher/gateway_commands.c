@@ -14,6 +14,7 @@
 #include "device_store.h"
 #include "device_schema.h"
 #include "device_state.h"
+#include "gateway_events.h"
 #include "mcp_tool_exposure.h"
 
 static const char *TAG = "dispatcher";
@@ -102,6 +103,12 @@ static void cmd_add_device(const gw_message_t *msg, dispatch_result_t *result)
              "{\"device_id\":\"%s\",\"persisted\":true,\"connect_requested\":%s}",
              msg->device_id, connect_requested ? "true" : "false");
     command_dispatcher_set_json_result(result, DISPATCH_STATUS_OK, payload);
+
+    /* Publish CRUD invalidation event */
+    gateway_event_t ev = {0};
+    ev.type = GW_EVENT_DEVICE_CHANGED;
+    strlcpy(ev.device_id, msg->device_id, sizeof(ev.device_id));
+    gateway_events_publish(&ev);
 }
 
 static void cmd_delete_device(const gw_message_t *msg, dispatch_result_t *result)
@@ -162,6 +169,12 @@ static void cmd_delete_device(const gw_message_t *msg, dispatch_result_t *result
 
     command_dispatcher_set_text_result(result, DISPATCH_STATUS_OK,
                                        "Device %s deleted", msg->device_id);
+
+    /* Publish CRUD invalidation event */
+    gateway_event_t ev = {0};
+    ev.type = GW_EVENT_DEVICE_CHANGED;
+    strlcpy(ev.device_id, msg->device_id, sizeof(ev.device_id));
+    gateway_events_publish(&ev);
 }
 
 static void cmd_edit_device(const gw_message_t *msg, dispatch_result_t *result)
@@ -199,6 +212,12 @@ static void cmd_edit_device(const gw_message_t *msg, dispatch_result_t *result)
     }
     command_dispatcher_set_text_result(result, DISPATCH_STATUS_OK,
                                        "Device %s updated", msg->device_id);
+
+    /* Publish CRUD invalidation event */
+    gateway_event_t ev = {0};
+    ev.type = GW_EVENT_DEVICE_CHANGED;
+    strlcpy(ev.device_id, msg->device_id, sizeof(ev.device_id));
+    gateway_events_publish(&ev);
 }
 
 static void cmd_list_devices(const gw_message_t *msg, dispatch_result_t *result)

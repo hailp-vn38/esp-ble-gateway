@@ -13,6 +13,7 @@
 #include "freertos/queue.h"
 #include "freertos/semphr.h"
 #include "freertos/task.h"
+#include "gateway_events.h"
 #include "memory_policy.h"
 
 #define SCHEMA_EVENT_QUEUE_DEPTH 32
@@ -660,6 +661,15 @@ static void handle_end(const char *device_id, const gw_message_t *message)
     if (persist_index >= 0 && s_commit_listener2 != NULL) {
         s_commit_listener2(device_id, committed.revision,
                            s_commit_listener2_context);
+    }
+
+    /* Publish schema event for realtime consumers (WebSocket, etc.) */
+    if (persist_index >= 0) {
+        gateway_event_t ev = {0};
+        ev.type = GW_EVENT_DEVICE_SCHEMA;
+        strlcpy(ev.device_id, device_id, sizeof(ev.device_id));
+        ev.schema_revision = committed.revision;
+        gateway_events_publish(&ev);
     }
 }
 
