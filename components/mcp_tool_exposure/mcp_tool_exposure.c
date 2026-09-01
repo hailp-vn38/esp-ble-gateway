@@ -1008,6 +1008,9 @@ esp_err_t mcp_tool_exposure_forget_device(const char *device_id)
         ESP_LOGW(TAG, "Worker queue full, device revoke deferred for %s",
                  device_id);
         s_dirty = true;
+        /* Trigger a retry so dirty persist runs when queue drains. */
+        worker_event_t retry = { .type = WORKER_EVENT_DIRTY_RETRY };
+        xQueueSend(s_worker_queue, &retry, 0);
     }
 
     ESP_LOGI(TAG, "Revoked all tools for device: %s", device_id);

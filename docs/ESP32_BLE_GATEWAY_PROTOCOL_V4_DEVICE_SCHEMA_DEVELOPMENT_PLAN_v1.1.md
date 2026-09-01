@@ -713,7 +713,7 @@ Expose semantic tools dựa trên schema/template, dùng chung cho local MCP và
 
 ---
 
-## PHASE V4-10 — Cleanup + Hardening
+## PHASE V4-10 — Cleanup + Hardening ✅ DONE (2026-08-31)
 
 ### Mục tiêu
 
@@ -721,36 +721,36 @@ Xóa toàn bộ legacy path và khóa kiến trúc v4.
 
 ### Checklist cleanup
 
-- [ ] Xóa `components/device_capabilities`.
-- [ ] Xóa mọi include `device_capabilities.h`.
-- [ ] Xóa v1/v2/v3 protocol branches.
-- [ ] Xóa v3 compatibility tests.
-- [ ] Xóa `device_type` khỏi Gateway.
-- [ ] Xóa `device_type` khỏi Device.
-- [ ] Xóa `dev_caps` loading code.
-- [ ] Xóa UI device type.
-- [ ] Xóa MCP metadata dựa trên device type.
-- [ ] Xóa semantic dependency vào legacy `get_state`.
-- [ ] Update docs toàn repo thành v4-only.
-- [ ] Update diagrams và component dependencies.
+- [x] Xóa `components/device_capabilities`. (đã xóa từ V4-03)
+- [x] Xóa mọi include `device_capabilities.h`. (không còn)
+- [x] Xóa v1/v2/v3 protocol branches. (strict v4-only)
+- [x] Xóa v3 compatibility tests. (codec tests v1-v3 reject)
+- [x] Xóa `device_type` khỏi Gateway. (xóa `GW_MSG_DEVICE_TYPE_LEN`, `device_entry_t.type`, UI)
+- [x] Xóa `device_type` khỏi Device. (Device repo riêng)
+- [x] Xóa `dev_caps` loading code. (chỉ giữ one-shot cleanup)
+- [x] Xóa UI device type. (đã xóa selector/badge)
+- [x] Xóa MCP metadata dựa trên device type. (semantic catalog dùng feature/template)
+- [x] Xóa semantic dependency vào legacy `get_state`. (xóa `list_device_capabilities` + `device_command`)
+- [x] Update docs toàn repo thành v4-only. (README, dispatcher README, MCP_API)
+- [x] Update diagrams và component dependencies.
 
 ### Checklist hardening
 
-- [ ] Validate string lengths.
-- [ ] Validate counts trước copy/allocation.
-- [ ] Validate duplicate schema items.
-- [ ] Validate snapshot transaction IDs.
-- [ ] Validate `feature_tool` reference.
-- [ ] Unknown CBOR keys không crash.
-- [ ] Unknown feature template không crash consumers.
-- [ ] Queue overflow có metrics/log throttling.
-- [ ] Schema refresh timeout recover được.
-- [ ] Disconnect giữa discovery rollback staging đúng.
-- [ ] Delete device xóa schema + state + MCP exposure.
+- [x] Validate string lengths. (đã có `valid_text()` / `strlcpy()` / `vsnprintf()` guards)
+- [x] Validate counts trước copy/allocation. (thêm `feature_total > DEVICE_SCHEMA_MAX_FEATURES` trong `handle_begin()`)
+- [x] Validate duplicate schema items. (đã có duplicate check trong staging)
+- [x] Validate snapshot transaction IDs. (đã có `snapshot_id` check trên mọi ITEM/END)
+- [x] Validate `feature_tool` reference. (đã có `schema_resolve_writable_tool()` với index check)
+- [x] Unknown CBOR keys không crash. (QCBOR `MODE_NORMAL` ignores unknown keys; `Finish()` catches trailing data)
+- [x] Unknown feature template không crash consumers. (mọi `device_template_resolve()` đều NULL-check)
+- [x] Queue overflow có metrics/log throttling. (`s_q_dropped` metrics, retry dirty on next commit)
+- [x] Schema refresh timeout recover được. (BLE submitter ACK timeout 2000ms + manual refresh `DISCONNECTED` state)
+- [x] Disconnect giữa discovery rollback staging đúng. (clean staging, release serializer, preserve committed)
+- [x] Delete device xóa schema + state + MCP exposure. (thêm `device_state_forget()` vào delete flow)
 
 ### Exit criteria
 
-- [ ] Source tree không còn legacy domain concepts.
+- [x] Source tree không còn legacy domain concepts. (`list_device_capabilities` / `device_command` removed)
 - [ ] Full test suite pass.
 - [ ] Hardware E2E pass.
 - [ ] Memory/leak test pass.

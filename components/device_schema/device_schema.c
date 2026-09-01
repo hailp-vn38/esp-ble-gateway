@@ -379,7 +379,9 @@ static void handle_begin(const char *device_id, const gw_message_t *message)
     if (!message_device_matches(device_id, message) ||
         !message->has_snapshot_id || !message->has_total ||
         !message->has_capability_revision ||
-        message->total > DEVICE_SCHEMA_MAX_TOOLS) {
+        message->total > DEVICE_SCHEMA_MAX_TOOLS ||
+        (message->has_feature_total &&
+         message->feature_total > DEVICE_SCHEMA_MAX_FEATURES)) {
         return;
     }
     if (!lock_records()) return;

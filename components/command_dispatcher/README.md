@@ -65,7 +65,6 @@ typedef struct {
     int bool_value;
     int has_device_id;
     char name[GW_MSG_NAME_LEN];
-    char device_type[GW_MSG_DEVICE_TYPE_LEN];
     uint8_t ble_addr[6];
     uint8_t ble_addr_type;
     int has_ble_addr;
@@ -200,10 +199,9 @@ Kết quả text dạng: `Device <id> acknowledged/rejected '<command>'`.
 |---|---|---|---|
 | `add_device` | OK nếu persist được | JSON `{device_id, persisted, connect_requested}` | BLE connect là **best-effort side effect** |
 | `delete_device` | OK | Text | Thứ tự: snapshot store → `ble_central_forget_peer(addr...)` → `store_delete`. Forget fail → giữ entry để retry (`TRANSPORT_ERROR`) |
-| `edit_device` | OK / NOT_FOUND | Text | Cần `name` hoặc `device_type` |
+| `edit_device` | OK / NOT_FOUND | Text | Cần `name` |
 | `list_devices` | OK | JSON array | Payload quá lớn → INTERNAL_ERROR |
 | `get_status` | OK | JSON | device_count / connected_count / ble_link_count |
-| `list_device_capabilities` | OK | JSON | Snapshot command do peripheral quảng bá |
 
 Lifecycle delete không để orphan bond: peer identity được snapshot **trước khi** xóa store entry, BLE layer không quay lại lookup store; lỗi xóa bond thực tế được propagate lên caller.
 

@@ -259,71 +259,9 @@ mcp_resolve_status_t mcp_tools_resolve(const cJSON *params, gw_message_t *msg,
         return MCP_RESOLVE_INVALID;
     }
 
-    // 1. Try static registry first.
+    // 1. Try static registry first (gateway commands only).
     const mcp_tool_desc_t *desc = mcp_registry_find(tool_name);
     if (desc != NULL) {
-        const char *message_type =
-            strcmp(tool_name, "device_command") == 0 ? "device_command"
-                                                     : "gateway_command";
-        if (strcmp(message_type, "device_command") == 0) {
-            const cJSON *device_id =
-                cJSON_GetObjectItemCaseSensitive(source, "device_id");
-            if (!cJSON_IsString(device_id) || device_id->valuestring == NULL ||
-                device_id->valuestring[0] == '\0') {
-                *error = (mcp_rpc_error_t){-32602, "device_command requires device_id"};
-                return MCP_RESOLVE_INVALID;
-            }
-            const cJSON *command_item =
-                cJSON_GetObjectItemCaseSensitive(source, "command");
-            const char *device_command =
-                cJSON_IsString(command_item) && command_item->valuestring != NULL &&
-                        command_item->valuestring[0] != '\0'
-                    ? command_item->valuestring
-                    : NULL;
-            if (device_command == NULL) {
-                *error = (mcp_rpc_error_t){-32602,
-                                           "device_command requires command"};
-                return MCP_RESOLVE_INVALID;
-            }
-            if (!mcp_device_command_allowed(device_command)) {
-                snprintf(denial_text, denial_len,
-                         "command '%s' is not in the device command allowlist",
-                         device_command);
-                *error = (mcp_rpc_error_t){MCP_ERR_COMMAND_DENIED, "command denied"};
-                return MCP_RESOLVE_ALLOWLIST_DENIED;
-            }
-
-            mcp_policy_result_t policy = mcp_policy_check_device_command(
-                device_id->valuestring, device_command);
-            if (policy == MCP_POLICY_DENY_COMMAND) {
-                snprintf(denial_text, denial_len,
-                         "command '%s' is not allowed by policy",
-                         device_command);
-                *error = (mcp_rpc_error_t){MCP_ERR_COMMAND_DENIED, "command denied"};
-                return MCP_RESOLVE_ALLOWLIST_DENIED;
-            }
-            if (policy == MCP_POLICY_DENY_DESTRUCTIVE) {
-                snprintf(denial_text, denial_len,
-                         "destructive command '%s' denied in control profile",
-                         device_command);
-                *error = (mcp_rpc_error_t){MCP_ERR_COMMAND_DENIED, "command denied"};
-                return MCP_RESOLVE_ALLOWLIST_DENIED;
-            }
-            if (policy == MCP_POLICY_DEVICE_UNAVAILABLE) {
-                *error = (mcp_rpc_error_t){MCP_ERR_DEVICE_UNAVAILABLE,
-                                           "device not found"};
-                return MCP_RESOLVE_INVALID;
-            }
-            if (policy == MCP_POLICY_CAPABILITY_UNKNOWN) {
-                *error = (mcp_rpc_error_t){MCP_ERR_CAPABILITY_UNKNOWN,
-                                           "device capabilities not ready"};
-                return MCP_RESOLVE_INVALID;
-            }
-            *is_device_command = true;
-            return normalize_arguments(source, "device_command", device_command,
-                                       msg, error);
-        }
-
         *is_device_command = false;
         return normalize_arguments(source, "gateway_command", tool_name, msg,
                                    error);

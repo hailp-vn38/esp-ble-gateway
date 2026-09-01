@@ -180,8 +180,7 @@ Endpoint `POST /mcp` hỗ trợ MCP 2026-07-28, bao gồm `server/discover`,
 
 ### Static tools
 
-Luôn có sẵn: `get_status`, `list_devices`, và tùy chọn `device_command` /
-`list_device_capabilities` (tắt mặc định).
+Luôn có sẵn: `get_status` và `list_devices`.
 
 ### Dynamic device tools
 
@@ -271,7 +270,7 @@ triển khai service `0xABF0`.
 ```text
 main/                           Khởi động và nối các module
 components/device_store/         NVS device registry
-components/device_capabilities/  Capability cache, discovery và validation
+components/device_schema/        Schema cache, discovery và validation
 components/wifi_provisioning/    Wi-Fi STA/SoftAP và captive DNS
 components/ble_central/          NimBLE Central/GATT Client
 components/cbor_codec/           QCBOR và JSON codec

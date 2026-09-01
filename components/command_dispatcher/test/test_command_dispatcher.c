@@ -108,7 +108,6 @@ TEST_CASE("dispatcher registers default commands", "[dispatcher]")
     TEST_ASSERT_TRUE(command_dispatcher_is_registered("edit_device"));
     TEST_ASSERT_TRUE(command_dispatcher_is_registered("list_devices"));
     TEST_ASSERT_TRUE(command_dispatcher_is_registered("get_status"));
-    TEST_ASSERT_TRUE(command_dispatcher_is_registered("list_device_capabilities"));
     TEST_ASSERT_FALSE(command_dispatcher_is_registered("does_not_exist"));
 }
 

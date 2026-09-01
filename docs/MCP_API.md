@@ -308,26 +308,14 @@ Mcp-Method: tools/list
         "inputSchema": { "type": "object", "properties": {} },
         "annotations": { "readOnlyHint": true, "destructiveHint": false, "idempotentHint": true }
       },
-      {
-        "name": "list_devices",
-        "description": "List devices known by the gateway",
-        "inputSchema": { "type": "object", "properties": {} },
-        "annotations": { "readOnlyHint": true, "destructiveHint": false, "idempotentHint": true }
-      },
-      {
-        "name": "list_device_capabilities",
-        "description": "List commands advertised by a BLE device",
-        "inputSchema": { "type": "object", "properties": { "device_id": { "type": "string" } } },
-        "annotations": { "readOnlyHint": true, "destructiveHint": false, "idempotentHint": true }
-      },
-      {
-        "name": "device_command",
-        "description": "Send an allowlisted command to a device",
-        "inputSchema": { "type": "object", "properties": { "device_id": { "type": "string" }, "command": { "type": "string" } } },
-        "annotations": { "readOnlyHint": false, "destructiveHint": false }
-      },
-      {
-        "name": "fan_01.set_speed",
+	      {
+	        "name": "list_devices",
+	        "description": "List devices known by the gateway",
+	        "inputSchema": { "type": "object", "properties": {} },
+	        "annotations": { "readOnlyHint": true, "destructiveHint": false, "idempotentHint": true }
+	      },
+	      {
+	        "name": "fan_01.set_speed",
         "description": "Set speed for TEST fan (0–100)",
         "inputSchema": {
           "type": "object",
@@ -374,27 +362,6 @@ always has the same name across reboots.
 ### 5.3 `tools/call`
 
 Execute a tool with the given arguments. Works for both static and dynamic tools.
-
-**Static tool (device_command):**
-```json
-{
-  "jsonrpc": "2.0",
-  "id": 3,
-  "method": "tools/call",
-  "params": {
-    "name": "device_command",
-    "arguments": {
-      "device_id": "fan_01",
-      "command": "set_speed",
-      "int_value": 60
-    },
-    "_meta": {
-      "io.modelcontextprotocol/protocolVersion": "2026-07-28",
-      "io.modelcontextprotocol/clientCapabilities": {}
-    }
-  }
-}
-```
 
 **Dynamic tool (direct name):**
 ```json
@@ -481,16 +448,6 @@ If any check fails → JSON-RPC error `-32602` with descriptive message.
 **Description:** List devices known by the gateway
 **Input:** None
 **Annotations:** readOnly, non-destructive, idempotent
-
-#### `list_device_capabilities`
-**Description:** List commands advertised by a BLE device
-**Input:** `device_id` (string, required)
-**Annotations:** readOnly, non-destructive, idempotent
-
-#### `device_command`
-**Description:** Send an allowlisted command to a device
-**Input:** `device_id` (string), `command` (string), `int_value` (integer, optional), `bool_value` (boolean, optional)
-**Annotations:** non-read-only
 
 **Async execution:**
 - Queue capacity: 2 pending + 1 running
@@ -733,7 +690,7 @@ is returned in `CallToolResult.isError = true`, NOT as a JSON-RPC error.
 | `mcp` | `token` | string | MCP Bearer token override |
 | `mcp` | `legacy` | u8 | Legacy mode override (1=on, 0=off) |
 | `web_admin` | `token` | string | Admin API Bearer token |
-| `mcp_exp` | `exposures` | blob | Exposure records (schema v2, auto-managed) |
+| `mcp_exp` | `exposures` | blob | Exposure records (schema v3, auto-managed) |
 
 ---
 
@@ -807,23 +764,6 @@ The JSON-RPC-level `_meta` is NOT used for server identity (per spec §35).
 ---
 
 ## 11. Example: AI Voice Flow
-
-### Static Tool
-```text
-User: "Bật quạt phòng khách lên 60%"
-        |
-        v
-AI Host resolves device + command
-        |
-        v
-tools/call device_command(device_id="fan_01", command="set_speed", int_value=60)
-        |
-        v
-Gateway: validate → policy check → async submit → BLE ACK → result
-        |
-        v
-AI Host reads structuredContent and responds to user
-```
 
 ### Dynamic Tool
 ```text

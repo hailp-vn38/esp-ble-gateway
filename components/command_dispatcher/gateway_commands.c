@@ -13,6 +13,7 @@
 #include "command_dispatcher_internal.h"
 #include "device_store.h"
 #include "device_schema.h"
+#include "device_state.h"
 #include "mcp_tool_exposure.h"
 
 static const char *TAG = "dispatcher";
@@ -140,7 +141,10 @@ static void cmd_delete_device(const gw_message_t *msg, dispatch_result_t *result
         return;
     }
 
-    /* Step 2: BLE peer forget. Failure is acceptable degradation. */
+    /* Step 2b: Clear runtime feature state. Failure is acceptable degradation. */
+    device_state_forget(msg->device_id);
+
+    /* Step 3: BLE peer forget. Failure is acceptable degradation. */
     int forget_rc = ble_central_forget_peer(
         existing.device_id, existing.ble_addr, existing.ble_addr_type,
         existing.has_ble_identity);
@@ -149,7 +153,7 @@ static void cmd_delete_device(const gw_message_t *msg, dispatch_result_t *result
                  msg->device_id, forget_rc);
     }
 
-    /* Step 3: device store delete. Failure is acceptable degradation. */
+    /* Step 4: device store delete. Failure is acceptable degradation. */
     device_store_result_t delete_rc = device_store_delete(msg->device_id);
     if (delete_rc != DEVICE_STORE_OK) {
         ESP_LOGW(TAG, "[DEVICE_DELETE_DEGRADED] device=%s store delete failed",
@@ -285,156 +289,13 @@ static void cmd_get_status(const gw_message_t *msg, dispatch_result_t *result)
     command_dispatcher_set_json_result(result, DISPATCH_STATUS_OK, payload);
 }
 
-static void cmd_list_device_capabilities(const gw_message_t *msg,
-                                         dispatch_result_t *result)
-{
-    if (!msg->has_device_id || msg->device_id[0] == '\0') {
-        command_dispatcher_set_text_result(result,
-                                           DISPATCH_STATUS_INVALID_ARGUMENT,
-                                           "Missing device_id");
-        return;
-    }
-
-    device_schema_snapshot_t snapshot;
-    esp_err_t error = device_schema_get(msg->device_id, &snapshot);
-    if (error == ESP_ERR_NOT_FOUND) {
-        command_dispatcher_set_text_result(result, DISPATCH_STATUS_NOT_FOUND,
-                                           "Device %s not found",
-                                           msg->device_id);
-        return;
-    }
-    if (error != ESP_OK) {
-        command_dispatcher_set_text_result(result,
-                                           DISPATCH_STATUS_INTERNAL_ERROR,
-                                           "Could not read device schema");
-        return;
-    }
-
-    device_schema_refresh_active_t refresh_active;
-    device_schema_refresh_completed_t refresh_completed;
-    device_schema_get_refresh_status(msg->device_id,
-                                     &refresh_active,
-                                     &refresh_completed);
-
-    cJSON *root = cJSON_CreateObject();
-    cJSON *tools_arr = cJSON_CreateArray();
-    cJSON *features_arr = cJSON_CreateArray();
-    cJSON *refresh_obj = cJSON_CreateObject();
-    if (root == NULL || tools_arr == NULL || features_arr == NULL ||
-        refresh_obj == NULL) {
-        cJSON_Delete(root);
-        cJSON_Delete(tools_arr);
-        cJSON_Delete(features_arr);
-        cJSON_Delete(refresh_obj);
-        command_dispatcher_set_text_result(result,
-                                           DISPATCH_STATUS_INTERNAL_ERROR,
-                                           "Out of memory");
-        return;
-    }
-
-    cJSON_AddStringToObject(root, "device_id", snapshot.device_id);
-    cJSON_AddStringToObject(root, "state",
-                           device_schema_state_name(snapshot.state));
-    cJSON_AddNumberToObject(root, "revision", snapshot.revision);
-    cJSON_AddItemToObject(root, "tools", tools_arr);
-    cJSON_AddItemToObject(root, "features", features_arr);
-
-    /* Refresh status. */
-    cJSON *active_obj = cJSON_CreateObject();
-    cJSON *completed_obj = cJSON_CreateObject();
-    if (active_obj != NULL && completed_obj != NULL) {
-        const char *refresh_state_str = "idle";
-        switch (refresh_active.state) {
-        case DEVICE_SCHEMA_REFRESH_QUEUED: refresh_state_str = "queued"; break;
-        case DEVICE_SCHEMA_REFRESH_RUNNING: refresh_state_str = "running"; break;
-        default: refresh_state_str = "idle"; break;
-        }
-        cJSON_AddNumberToObject(active_obj, "generation",
-                               refresh_active.generation);
-        cJSON_AddStringToObject(active_obj, "state", refresh_state_str);
-        cJSON_AddItemToObject(refresh_obj, "active", active_obj);
-
-        cJSON_AddNumberToObject(completed_obj, "generation",
-                               refresh_completed.generation);
-        cJSON_AddStringToObject(
-            completed_obj, "result",
-            device_schema_refresh_result_name(
-                refresh_completed.result));
-        cJSON_AddNumberToObject(completed_obj, "finished_at_ms",
-                               refresh_completed.finished_at_ms);
-        cJSON_AddItemToObject(refresh_obj, "last_completed", completed_obj);
-    } else {
-        cJSON_Delete(active_obj);
-        cJSON_Delete(completed_obj);
-    }
-    cJSON_AddItemToObject(root, "refresh", refresh_obj);
-
-    for (size_t i = 0; i < snapshot.tool_count; i++) {
-        const device_schema_tool_t *tool = &snapshot.tools[i];
-        cJSON *item = cJSON_CreateObject();
-        if (item == NULL) continue;
-        cJSON_AddStringToObject(item, "command", tool->command);
-        cJSON_AddStringToObject(item, "label", tool->label);
-        const char *value_type =
-            tool->value_type == 1 ? "boolean"
-                                  : tool->value_type == 2 ? "integer"
-                                                          : "none";
-        cJSON_AddStringToObject(item, "value_type", value_type);
-        cJSON_AddBoolToObject(item, "idempotent",
-                              (tool->flags &
-                               DEVICE_SCHEMA_FLAG_IDEMPOTENT) != 0);
-        cJSON_AddBoolToObject(item, "destructive",
-                              (tool->flags &
-                               DEVICE_SCHEMA_FLAG_DESTRUCTIVE) != 0);
-        if (tool->value_type == 2) {
-            cJSON_AddNumberToObject(item, "minimum", tool->min_value);
-            cJSON_AddNumberToObject(item, "maximum", tool->max_value);
-            cJSON_AddNumberToObject(item, "step", tool->step);
-            cJSON_AddStringToObject(item, "unit", tool->unit);
-        }
-        cJSON_AddItemToArray(tools_arr, item);
-    }
-
-    for (size_t i = 0; i < snapshot.feature_count; i++) {
-        const device_schema_feature_t *feat = &snapshot.features[i];
-        cJSON *item = cJSON_CreateObject();
-        if (item == NULL) continue;
-        cJSON_AddStringToObject(item, "feature_id", feat->feature_id);
-        cJSON_AddNumberToObject(item, "feature_type", feat->feature_type);
-        cJSON_AddNumberToObject(item, "property_id", feat->property_id);
-        cJSON_AddNumberToObject(item, "schema_version",
-                               feat->feature_schema_version);
-        if (feat->writable_tool_index >= 0 &&
-            (size_t)feat->writable_tool_index < snapshot.tool_count) {
-            cJSON_AddStringToObject(
-                item, "writable_command",
-                snapshot.tools[feat->writable_tool_index].command);
-        }
-        cJSON_AddItemToArray(features_arr, item);
-    }
-
-    bool printed = cJSON_PrintPreallocated(root, result->payload,
-                                           sizeof(result->payload), false);
-    cJSON_Delete(root);
-    if (!printed) {
-        command_dispatcher_set_text_result(result,
-                                           DISPATCH_STATUS_INTERNAL_ERROR,
-                                           "Schema list is too large");
-        return;
-    }
-    result->status = DISPATCH_STATUS_OK;
-    result->format = DISPATCH_RESULT_JSON;
-}
-
 int gateway_commands_register_defaults(void)
 {
     if (command_registry_register("add_device", cmd_add_device) != 0 ||
         command_registry_register("delete_device", cmd_delete_device) != 0 ||
         command_registry_register("edit_device", cmd_edit_device) != 0 ||
         command_registry_register("list_devices", cmd_list_devices) != 0 ||
-        command_registry_register("get_status", cmd_get_status) != 0 ||
-        command_registry_register("list_device_capabilities",
-                                  cmd_list_device_capabilities) != 0) {
+        command_registry_register("get_status", cmd_get_status) != 0) {
         return -1;
     }
     return 0;
