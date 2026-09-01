@@ -143,3 +143,30 @@ esp_err_t mcp_tool_name_generate(const char *device_name, const char *command,
     }
     return ESP_OK;
 }
+
+esp_err_t mcp_tool_name_generate_semantic(const char *semantic_name,
+                                           const char *device_name,
+                                           char *out_name, size_t out_len)
+{
+    if (semantic_name == NULL || device_name == NULL || out_name == NULL ||
+        out_len == 0 || semantic_name[0] == '\0') {
+        return ESP_ERR_INVALID_ARG;
+    }
+    for (const char *p = semantic_name; *p != '\0'; p++) {
+        if (!is_allowed_char(*p)) return ESP_ERR_INVALID_ARG;
+    }
+
+    char device_slug[DEVICE_NAME_MAX_LEN];
+    if (sanitize_device_name(device_name, device_slug, sizeof(device_slug)) == 0) {
+        return ESP_ERR_INVALID_ARG;
+    }
+
+    int written = snprintf(out_name, out_len, "%s_%s", semantic_name,
+                           device_slug);
+    if (written < 0 || (size_t)written >= out_len ||
+        written > MCP_DYNAMIC_TOOL_NAME_MAX) {
+        if (out_len > 0) out_name[0] = '\0';
+        return ESP_ERR_INVALID_SIZE;
+    }
+    return ESP_OK;
+}

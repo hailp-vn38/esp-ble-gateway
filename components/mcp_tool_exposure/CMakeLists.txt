@@ -6,6 +6,6 @@ idf_component_register(
          "mcp_tool_digest.c"
     INCLUDE_DIRS "include"
     PRIV_INCLUDE_DIRS "."
-    REQUIRES device_store device_schema nvs_flash mbedtls
+    REQUIRES device_store device_schema device_template nvs_flash mbedtls
              espressif__cjson freertos esp_timer memory_policy
 )

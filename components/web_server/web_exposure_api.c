@@ -9,6 +9,7 @@
 
 #include "device_schema.h"
 #include "device_store.h"
+#include "device_template.h"
 #include "mcp_tool_exposure.h"
 #include "web_http.h"
 
@@ -86,6 +87,26 @@ static esp_err_t exposure_get_handler(httpd_req_t *request)
                 cJSON_AddNumberToObject(item, "maximum", c->max_value);
                 cJSON_AddNumberToObject(item, "step", c->step);
                 cJSON_AddStringToObject(item, "unit", c->unit);
+            }
+
+            /* Check if this command is feature-bound. */
+            bool is_bound = mcp_tool_is_feature_bound(device_id, c->command);
+            cJSON_AddBoolToObject(item, "feature_bound", is_bound);
+
+            /* Find semantic name if this command maps to a feature. */
+            for (size_t f = 0; f < cap.feature_count; f++) {
+                const device_schema_feature_t *feat = &cap.features[f];
+                if (feat->writable_tool_index == (int8_t)i) {
+                    const device_template_t *tpl = device_template_resolve(
+                        feat->feature_type, feat->feature_schema_version);
+                    if (tpl != NULL) {
+                        cJSON_AddStringToObject(item, "feature_id",
+                                                feat->feature_id);
+                        cJSON_AddStringToObject(item, "semantic_name",
+                                                tpl->semantic_name);
+                    }
+                    break;
+                }
             }
 
             // Check exposure state.

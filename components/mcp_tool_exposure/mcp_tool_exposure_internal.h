@@ -12,8 +12,11 @@
 
 #define MCP_EXP_NVS_NAMESPACE "mcp_exp"
 #define MCP_EXP_NVS_KEY       "catalog"
-#define MCP_EXP_STORE_SCHEMA_VERSION 2
-#define MCP_EXP_NAMING_VERSION 2
+#define MCP_EXP_STORE_SCHEMA_VERSION 3
+#define MCP_EXP_NAMING_VERSION 3
+
+/* Persisted record flags (bitfield in flags byte). */
+#define MCP_EXP_FLAG_FEATURE_BOUND (1u << 0)
 
 typedef struct {
     char device_id[GW_MSG_DEVICE_ID_LEN];
@@ -21,7 +24,8 @@ typedef struct {
     uint8_t state;
     uint8_t reason;
     uint8_t naming_version;
-    uint8_t reserved;
+    uint8_t flags;             /* MCP_EXP_FLAG_FEATURE_BOUND = hidden from catalog */
+    char feature_id[GW_FEATURE_ID_LEN];
     uint8_t capability_digest[MCP_CAPABILITY_DIGEST_LEN];
 } mcp_exposure_persisted_record_t;
 
@@ -64,5 +68,18 @@ uint32_t mcp_tool_catalog_get_revision(void);
 void mcp_tool_catalog_get_snapshot(mcp_tool_binding_t *out,
                                   size_t capacity, size_t *out_count);
 void mcp_tool_catalog_remove_device(const char *device_id);
+
+/* Find catalog entry by device_id + feature_id. Returns NULL if not found. */
+const mcp_tool_binding_t *mcp_tool_catalog_find_by_feature(
+    const char *device_id, const char *feature_id);
+
+/* Mark a catalog entry as hidden/shown ( FEATURE_BOUND flag). */
+void mcp_tool_catalog_set_hidden(const char *tool_name, bool hidden);
+
+/* Semantic tool name generation (mcp_tool_name.c).
+ * Pattern: {semantic_name}_{device_slug} */
+esp_err_t mcp_tool_name_generate_semantic(const char *semantic_name,
+                                           const char *device_name,
+                                           char *out_name, size_t out_len);
 
 #endif /* MCP_TOOL_EXPOSURE_INTERNAL_H */

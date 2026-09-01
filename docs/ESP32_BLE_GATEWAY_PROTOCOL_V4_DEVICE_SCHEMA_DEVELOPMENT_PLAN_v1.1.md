@@ -668,7 +668,7 @@ Web render theo semantic features thay vì capability list/device type.
 
 ---
 
-## PHASE V4-09 — Semantic MCP + Xiaozhi MCP
+## PHASE V4-09 — Semantic MCP + Xiaozhi MCP ✅ DONE (2026-08-31)
 
 ### Mục tiêu
 
@@ -676,27 +676,27 @@ Expose semantic tools dựa trên schema/template, dùng chung cho local MCP và
 
 ### Checklist core catalog
 
-- [ ] `mcp_tool_exposure` đọc `device_schema`.
-- [ ] `mcp_tool_exposure` đọc `device_template`.
-- [ ] Đọc `device_state` khi cần.
-- [ ] Tạo semantic tool cho supported feature.
-- [ ] Tool name ổn định theo device + feature.
-- [ ] Semantic write route qua `feature_tool`.
-- [ ] Không hardcode device command.
+- [x] `mcp_tool_exposure` đọc `device_schema`.
+- [x] `mcp_tool_exposure` đọc `device_template`.
+- [x] Đọc `device_state` khi cần.
+- [x] Tạo semantic tool cho supported feature.
+- [x] Tool name ổn định theo device + feature.
+- [x] Semantic write route qua `feature_tool`.
+- [x] Không hardcode device command.
 
 ### Checklist duplicate policy
 
-- [ ] Raw tool bound vào feature bị hide mặc định.
-- [ ] Raw unbound tool vẫn expose.
-- [ ] Advanced/debug mode có thể expose raw bound tools nếu cần.
-- [ ] Default catalog không có 2 tools làm cùng action.
+- [x] Raw tool bound vào feature bị hide mặc định.
+- [x] Raw unbound tool vẫn expose.
+- [x] Advanced/debug mode có thể expose raw bound tools nếu cần.
+- [x] Default catalog không có 2 tools làm cùng action.
 
 ### Checklist Xiaozhi
 
-- [ ] Xiaozhi dùng cùng semantic catalog.
-- [ ] Không duplicate template mapping ở Xiaozhi layer.
-- [ ] Parameter schema giống local MCP.
-- [ ] State/read behavior giống local MCP.
+- [x] Xiaozhi dùng cùng semantic catalog.
+- [x] Không duplicate template mapping ở Xiaozhi layer.
+- [x] Parameter schema giống local MCP.
+- [x] State/read behavior giống local MCP.
 
 ### Checklist test
 
@@ -708,8 +708,8 @@ Expose semantic tools dựa trên schema/template, dùng chung cho local MCP và
 
 ### Exit criteria
 
-- [ ] Một semantic catalog phục vụ cả local MCP và Xiaozhi.
-- [ ] MCP không phụ thuộc device type.
+- [x] Một semantic catalog phục vụ cả local MCP và Xiaozhi.
+- [x] MCP không phụ thuộc device type.
 
 ---
 

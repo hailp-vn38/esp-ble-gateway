@@ -34,6 +34,8 @@ typedef struct {
     char device_id[GW_MSG_DEVICE_ID_LEN];
     char command[GW_MSG_COMMAND_LEN];
     char tool_name[MCP_DYNAMIC_TOOL_NAME_MAX + 1];
+    char feature_id[GW_FEATURE_ID_LEN];
+    bool feature_bound;
     mcp_exposure_state_t state;
     mcp_exposure_reason_t reason;
     uint8_t capability_digest[MCP_CAPABILITY_DIGEST_LEN];
@@ -43,6 +45,8 @@ typedef struct {
     char tool_name[MCP_DYNAMIC_TOOL_NAME_MAX + 1];
     char device_id[GW_MSG_DEVICE_ID_LEN];
     char command[GW_MSG_COMMAND_LEN];
+    char feature_id[GW_FEATURE_ID_LEN];
+    bool feature_bound;
     device_schema_tool_t capability;
 } mcp_tool_binding_t;
 
@@ -105,6 +109,19 @@ void mcp_tool_digest_compute(const device_schema_tool_t *cap,
                              uint8_t out[MCP_CAPABILITY_DIGEST_LEN]);
 bool mcp_tool_digest_match(const uint8_t a[MCP_CAPABILITY_DIGEST_LEN],
                            const uint8_t b[MCP_CAPABILITY_DIGEST_LEN]);
+
+// Semantic tool exposure by feature binding.
+esp_err_t mcp_tool_expose_feature(const char *device_id,
+                                   const char *feature_id,
+                                   const char *command,
+                                   const char *tool_name,
+                                   const device_schema_tool_t *cap);
+
+esp_err_t mcp_tool_unbind_feature(const char *device_id,
+                                   const char *feature_id);
+
+bool mcp_tool_is_feature_bound(const char *device_id,
+                                const char *command);
 
 #ifdef __cplusplus
 }

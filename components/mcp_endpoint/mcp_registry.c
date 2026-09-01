@@ -279,10 +279,25 @@ cJSON *mcp_dynamic_tool_build_json(const mcp_tool_binding_t *binding)
 
     // Trusted template description — no raw peripheral text (§19.1).
     char desc[192];
-    snprintf(desc, sizeof(desc), "Execute command '%s' on device '%s'.",
-             binding->command, device_display_name);
+    if (binding->feature_id[0] != '\0') {
+        /* Semantic tool — describe by feature purpose. */
+        snprintf(desc, sizeof(desc),
+                 "Control the %s on %s.",
+                 binding->capability.label[0] != '\0'
+                     ? binding->capability.label
+                     : "device",
+                 device_display_name);
+    } else {
+        snprintf(desc, sizeof(desc), "Execute command '%s' on device '%s'.",
+                 binding->command, device_display_name);
+    }
     cJSON_AddStringToObject(tool, "description", desc);
     cJSON_AddItemToObject(tool, "inputSchema", schema);
+
+    // Feature metadata (V4-09).
+    if (binding->feature_id[0] != '\0') {
+        cJSON_AddStringToObject(tool, "featureId", binding->feature_id);
+    }
 
     // Annotations (§19.4).
     cJSON_AddBoolToObject(annotations, "readOnlyHint", false);

@@ -30,6 +30,18 @@ const mcpTools = {
         label.className = 'text-sm font-semibold text-gray-800 break-words';
         label.textContent = command.label || command.command;
         heading.appendChild(label);
+        if (command.semantic_name) {
+            const badge = document.createElement('span');
+            badge.className = 'inline-flex rounded-full bg-blue-100 px-2 py-0.5 text-xs font-semibold text-blue-700';
+            badge.textContent = command.semantic_name;
+            heading.appendChild(badge);
+        }
+        if (command.feature_bound) {
+            const fb = document.createElement('span');
+            fb.className = 'inline-flex rounded-full bg-green-100 px-2 py-0.5 text-xs font-semibold text-green-700';
+            fb.textContent = i18n.t('device_detail.mcp_feature_bound');
+            heading.appendChild(fb);
+        }
         if (command.destructive) {
             const badge = document.createElement('span');
             badge.className = 'inline-flex rounded-full bg-red-100 px-2 py-0.5 text-xs font-semibold text-red-700';
@@ -41,7 +53,9 @@ const mcpTools = {
         toolName.textContent = command.tool_name || command.command;
         const description = document.createElement('p');
         description.className = 'mt-1 text-xs text-gray-500';
-        description.textContent = i18n.t('device_detail.mcp_row_desc');
+        description.textContent = command.semantic_name
+            ? i18n.t('device_detail.mcp_row_semantic_desc')
+            : i18n.t('device_detail.mcp_row_desc');
         identity.append(heading, toolName, description);
 
         const control = document.createElement('div');

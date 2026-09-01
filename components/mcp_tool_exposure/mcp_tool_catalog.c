@@ -19,6 +19,8 @@ typedef struct {
     char tool_name[MCP_DYNAMIC_TOOL_NAME_MAX + 1];
     char device_id[GW_MSG_DEVICE_ID_LEN];
     char command[GW_MSG_COMMAND_LEN];
+    char feature_id[GW_FEATURE_ID_LEN];
+    bool feature_bound;
     device_schema_tool_t capability;
 } catalog_entry_t;
 
@@ -92,6 +94,8 @@ esp_err_t mcp_tool_catalog_add(const mcp_tool_binding_t *binding)
     strlcpy(e->tool_name, binding->tool_name, sizeof(e->tool_name));
     strlcpy(e->device_id, binding->device_id, sizeof(e->device_id));
     strlcpy(e->command, binding->command, sizeof(e->command));
+    strlcpy(e->feature_id, binding->feature_id, sizeof(e->feature_id));
+    e->feature_bound = binding->feature_bound;
     memcpy(&e->capability, &binding->capability, sizeof(e->capability));
     s_count++;
     s_revision++;
@@ -139,7 +143,7 @@ const mcp_tool_binding_t *mcp_tool_catalog_find_ptr(const char *tool_name)
     xSemaphoreTake(mtx, portMAX_DELAY);
 
     size_t idx = find_by_name(tool_name);
-    if (idx >= s_count) {
+    if (idx >= s_count || s_entries[idx].feature_bound) {
         xSemaphoreGive(mtx);
         return NULL;
     }
@@ -170,9 +174,11 @@ void mcp_tool_catalog_get_snapshot(mcp_tool_binding_t *out,
     }
     xSemaphoreTake(mtx, portMAX_DELAY);
 
-    size_t n = s_count < capacity ? s_count : capacity;
-    for (size_t i = 0; i < n; i++) {
-        memcpy(&out[i], &s_entries[i], sizeof(mcp_tool_binding_t));
+    size_t n = 0;
+    for (size_t i = 0; i < s_count && n < capacity; i++) {
+        if (s_entries[i].feature_bound) continue;
+        memcpy(&out[n], &s_entries[i], sizeof(mcp_tool_binding_t));
+        n++;
     }
     *out_count = n;
 
@@ -208,4 +214,47 @@ void mcp_tool_catalog_remove_device(const char *device_id)
     xSemaphoreGive(mtx);
 
     if (changed && s_on_change != NULL) s_on_change(rev, s_change_context);
+}
+
+const mcp_tool_binding_t *mcp_tool_catalog_find_by_feature(
+    const char *device_id, const char *feature_id)
+{
+    if (device_id == NULL || feature_id == NULL || feature_id[0] == '\0') {
+        return NULL;
+    }
+    SemaphoreHandle_t mtx = ensure_mutex();
+    if (mtx == NULL) return NULL;
+    xSemaphoreTake(mtx, portMAX_DELAY);
+
+    for (size_t i = 0; i < s_count; i++) {
+        if (strcmp(s_entries[i].device_id, device_id) == 0 &&
+            strcmp(s_entries[i].feature_id, feature_id) == 0) {
+            const mcp_tool_binding_t *result =
+                (const mcp_tool_binding_t *)&s_entries[i];
+            xSemaphoreGive(mtx);
+            return result;
+        }
+    }
+    xSemaphoreGive(mtx);
+    return NULL;
+}
+
+void mcp_tool_catalog_set_hidden(const char *tool_name, bool hidden)
+{
+    if (tool_name == NULL) return;
+
+    SemaphoreHandle_t mtx = ensure_mutex();
+    if (mtx == NULL) return;
+    xSemaphoreTake(mtx, portMAX_DELAY);
+
+    size_t idx = find_by_name(tool_name);
+    if (idx < s_count && s_entries[idx].feature_bound != hidden) {
+        s_entries[idx].feature_bound = hidden;
+        s_revision++;
+    }
+
+    uint32_t rev = s_revision;
+    xSemaphoreGive(mtx);
+
+    if (s_on_change != NULL) s_on_change(rev, s_change_context);
 }
