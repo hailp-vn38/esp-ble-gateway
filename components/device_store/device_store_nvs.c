@@ -44,9 +44,9 @@ static esp_err_t save_entry(nvs_handle_t handle, int index,
     err = nvs_set_str(handle, key, entry->name);
     if (err != ESP_OK) return err;
 
+    /* Erase legacy type_N key — device-level type was removed in schema v3. */
     snprintf(key, sizeof(key), "type_%d", index);
-    err = nvs_set_str(handle, key, entry->type);
-    if (err != ESP_OK) return err;
+    (void)nvs_erase_key(handle, key);
 
     snprintf(key, sizeof(key), "addr_%d", index);
     if (entry->has_ble_identity) {

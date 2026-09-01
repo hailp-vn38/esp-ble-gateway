@@ -138,13 +138,13 @@ TEST_CASE("dynamic tools use the same command and device name identity",
     if (stored == DEVICE_STORE_OK) {
         TEST_ASSERT_EQUAL_INT(
             DEVICE_STORE_OK,
-            device_store_edit("AC:27:6E:CC:F2:26", "Kitchen LED", "light"));
+            device_store_edit("AC:27:6E:CC:F2:26", "Kitchen LED"));
     } else {
         TEST_ASSERT_EQUAL_INT(
             DEVICE_STORE_ERR_NOT_FOUND, stored);
         TEST_ASSERT_EQUAL_INT(
             DEVICE_STORE_OK,
-            device_store_add("AC:27:6E:CC:F2:26", "Kitchen LED", "light"));
+            device_store_add("AC:27:6E:CC:F2:26", "Kitchen LED"));
     }
 
     mcp_tool_binding_t binding = {0};

@@ -57,10 +57,9 @@ static void cmd_add_device(const gw_message_t *msg, dispatch_result_t *result)
     }
 
     const char *name = msg->name[0] != '\0' ? msg->name : msg->device_id;
-    // Messages no longer carry a device-level type (protocol v4); new
-    // devices start untyped until device_schema replaces it (V4-03+).
+    // device_store_add takes (device_id, name) — no device-level type.
     device_store_result_t store_rc =
-        device_store_add(msg->device_id, name, "generic");
+        device_store_add(msg->device_id, name);
     if (store_rc != DEVICE_STORE_OK) {
         command_dispatcher_set_text_result(result, status_for_store_result(store_rc),
                                            "Could not add device %s",
@@ -179,7 +178,7 @@ static void cmd_edit_device(const gw_message_t *msg, dispatch_result_t *result)
     }
 
     device_store_result_t edit_rc =
-        device_store_edit(msg->device_id, name, NULL);
+        device_store_edit(msg->device_id, name);
     if (edit_rc != DEVICE_STORE_OK) {
         command_dispatcher_set_text_result(result,
                                            status_for_store_result(edit_rc),
@@ -233,7 +232,6 @@ static void cmd_list_devices(const gw_message_t *msg, dispatch_result_t *result)
 
         cJSON_AddStringToObject(item, "device_id", devices[i].device_id);
         cJSON_AddStringToObject(item, "name", devices[i].name);
-        cJSON_AddStringToObject(item, "type", devices[i].type);
         cJSON_AddBoolToObject(item, "connected", connected);
         cJSON_AddBoolToObject(item, "has_ble_addr", devices[i].has_ble_identity);
         if (devices[i].has_ble_identity) {

@@ -83,43 +83,35 @@ const devices = {
             
             // Status indicator color
             const statusColor = dev.status === 'online' ? 'bg-green-500' : 'bg-gray-400';
-            const typeIconMap = {
-                'sensor': 'ph-thermometer text-orange-500 bg-orange-50',
-                'actuator': 'ph-plugs-connected text-blue-500 bg-blue-50',
-                'beacon': 'ph-broadcast text-purple-500 bg-purple-50',
-                'other': 'ph-bluetooth text-gray-500 bg-gray-100'
-            };
-            const iconClass = typeIconMap[dev.type] || typeIconMap['other'];
             const safeName = escapeHtml(dev.customName);
             const safeMac = escapeHtml(dev.mac);
 
             card.innerHTML = `
                 <!-- Colored top accent -->
                 <div class="absolute top-0 left-0 w-full h-1 ${dev.status === 'online' ? 'bg-green-400' : 'bg-gray-200'}"></div>
-                
+
                 <div class="flex justify-between items-start mb-4">
                     <div class="flex items-center">
-                        <div class="w-10 h-10 rounded-lg flex items-center justify-center mr-3 ${iconClass.split(' ').slice(1).join(' ')}">
-                            <i class="ph ${iconClass.split(' ')[0]} text-2xl"></i>
+                        <div class="w-10 h-10 rounded-lg flex items-center justify-center mr-3 bg-gray-100">
+                            <i class="ph ph-bluetooth text-gray-500 text-2xl"></i>
                         </div>
                         <div>
                             <h3 class="font-bold text-gray-900 truncate pr-2 max-w-[150px]" title="${safeName}">${safeName}</h3>
                             <p class="text-xs text-gray-500 font-mono">${safeMac}</p>
                         </div>
                     </div>
-                    
+
                     <div class="text-gray-300 group-hover:text-brand-500 transition-colors">
                         <i class="ph ph-caret-right text-xl"></i>
                     </div>
                 </div>
-                
+
                 <div class="mt-4 pt-4 border-t border-gray-100">
                     <div class="flex justify-between items-center text-sm">
                         <span class="flex items-center text-gray-600">
                             <span class="w-2 h-2 rounded-full ${statusColor} mr-2"></span>
                             ${dev.status === 'online' ? 'Connected' : 'Offline'}
                         </span>
-                        <span class="text-xs text-gray-400 capitalize">${escapeHtml(dev.type)}</span>
                     </div>
                 </div>
             `;
@@ -133,8 +125,6 @@ const devices = {
         document.getElementById('device-advanced-section').open = false;
         document.getElementById('detail-name').textContent = dev.customName;
         document.getElementById('detail-mac').textContent = dev.mac;
-        document.getElementById('detail-type').textContent = dev.type;
-        document.getElementById('detail-header-type').textContent = dev.type;
 
         const duplicateIdentifier = dev.id === dev.mac;
         document.getElementById('detail-identifier-row').classList.toggle('hidden', !duplicateIdentifier);
@@ -150,16 +140,9 @@ const devices = {
             'hidden', dev.status === 'online');
 
         // Icon
-        const typeIconMap = {
-            'sensor': 'ph-thermometer text-orange-500 bg-orange-50',
-            'actuator': 'ph-plugs-connected text-blue-500 bg-blue-50',
-            'beacon': 'ph-broadcast text-purple-500 bg-purple-50',
-            'other': 'ph-bluetooth text-gray-500 bg-gray-100'
-        };
-        const iconClass = typeIconMap[dev.type] || typeIconMap['other'];
         const iconContainer = document.getElementById('detail-icon');
-        iconContainer.className = `w-12 h-12 rounded-lg flex items-center justify-center mr-4 text-2xl flex-shrink-0 ${iconClass.split(' ').slice(1).join(' ')}`;
-        iconContainer.innerHTML = `<i class="ph ${iconClass.split(' ')[0]}"></i>`;
+        iconContainer.className = 'w-12 h-12 rounded-lg flex items-center justify-center mr-4 text-2xl flex-shrink-0 bg-gray-100';
+        iconContainer.innerHTML = '<i class="ph ph-bluetooth text-gray-500"></i>';
 
         i18n.applyTranslations();
         nav.switchTab('device-detail', updateRoute);
@@ -193,16 +176,15 @@ const devices = {
         if(!state.selectedDeviceDetail) return;
         
         const newName = document.getElementById('input-edit-name').value.trim();
-        const newType = document.getElementById('input-edit-type').value;
         const btn = document.getElementById('btn-save-edit');
-        
+
         if(!newName) {
             ui.showToast(i18n.t('device_detail.name_required'), "error");
             document.getElementById('input-edit-name').focus();
             return;
         }
 
-        if(newName === state.selectedDeviceDetail.customName && newType === state.selectedDeviceDetail.type) {
+        if(newName === state.selectedDeviceDetail.customName) {
             ui.closeEditModal();
             return;
         }
@@ -213,14 +195,13 @@ const devices = {
         btn.classList.add('opacity-80', 'cursor-not-allowed');
 
         try {
-            await api.updateDevice(state.selectedDeviceDetail.id, { customName: newName, type: newType });
-            
+            await api.updateDevice(state.selectedDeviceDetail.id, { customName: newName });
+
             // Update local state
             const devIndex = state.connectedDevices.findIndex(d => d.id === state.selectedDeviceDetail.id);
             if(devIndex > -1) {
                 state.connectedDevices[devIndex].customName = newName;
-                state.connectedDevices[devIndex].type = newType;
-                
+
                 // Update current detail view
                 this.openDetailView(state.connectedDevices[devIndex]);
                 
@@ -515,7 +496,6 @@ const devices = {
         if (!state.selectedDeviceForAdd) return;
 
         const nameInput = document.getElementById('input-custom-name').value.trim();
-        const typeInput = document.getElementById('input-device-type').value;
         const btn = document.getElementById('btn-confirm-add');
         
         if(!nameInput) {
@@ -535,7 +515,6 @@ const devices = {
             mac: state.selectedDeviceForAdd.mac,
             addrType: state.selectedDeviceForAdd.addrType,
             customName: nameInput,
-            type: typeInput,
             rssi: state.selectedDeviceForAdd.rssi,
             status: 'offline'
         };

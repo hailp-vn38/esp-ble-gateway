@@ -41,11 +41,10 @@ int device_store_entry_parse_ble_addr(const char *text, uint8_t addr[6])
 }
 
 bool device_store_entry_create(device_entry_t *entry, const char *device_id,
-                               const char *name, const char *type)
+                               const char *name)
 {
     if (entry == NULL || !valid_text(device_id, DEVICE_ID_MAX_LEN) ||
-        !valid_text(name, DEVICE_NAME_MAX_LEN) ||
-        !valid_text(type, DEVICE_TYPE_MAX_LEN)) {
+        !valid_text(name, DEVICE_NAME_MAX_LEN)) {
         return false;
     }
 
@@ -55,21 +54,16 @@ bool device_store_entry_create(device_entry_t *entry, const char *device_id,
     memset(entry, 0, sizeof(*entry));
     strlcpy(entry->device_id, device_id, sizeof(entry->device_id));
     strlcpy(entry->name, name, sizeof(entry->name));
-    strlcpy(entry->type, type, sizeof(entry->type));
     return true;
 }
 
-bool device_store_entry_edit(device_entry_t *entry, const char *new_name,
-                             const char *new_type)
+bool device_store_entry_edit(device_entry_t *entry, const char *new_name)
 {
-    if (entry == NULL ||
-        (new_name != NULL && !valid_text(new_name, DEVICE_NAME_MAX_LEN)) ||
-        (new_type != NULL && !valid_text(new_type, DEVICE_TYPE_MAX_LEN)) ||
-        (new_name == NULL && new_type == NULL)) {
+    if (entry == NULL || new_name == NULL ||
+        !valid_text(new_name, DEVICE_NAME_MAX_LEN)) {
         return false;
     }
 
-    if (new_name != NULL) strlcpy(entry->name, new_name, sizeof(entry->name));
-    if (new_type != NULL) strlcpy(entry->type, new_type, sizeof(entry->type));
+    strlcpy(entry->name, new_name, sizeof(entry->name));
     return true;
 }

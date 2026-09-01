@@ -11,9 +11,8 @@
 
 // Entry validation/identity helpers (device_store_entry.c).
 bool device_store_entry_create(device_entry_t *entry, const char *device_id,
-                               const char *name, const char *type);
-bool device_store_entry_edit(device_entry_t *entry, const char *new_name,
-                             const char *new_type);
+                               const char *name);
+bool device_store_entry_edit(device_entry_t *entry, const char *new_name);
 
 // Parses "AA:BB:CC:DD:EE:FF" (or '-' separators) into NimBLE byte order.
 // Only used by the legacy schema v1 migration loader; never by create paths.

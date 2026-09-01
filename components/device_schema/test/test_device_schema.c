@@ -274,7 +274,7 @@ TEST_CASE("discovery: begin → tool_item → feature_item → end commits",
     reset_and_init();
 
     /* Register device in device_store so schema_get can find it. */
-    device_store_add("dev1", "Test Device", "switch");
+    device_store_add("dev1", "Test Device");
 
     device_schema_set_submitter(test_submitter);
     s_submit_called = false;
@@ -355,7 +355,7 @@ TEST_CASE("discovery: begin → tool_item → feature_item → end commits",
 TEST_CASE("discovery: missing tool_item breaks staging", "[device_schema]")
 {
     reset_and_init();
-    device_store_add("dev2", "Test2", "switch");
+    device_store_add("dev2", "Test2");
     device_schema_set_submitter(test_submitter);
     s_submit_called = false;
 
@@ -386,7 +386,7 @@ TEST_CASE("discovery: missing tool_item breaks staging", "[device_schema]")
 TEST_CASE("discovery: duplicate tool command breaks staging", "[device_schema]")
 {
     reset_and_init();
-    device_store_add("dev3", "Test3", "switch");
+    device_store_add("dev3", "Test3");
     device_schema_set_submitter(test_submitter);
     s_submit_called = false;
 
@@ -420,7 +420,7 @@ TEST_CASE("discovery: duplicate tool command breaks staging", "[device_schema]")
 TEST_CASE("discovery: duplicate feature_id breaks staging", "[device_schema]")
 {
     reset_and_init();
-    device_store_add("dev4", "Test4", "switch");
+    device_store_add("dev4", "Test4");
     device_schema_set_submitter(test_submitter);
     s_submit_called = false;
 
@@ -462,7 +462,7 @@ TEST_CASE("discovery: feature with non-existent tool breaks staging",
           "[device_schema]")
 {
     reset_and_init();
-    device_store_add("dev5", "Test5", "switch");
+    device_store_add("dev5", "Test5");
     device_schema_set_submitter(test_submitter);
     s_submit_called = false;
 
@@ -499,7 +499,7 @@ TEST_CASE("discovery: feature with non-existent tool breaks staging",
 TEST_CASE("forget clears committed schema", "[device_schema]")
 {
     reset_and_init();
-    device_store_add("dev6", "Test6", "switch");
+    device_store_add("dev6", "Test6");
     device_schema_set_submitter(test_submitter);
     s_submit_called = false;
 
@@ -538,7 +538,7 @@ TEST_CASE("forget clears committed schema", "[device_schema]")
 static void commit_schema_for_dev7(void)
 {
     reset_and_init();
-    device_store_add("dev7", "Persist7", "switch");
+    device_store_add("dev7", "Persist7");
     device_schema_set_submitter(test_submitter);
     s_submit_called = false;
 
@@ -582,7 +582,7 @@ TEST_CASE("reboot: valid dev_schema loaded from NVS", "[device_schema]")
     TEST_ASSERT_EQUAL_INT(ESP_OK, device_schema_init());
 
     /* Device must be re-registered in device_store for load to succeed. */
-    device_store_add("dev7", "Persist7", "switch");
+    device_store_add("dev7", "Persist7");
 
     /* Re-init again so schema_load_persisted runs with device registered. */
     device_schema_reset_for_test();

@@ -7,6 +7,9 @@
 
 static const char *TAG = "device_store";
 
+/* Buffer for reading the legacy type_N field during v2 migration. */
+#define DEVICE_TYPE_MAX_LEN_V2 16
+
 // Classifies an NVS read failure for a key whose absence means the record
 // is incomplete rather than the storage being broken.
 static device_store_result_t classify_key_error(esp_err_t err)
@@ -56,9 +59,10 @@ static device_store_result_t load_entry_v1(nvs_handle_t handle, int index,
     }
 
     snprintf(key, sizeof(key), "type_%d", index);
-    length = sizeof(entry->type);
-    if (nvs_get_str(handle, key, entry->type, &length) != ESP_OK) {
-        strlcpy(entry->type, "generic", sizeof(entry->type));
+    char type_buf[DEVICE_TYPE_MAX_LEN_V2];
+    length = sizeof(type_buf);
+    if (nvs_get_str(handle, key, type_buf, &length) != ESP_OK) {
+        /* type_N missing in legacy record — acceptable. */
     }
 
     snprintf(key, sizeof(key), "addr_%d", index);
@@ -79,7 +83,7 @@ static device_store_result_t load_entry_v1(nvs_handle_t handle, int index,
     return DEVICE_STORE_OK;
 }
 
-// Current-schema records: id/name/type are required; addr/atype must be
+// Schema v2 records: id/name/type are required; addr/atype must be
 // either both present or both absent.
 static device_store_result_t load_entry_v2(nvs_handle_t handle, int index,
                                            device_entry_t *entry)
@@ -96,8 +100,10 @@ static device_store_result_t load_entry_v2(nvs_handle_t handle, int index,
     result = load_required_str_v2(handle, key, entry->name, sizeof(entry->name));
     if (result != DEVICE_STORE_OK) return result;
 
+    /* type_N is required in v2 but discarded — the field was removed in v3. */
     snprintf(key, sizeof(key), "type_%d", index);
-    result = load_required_str_v2(handle, key, entry->type, sizeof(entry->type));
+    char type_buf[DEVICE_TYPE_MAX_LEN_V2];
+    result = load_required_str_v2(handle, key, type_buf, sizeof(type_buf));
     if (result != DEVICE_STORE_OK) return result;
 
     snprintf(key, sizeof(key), "addr_%d", index);
@@ -121,6 +127,42 @@ static device_store_result_t load_entry_v2(nvs_handle_t handle, int index,
     return DEVICE_STORE_OK;
 }
 
+// Schema v3: device-level type removed.  id/name are required; addr/atype
+// must be either both present or both absent.
+static device_store_result_t load_entry_v3(nvs_handle_t handle, int index,
+                                           device_entry_t *entry)
+{
+    char key[16];
+    memset(entry, 0, sizeof(*entry));
+
+    snprintf(key, sizeof(key), "id_%d", index);
+    device_store_result_t result =
+        load_required_str_v2(handle, key, entry->device_id, sizeof(entry->device_id));
+    if (result != DEVICE_STORE_OK) return result;
+
+    snprintf(key, sizeof(key), "name_%d", index);
+    result = load_required_str_v2(handle, key, entry->name, sizeof(entry->name));
+    if (result != DEVICE_STORE_OK) return result;
+
+    snprintf(key, sizeof(key), "addr_%d", index);
+    size_t address_len = sizeof(entry->ble_addr);
+    esp_err_t addr_err = nvs_get_blob(handle, key, entry->ble_addr, &address_len);
+
+    snprintf(key, sizeof(key), "atype_%d", index);
+    uint8_t addr_type = 0;
+    esp_err_t type_err = nvs_get_u8(handle, key, &addr_type);
+
+    if (addr_err == ESP_OK && type_err == ESP_OK) {
+        if (address_len != sizeof(entry->ble_addr)) return DEVICE_STORE_ERR_CORRUPT;
+        entry->ble_addr_type = addr_type;
+        entry->has_ble_identity = true;
+    } else if (addr_err != ESP_ERR_NVS_NOT_FOUND ||
+               type_err != ESP_ERR_NVS_NOT_FOUND) {
+        return DEVICE_STORE_ERR_CORRUPT;
+    }
+    return DEVICE_STORE_OK;
+}
+
 device_store_result_t device_store_migration_load_entry(
     nvs_handle_t handle, uint8_t stored_schema, int index,
     device_entry_t *out_entry)
@@ -128,8 +170,10 @@ device_store_result_t device_store_migration_load_entry(
     switch (stored_schema) {
     case 1:
         return load_entry_v1(handle, index, out_entry);
-    case DEVICE_STORE_SCHEMA_VERSION:
+    case 2:
         return load_entry_v2(handle, index, out_entry);
+    case DEVICE_STORE_SCHEMA_VERSION:
+        return load_entry_v3(handle, index, out_entry);
     default:
         // The caller rejects unknown/future schemas before reaching here.
         ESP_LOGE(TAG, "No loader for schema v%u", stored_schema);

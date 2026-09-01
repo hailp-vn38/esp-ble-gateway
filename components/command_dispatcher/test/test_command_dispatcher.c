@@ -239,7 +239,7 @@ TEST_CASE("dispatcher reports unknown gateway command as not found",
 TEST_CASE("dispatcher returns JSON format for list devices", "[dispatcher]")
 {
     fresh_frozen_dispatcher();
-    TEST_ASSERT_EQUAL_INT(0, device_store_add("plug-1", "Desk", "switch"));
+    TEST_ASSERT_EQUAL_INT(0, device_store_add("plug-1", "Desk"));
     gw_message_t message = gateway_message("list_devices");
 
     dispatch_result_t result;

@@ -8,8 +8,7 @@
 #define DEVICE_STORE_MAX_DEVICES   16
 #define DEVICE_ID_MAX_LEN          32
 #define DEVICE_NAME_MAX_LEN        32
-#define DEVICE_TYPE_MAX_LEN        16
-#define DEVICE_STORE_SCHEMA_VERSION 2
+#define DEVICE_STORE_SCHEMA_VERSION 3
 
 // Highest BLE address type accepted by the store (NimBLE: 0=public,
 // 1=random static/private, 2=public ID, 3=random ID).
@@ -39,7 +38,6 @@ typedef enum {
 typedef struct {
     char device_id[DEVICE_ID_MAX_LEN];
     char name[DEVICE_NAME_MAX_LEN];
-    char type[DEVICE_TYPE_MAX_LEN];
 
     uint8_t ble_addr[6];
     uint8_t ble_addr_type;
@@ -50,14 +48,12 @@ typedef struct {
 // use a fresh boot or the test-only reset hook to reload.
 device_store_result_t device_store_init(void);
 
-device_store_result_t device_store_add(const char *device_id, const char *name,
-                                       const char *type);
+device_store_result_t device_store_add(const char *device_id, const char *name);
 
 device_store_result_t device_store_delete(const char *device_id);
 
 device_store_result_t device_store_edit(const char *device_id,
-                                        const char *new_name,
-                                        const char *new_type);
+                                        const char *new_name);
 
 // Copy-out read: never exposes internal cache pointers.
 device_store_result_t device_store_get(const char *device_id,

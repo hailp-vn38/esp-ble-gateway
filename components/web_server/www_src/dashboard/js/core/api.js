@@ -21,7 +21,6 @@ const api = {
             mac: device.ble_addr || device.device_id,
             addrType: device.ble_addr_type || 0,
             customName: device.name,
-            type: device.type || 'other',
             status: device.connected ? 'online' : 'offline',
             rssi: null
         }));
@@ -33,7 +32,6 @@ const api = {
             body: JSON.stringify({
                 device_id: data.id,
                 name: data.customName,
-                type: data.type,
                 ble_addr: data.mac,
                 ble_addr_type: data.addrType
             })
@@ -68,8 +66,7 @@ const api = {
             headers: {'Content-Type': 'application/json'},
             body: JSON.stringify({
                 device_id: deviceId,
-                name: data.customName,
-                type: data.type
+                name: data.customName
             })
         });
     },

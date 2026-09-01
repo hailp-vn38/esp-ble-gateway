@@ -75,11 +75,10 @@ device_store_result_t device_store_init(void)
     return result;
 }
 
-device_store_result_t device_store_add(const char *device_id, const char *name,
-                                       const char *type)
+device_store_result_t device_store_add(const char *device_id, const char *name)
 {
     device_entry_t entry;
-    if (!device_store_entry_create(&entry, device_id, name, type)) {
+    if (!device_store_entry_create(&entry, device_id, name)) {
         return DEVICE_STORE_ERR_INVALID_ARG;
     }
     if (!lock_store()) return DEVICE_STORE_ERR_BUSY;
@@ -153,8 +152,7 @@ device_store_result_t device_store_delete(const char *device_id)
 }
 
 device_store_result_t device_store_edit(const char *device_id,
-                                        const char *new_name,
-                                        const char *new_type)
+                                        const char *new_name)
 {
     if (device_id == NULL) return DEVICE_STORE_ERR_INVALID_ARG;
     if (!lock_store()) return DEVICE_STORE_ERR_BUSY;
@@ -170,7 +168,7 @@ device_store_result_t device_store_edit(const char *device_id,
     }
 
     device_entry_t updated = *entry;
-    if (!device_store_entry_edit(&updated, new_name, new_type)) {
+    if (!device_store_entry_edit(&updated, new_name)) {
         unlock_store();
         return DEVICE_STORE_ERR_INVALID_ARG;
     }

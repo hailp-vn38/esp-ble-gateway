@@ -23,24 +23,23 @@ TEST_CASE("init is single shot", "[device_store]")
 TEST_CASE("adds, reads and rejects duplicates", "[device_store]")
 {
     TEST_ASSERT_EQUAL_INT(DEVICE_STORE_OK,
-                          device_store_add("plug-1", "Desk plug", "switch"));
+                          device_store_add("plug-1", "Desk plug"));
     TEST_ASSERT_EQUAL_INT(DEVICE_STORE_ERR_DUPLICATE_ID,
-                          device_store_add("plug-1", "Duplicate", "switch"));
+                          device_store_add("plug-1", "Duplicate"));
     TEST_ASSERT_EQUAL_INT(DEVICE_STORE_ERR_INVALID_ARG,
-                          device_store_add(NULL, "Null id", "switch"));
+                          device_store_add(NULL, "Null id"));
     TEST_ASSERT_EQUAL_INT(DEVICE_STORE_ERR_INVALID_ARG,
-                          device_store_add("", "Empty id", "switch"));
+                          device_store_add("", "Empty id"));
 
     char oversized[DEVICE_ID_MAX_LEN + 1];
     memset(oversized, 'a', sizeof(oversized));
     oversized[sizeof(oversized) - 1] = '\0';
     TEST_ASSERT_EQUAL_INT(DEVICE_STORE_ERR_INVALID_ARG,
-                          device_store_add(oversized, "Too long", "switch"));
+                          device_store_add(oversized, "Too long"));
 
     device_entry_t entry;
     TEST_ASSERT_EQUAL_INT(DEVICE_STORE_OK, device_store_get("plug-1", &entry));
     TEST_ASSERT_EQUAL_STRING("Desk plug", entry.name);
-    TEST_ASSERT_EQUAL_STRING("switch", entry.type);
     TEST_ASSERT_FALSE(entry.has_ble_identity);
 
     TEST_ASSERT_EQUAL_INT(DEVICE_STORE_ERR_NOT_FOUND,
@@ -50,19 +49,18 @@ TEST_CASE("adds, reads and rejects duplicates", "[device_store]")
 TEST_CASE("edits and deletes persisted entries", "[device_store]")
 {
     TEST_ASSERT_EQUAL_INT(DEVICE_STORE_OK,
-                          device_store_add("sensor-1", "Old", "generic"));
+                          device_store_add("sensor-1", "Old"));
     TEST_ASSERT_EQUAL_INT(DEVICE_STORE_OK,
-                          device_store_edit("sensor-1", "Window", "sensor"));
+                          device_store_edit("sensor-1", "Window"));
 
     device_entry_t entry;
     TEST_ASSERT_EQUAL_INT(DEVICE_STORE_OK, device_store_get("sensor-1", &entry));
     TEST_ASSERT_EQUAL_STRING("Window", entry.name);
-    TEST_ASSERT_EQUAL_STRING("sensor", entry.type);
 
     TEST_ASSERT_EQUAL_INT(DEVICE_STORE_ERR_NOT_FOUND,
-                          device_store_edit("missing", "New", NULL));
+                          device_store_edit("missing", "New"));
     TEST_ASSERT_EQUAL_INT(DEVICE_STORE_ERR_INVALID_ARG,
-                          device_store_edit("sensor-1", NULL, NULL));
+                          device_store_edit("sensor-1", NULL));
 
     TEST_ASSERT_EQUAL_INT(DEVICE_STORE_OK, device_store_delete("sensor-1"));
     TEST_ASSERT_EQUAL_INT(DEVICE_STORE_ERR_NOT_FOUND,
@@ -75,7 +73,7 @@ TEST_CASE("persists BLE identity across re-init", "[device_store]")
 {
     const uint8_t address[] = {6, 5, 4, 3, 2, 1};
     TEST_ASSERT_EQUAL_INT(DEVICE_STORE_OK,
-                          device_store_add("lamp-1", "Lamp", "light"));
+                          device_store_add("lamp-1", "Lamp"));
     TEST_ASSERT_EQUAL_INT(
         DEVICE_STORE_OK,
         device_store_set_ble_identity("lamp-1", address, 1));
@@ -93,7 +91,7 @@ TEST_CASE("identity setter validates arguments and target", "[device_store]")
 {
     const uint8_t address[] = {1, 2, 3, 4, 5, 6};
     TEST_ASSERT_EQUAL_INT(DEVICE_STORE_OK,
-                          device_store_add("dev-a", "A", "generic"));
+                          device_store_add("dev-a", "A"));
 
     TEST_ASSERT_EQUAL_INT(
         DEVICE_STORE_ERR_INVALID_ARG,
@@ -120,8 +118,8 @@ TEST_CASE("rejects duplicate canonical BLE identity", "[device_store]")
 {
     const uint8_t address[] = {0xAA, 0xBB, 0xCC, 0xDD, 0xEE, 0xFF};
     const uint8_t other[] = {0x01, 0x02, 0x03, 0x04, 0x05, 0x06};
-    TEST_ASSERT_EQUAL_INT(DEVICE_STORE_OK, device_store_add("d1", "D1", "generic"));
-    TEST_ASSERT_EQUAL_INT(DEVICE_STORE_OK, device_store_add("d2", "D2", "generic"));
+    TEST_ASSERT_EQUAL_INT(DEVICE_STORE_OK, device_store_add("d1", "D1"));
+    TEST_ASSERT_EQUAL_INT(DEVICE_STORE_OK, device_store_add("d2", "D2"));
 
     TEST_ASSERT_EQUAL_INT(DEVICE_STORE_OK,
                           device_store_set_ble_identity("d1", address, 0));
@@ -140,9 +138,9 @@ TEST_CASE("rejects duplicate canonical BLE identity", "[device_store]")
 
 TEST_CASE("compacts entries after deletion across re-init", "[device_store]")
 {
-    TEST_ASSERT_EQUAL_INT(DEVICE_STORE_OK, device_store_add("a", "A", "generic"));
-    TEST_ASSERT_EQUAL_INT(DEVICE_STORE_OK, device_store_add("b", "B", "generic"));
-    TEST_ASSERT_EQUAL_INT(DEVICE_STORE_OK, device_store_add("c", "C", "generic"));
+    TEST_ASSERT_EQUAL_INT(DEVICE_STORE_OK, device_store_add("a", "A"));
+    TEST_ASSERT_EQUAL_INT(DEVICE_STORE_OK, device_store_add("b", "B"));
+    TEST_ASSERT_EQUAL_INT(DEVICE_STORE_OK, device_store_add("c", "C"));
     TEST_ASSERT_EQUAL_INT(DEVICE_STORE_OK, device_store_delete("b"));
 
     reload_store();
@@ -159,8 +157,8 @@ TEST_CASE("compacts entries after deletion across re-init", "[device_store]")
 
 TEST_CASE("snapshot never truncates silently", "[device_store]")
 {
-    TEST_ASSERT_EQUAL_INT(DEVICE_STORE_OK, device_store_add("s1", "S1", "generic"));
-    TEST_ASSERT_EQUAL_INT(DEVICE_STORE_OK, device_store_add("s2", "S2", "generic"));
+    TEST_ASSERT_EQUAL_INT(DEVICE_STORE_OK, device_store_add("s1", "S1"));
+    TEST_ASSERT_EQUAL_INT(DEVICE_STORE_OK, device_store_add("s2", "S2"));
 
     size_t required = 0;
     device_entry_t entries[DEVICE_STORE_MAX_DEVICES];
@@ -191,7 +189,7 @@ TEST_CASE("MAC-looking device id does not imply BLE identity", "[device_store]")
 {
     TEST_ASSERT_EQUAL_INT(
         DEVICE_STORE_OK,
-        device_store_add("11:22:33:44:55:66", "Legacy lamp", "light"));
+        device_store_add("11:22:33:44:55:66", "Legacy lamp"));
 
     device_entry_t entry;
     TEST_ASSERT_EQUAL_INT(DEVICE_STORE_OK, device_store_get("11:22:33:44:55:66", &entry));
@@ -209,8 +207,8 @@ TEST_CASE("store reports full at configured capacity", "[device_store]")
     char id[DEVICE_ID_MAX_LEN];
     for (int i = 0; i < DEVICE_STORE_MAX_DEVICES; i++) {
         snprintf(id, sizeof(id), "cap-%02d", i);
-        TEST_ASSERT_EQUAL_INT(DEVICE_STORE_OK, device_store_add(id, id, "generic"));
+        TEST_ASSERT_EQUAL_INT(DEVICE_STORE_OK, device_store_add(id, id));
     }
     TEST_ASSERT_EQUAL_INT(DEVICE_STORE_ERR_FULL,
-                          device_store_add("cap-overflow", "Overflow", "generic"));
+                          device_store_add("cap-overflow", "Overflow"));
 }

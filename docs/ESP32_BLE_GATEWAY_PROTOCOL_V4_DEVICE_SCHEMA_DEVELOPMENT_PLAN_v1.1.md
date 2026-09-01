@@ -502,43 +502,43 @@ Xóa device-level type khỏi Gateway nhưng giữ registered device identity.
 
 ### Checklist device_store
 
-- [ ] Xóa `DEVICE_TYPE_MAX_LEN`.
-- [ ] Xóa `device_entry_t.type`.
-- [ ] `device_store_add(device_id, name, type)` -> `(device_id, name)`.
-- [ ] `device_store_edit(device_id, name, type)` -> `(device_id, name)`.
-- [ ] Bump `DEVICE_STORE_SCHEMA_VERSION` lên 3.
-- [ ] Writer không ghi `type_N`.
-- [ ] Loader schema 3 không cần type.
-- [ ] Migration v2 -> v3 giữ id/name/BLE identity.
-- [ ] Migration v2 -> v3 bỏ `type_N`.
-- [ ] Erase obsolete `type_N` sau successful rewrite.
+- [x] Xóa `DEVICE_TYPE_MAX_LEN`.
+- [x] Xóa `device_entry_t.type`.
+- [x] `device_store_add(device_id, name, type)` -> `(device_id, name)`.
+- [x] `device_store_edit(device_id, name, type)` -> `(device_id, name)`.
+- [x] Bump `DEVICE_STORE_SCHEMA_VERSION` lên 3.
+- [x] Writer không ghi `type_N`.
+- [x] Loader schema 3 không cần type.
+- [x] Migration v2 -> v3 giữ id/name/BLE identity.
+- [x] Migration v2 -> v3 bỏ `type_N`.
+- [x] Erase obsolete `type_N` sau successful rewrite.
 
 ### Checklist dispatcher/API
 
-- [ ] `add_device` không default `generic`.
-- [ ] `add_device` không đọc `msg.device_type`.
-- [ ] `edit_device` chỉ edit name.
-- [ ] Error text không còn nhắc device_type.
-- [ ] `list_devices` không emit `type`.
-- [ ] Delete flow gọi `device_schema_forget`.
-- [ ] POST `/api/devices` không nhận `type`.
-- [ ] PUT `/api/devices` không nhận `type`.
-- [ ] GET `/api/devices` không trả `type`.
-- [ ] Frontend không còn device type selector/badge.
+- [x] `add_device` không default `generic`.
+- [x] `add_device` không đọc `msg.device_type`.
+- [x] `edit_device` chỉ edit name.
+- [x] Error text không còn nhắc device_type.
+- [x] `list_devices` không emit `type`.
+- [x] Delete flow gọi `device_schema_forget`.
+- [x] POST `/api/devices` không nhận `type`.
+- [x] PUT `/api/devices` không nhận `type`.
+- [x] GET `/api/devices` không trả `type`.
+- [x] Frontend không còn device type selector/badge.
 
 ### Checklist test
 
-- [ ] Existing `dev_list` v2 migrate được sang v3.
-- [ ] `device_id` giữ nguyên.
-- [ ] `name` giữ nguyên.
-- [ ] BLE address giữ nguyên.
-- [ ] BLE address type giữ nguyên.
-- [ ] Device reconnect không cần add lại.
+- [x] Existing `dev_list` v2 migrate được sang v3.
+- [x] `device_id` giữ nguyên.
+- [x] `name` giữ nguyên.
+- [x] BLE address giữ nguyên.
+- [x] BLE address type giữ nguyên.
+- [x] Device reconnect không cần add lại.
 
 ### Exit criteria
 
-- [ ] Không còn device-level type trong Gateway domain model/API/UI.
-- [ ] Existing registered devices vẫn dùng được.
+- [x] Không còn device-level type trong Gateway domain model/API/UI.
+- [x] Existing registered devices vẫn dùng được.
 
 ---
 

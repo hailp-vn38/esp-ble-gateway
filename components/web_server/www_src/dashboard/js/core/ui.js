@@ -46,8 +46,7 @@ const ui = {
         
         // Populate modal data
         document.getElementById('input-edit-name').value = state.selectedDeviceDetail.customName;
-        document.getElementById('input-edit-type').value = state.selectedDeviceDetail.type;
-        
+
         const modal = document.getElementById('modal-edit-device');
         const backdrop = document.getElementById('modal-edit-backdrop');
         const content = document.getElementById('modal-edit-content');
