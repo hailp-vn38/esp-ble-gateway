@@ -117,7 +117,7 @@ const devices = {
     _applyConnectionEvent(ev) {
         const dev = state.connectedDevices.find(d => d.id === ev.deviceId);
         if (dev) {
-            dev.status = ev.connected ? 'online' : 'offline';
+            dev.status = ev.connected ? 'connecting' : 'offline';
             this.renderGrid();
             // Update detail view if open for this device
             if (state.selectedDeviceDetail && state.selectedDeviceDetail.id === ev.deviceId) {
@@ -235,13 +235,18 @@ const devices = {
             card.onclick = () => this.openDetailView(dev);
             
             // Status indicator color
-            const statusColor = dev.status === 'online' ? 'bg-green-500' : 'bg-gray-400';
+            const statusStyles = {
+                online: ['bg-green-500', 'bg-green-400', 'Connected'],
+                connecting: ['bg-yellow-500', 'bg-yellow-400', 'Connecting…'],
+                offline: ['bg-gray-400', 'bg-gray-200', 'Offline']
+            };
+            const st = statusStyles[dev.status] || statusStyles.offline;
             const safeName = escapeHtml(dev.customName);
             const safeMac = escapeHtml(dev.mac);
 
             card.innerHTML = `
                 <!-- Colored top accent -->
-                <div class="absolute top-0 left-0 w-full h-1 ${dev.status === 'online' ? 'bg-green-400' : 'bg-gray-200'}"></div>
+                <div class="absolute top-0 left-0 w-full h-1 ${st[1]}"></div>
 
                 <div class="flex justify-between items-start mb-4">
                     <div class="flex items-center">
@@ -262,8 +267,8 @@ const devices = {
                 <div class="mt-4 pt-4 border-t border-gray-100">
                     <div class="flex justify-between items-center text-sm">
                         <span class="flex items-center text-gray-600">
-                            <span class="w-2 h-2 rounded-full ${statusColor} mr-2"></span>
-                            ${dev.status === 'online' ? 'Connected' : 'Offline'}
+                            <span class="w-2 h-2 rounded-full ${st[0]} mr-2"></span>
+                            ${st[2]}
                         </span>
                     </div>
                 </div>
@@ -303,8 +308,14 @@ const devices = {
     },
 
     renderConnectionState(device) {
-        const online = device.status === 'online';
-        const markup = `<span class="w-2.5 h-2.5 rounded-full ${online ? 'bg-green-500' : 'bg-gray-400'} mr-2"></span><span class="${online ? 'text-green-600' : 'text-gray-500'}">${i18n.t(online ? 'device_detail.online' : 'device_detail.offline')}</span>`;
+        const status = device.status || 'offline';
+        const styles = {
+            online: ['bg-green-500', 'text-green-600', 'device_detail.online'],
+            connecting: ['bg-yellow-500', 'text-yellow-600', 'device_detail.connecting'],
+            offline: ['bg-gray-400', 'text-gray-500', 'device_detail.offline']
+        };
+        const s = styles[status] || styles.offline;
+        const markup = `<span class="w-2.5 h-2.5 rounded-full ${s[0]} mr-2"></span><span class="${s[1]}">${i18n.t(s[2])}</span>`;
         document.getElementById('detail-status').innerHTML = markup;
         document.getElementById('detail-summary-connection').innerHTML = markup;
     },

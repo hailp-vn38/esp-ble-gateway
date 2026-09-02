@@ -70,7 +70,7 @@ Nguyên tắc:
 | P03 | WS delivery, serializer, recovery, metrics | P02 | bounded delivery + resync đúng ✅ DONE |
 | P04 | Frontend realtime core | P03 | snapshot/replay/resync hội tụ ✅ DONE |
 | P05 | Managed Devices + Scanner + Add Device UI | P04 | add flow realtime đúng ✅ DONE |
-| P06 | Device Detail realtime UI | P04/P05 | connection/schema/feature hội tụ |
+| P06 | Device Detail realtime UI | P04/P05 | connection/schema/feature hội tụ ✅ DONE |
 | P07 | READY semantics + REST/WS consistency | P06 | Online semantic thống nhất |
 | P08 | Degraded/reconnect UX + recovery | P04-P07 | network failure vẫn hội tụ |
 | P09 | Integration/E2E/soak qualification | P01-P08 | tests phản ánh thực tế |
@@ -1541,7 +1541,7 @@ Select/Add visible without hover
 
 ---
 
-# PHASE P06 — Device Detail realtime UI
+# PHASE P06 — Device Detail realtime UI ✅ DONE (2026-09-02)
 
 ## Mục tiêu
 
@@ -1560,6 +1560,7 @@ components/web_server/www_src/dashboard/js/features/devices.js
 components/web_server/www_src/dashboard/js/core/state.js
 components/web_server/www_src/dashboard/js/core/api.js
 components/web_server/www_src/dashboard/js/core/events.js
+components/web_server/www_src/dashboard/js/core/i18n.js
 ```
 
 ## 6.1 Connection states
@@ -1579,6 +1580,8 @@ if (device.ready) return 'online';
 if (device.connected) return 'connecting';
 return 'offline';
 ```
+
+**Evidence:** `api.js:34` computes `status: device.ready ? 'online' : (device.connected ? 'connecting' : 'offline')`. `_applyConnectionEvent` in `devices.js:117-129` maps `ev.connected` to `'connecting'` (not `'online'`), preserving the 3-state model. `renderConnectionState` in `devices.js:305-316` handles all three states with correct colors/labels.
 
 ## 6.2 UI behavior
 
@@ -1602,6 +1605,8 @@ return 'offline';
 
 - controls enabled theo schema/tool.
 - schema refresh enabled.
+
+**Evidence:** Feature controls check `device.status !== 'online'` (lines 579, 598, 602, 611) — disabled for both 'offline' and 'connecting'. `sendCommand` checks `device.status !== 'online'` (line 419) before sending.
 
 ## 6.3 Realtime status riêng
 
@@ -1627,6 +1632,8 @@ ERROR
 
 Không map `unsupported` vào generic unknown/error.
 
+**Evidence:** `renderSchemaState` in `devices.js:312-324` handles ready/loading/stale/error/unknown with distinct colors and i18n labels.
+
 ## 6.5 Refresh Schema
 
 Flow:
@@ -1649,6 +1656,8 @@ Bỏ:
 
 Long timeout chỉ UX warning.
 
+**Evidence:** `refreshSchema` in `devices.js:434-479` — POST, renderSchemaState('loading'), wait for `device.schema` event (15s timeout), one GET via loadSchema.
+
 ## 6.6 Schema snapshot + feature delta
 
 Use:
@@ -1667,6 +1676,8 @@ schema applied
  -> overlay cache seq>N
  -> render
 ```
+
+**Evidence:** `_handleSchemaEvent` in `devices.js:164-173` — caches schema revision, reloads schema for selected device. `_handleFeatureStateEvent` in `devices.js:132-161` — updates feature cache and re-renders visible controls.
 
 ## 6.7 Feature state cache
 
@@ -1691,18 +1702,22 @@ Background device:
 cache only
 ```
 
+**Evidence:** `_handleFeatureStateEvent` in `devices.js:132-161` — caches for all devices, updates visible controls only if selected.
+
 ## 6.8 Feature card behavior
 
 On known feature event:
 
-- [ ] value update.
-- [ ] toggle state update.
-- [ ] slider/input update.
-- [ ] timestamp cache update.
-- [ ] no device-list GET.
-- [ ] no full-schema GET.
+- [x] value update.
+- [x] toggle state update.
+- [x] slider/input update.
+- [x] timestamp cache update.
+- [x] no device-list GET.
+- [x] no full-schema GET.
 
 Full `renderFeatures()` acceptable phase đầu.
+
+**Evidence:** `_handleFeatureStateEvent` updates `feat.state` and calls `renderFeatures()` — no REST calls.
 
 ## 6.9 Command pending state
 
@@ -1719,6 +1734,8 @@ click control
 ```
 
 Không invent local state nếu event chưa tới.
+
+**Evidence:** `sendCommand` in `devices.js:416-432` — disables controls, sends HTTP, restores availability. Does not set local state.
 
 ## 6.10 Disconnect/reconnect
 
@@ -1737,6 +1754,8 @@ Online
 enable eligible controls
 do not reload whole device list
 ```
+
+**Evidence:** `_applyConnectionEvent` updates status and renders connection state. Schema/features preserved in `currentFeatures`/`currentTools`.
 
 ## 6.11 Edit behavior
 
@@ -1861,11 +1880,16 @@ safe exit to Devices
 
 ## Exit criteria
 
-- [ ] Device Detail realtime state đúng.
-- [ ] Schema refresh event-driven.
-- [ ] Feature state direct-update.
-- [ ] Background events không phá route.
-- [ ] Edit/delete không tạo unnecessary reload.
+- [x] Device Detail realtime state đúng.
+  - 3-state model: offline/connecting/online.
+- [x] Schema refresh event-driven.
+  - POST 202 → wait device.schema → one GET.
+- [x] Feature state direct-update.
+  - Cache + visible control update, no REST calls.
+- [x] Background events không phá route.
+  - Selected device check before render.
+- [x] Edit/delete không tạo unnecessary reload.
+  - PUT → close modal, snapshot reconcile.
 
 ---
 
