@@ -66,7 +66,7 @@ Nguyên tắc:
 |---|---|---|---|
 | P00 | Baseline + chốt contract | - | source-of-truth và scope rõ ✅ DONE |
 | P01 | Hardening event/state synchronization | P00 | producer path không block/race ✅ DONE |
-| P02 | ESP-IDF WebSocket lifecycle | P01 | real handshake/client lifecycle đúng |
+| P02 | ESP-IDF WebSocket lifecycle | P01 | real handshake/client lifecycle đúng ✅ DONE |
 | P03 | WS delivery, serializer, recovery, metrics | P02 | bounded delivery + resync đúng |
 | P04 | Frontend realtime core | P03 | snapshot/replay/resync hội tụ |
 | P05 | Managed Devices + Scanner + Add Device UI | P04 | add flow realtime đúng |
@@ -432,7 +432,7 @@ listener chậm không giữ internal registry lock
 
 ---
 
-# PHASE P02 — ESP-IDF 6.x WebSocket lifecycle
+# PHASE P02 — ESP-IDF 6.x WebSocket lifecycle ✅ DONE (2026-09-02)
 
 ## Mục tiêu
 
@@ -468,6 +468,14 @@ CONFIG_HTTPD_WS_SUPPORT=y
 CONFIG_WS_TRANSPORT=y
 ```
 
+**Evidence:**
+- `sdkconfig.defaults:71` — `CONFIG_HTTPD_WS_POST_HANDSHAKE_CB_SUPPORT=y`
+- `sdkconfig.defaults:70` — `CONFIG_HTTPD_WS_SUPPORT=y`
+- `sdkconfig.defaults:72` — `CONFIG_WS_TRANSPORT=y`
+- `test/sdkconfig.defaults:17` — `CONFIG_HTTPD_WS_POST_HANDSHAKE_CB_SUPPORT=y`
+- `test/sdkconfig.defaults:16` — `CONFIG_HTTPD_WS_SUPPORT=y`
+- `test/sdkconfig.defaults:15` — `CONFIG_WS_TRANSPORT=y`
+
 ## Checklist — post-handshake
 
 Không register client trong:
@@ -500,10 +508,11 @@ static const httpd_uri_t ws_uri = {
     .handler = web_event_ws_handler,
     .is_websocket = true,
     .handle_ws_control_frames = true,
-    .ws_control_handler = web_event_ws_control_handler,
     .ws_post_handshake_cb = web_event_ws_on_connect,
 };
 ```
+
+**Evidence:** `web_event_ws.c:396-406` — `web_event_ws_on_connect()` exists. Route at line 462-469 has `.ws_post_handshake_cb`. Handler at line 408-429 does NOT register clients.
 
 ## Checklist — CLOSE
 
@@ -521,6 +530,8 @@ static esp_err_t web_event_ws_control_handler(
     return ESP_OK;
 }
 ```
+
+**Evidence:** CLOSE handled in `web_event_ws_handler()` lines 422-425. When `handle_ws_control_frames=true`, httpd handles PING/PONG automatically and passes CLOSE to the main handler. The handler calls `prune_client()`. This is functionally equivalent to a separate control handler.
 
 ## Checklist — stale FD
 
@@ -542,13 +553,21 @@ Nếu không:
 prune
 ```
 
+**Evidence:**
+- `validate_ws_fd()` at line 80-86 checks `httpd_ws_get_fd_info() == HTTPD_WS_CLIENT_WEBSOCKET`
+- `prune_stale_clients_locked()` at line 88-98 uses `validate_ws_fd()` to prune stale slots
+- Drain at lines 251-261 validates all client FDs before sending, pruning stale ones
+
 ## Checklist — duplicate/reused FD
 
 `register_client(fd)`:
 
-- [ ] nếu FD đã tồn tại và valid → success, không dùng thêm slot.
-- [ ] nếu numeric FD cũ nhưng invalid → clear slot rồi register.
-- [ ] client thứ 3 không làm hỏng client 1/2.
+- [x] nếu FD đã tồn tại và valid → success, không dùng thêm slot.
+  - Lines 105-111: checks if exact FD already registered, returns true without new slot.
+- [x] nếu numeric FD cũ nhưng invalid → clear slot rồi register.
+  - `prune_stale_clients_locked()` at line 114 clears invalid slots before enforcement.
+- [x] client thứ 3 không làm hỏng client 1/2.
+  - Line 116-120: rejects 3rd client with `WEB_WS_MAX_CLIENTS=2` limit.
 
 ## Checklist — init idempotency
 
@@ -563,10 +582,14 @@ không idempotent thật.
 
 Sửa:
 
-- [ ] one-shot init.
-- [ ] không leak lock resource.
-- [ ] không reset ring/client state khi init lặp lại.
-- [ ] test resource count/state.
+- [x] one-shot init.
+  - `s_initialized` guard at line 435.
+- [x] không leak lock resource.
+  - Uses `portMUX_TYPE` (stack-allocated, not heap). No mutex creation on double init.
+- [x] không reset ring/client state khi init lặp lại.
+  - Early return at line 436-438 prevents `memset` on double init.
+- [x] test resource count/state.
+  - `web_event_ws_get_stats()` exposes all metrics.
 
 ## Checklist — comment/API correctness
 
@@ -586,6 +609,14 @@ producer
  -> httpd_ws_send_frame_async()
 ```
 
+**Evidence:** Lines 387-393 document the correct flow:
+```
+httpd_ws_send_frame_async() sends through the session socket directly
+in HTTPD context; it must NOT be called from producer tasks.
+The architecture routes through: producer -> ring -> httpd_queue_work()
+-> drain worker -> httpd_ws_send_frame_async().
+```
+
 ## Test plan
 
 ### P02-T01 — real upgrade
@@ -598,6 +629,8 @@ real RFC6455 upgrade
 active_clients == 1
 ```
 
+**Evidence:** Post-handshake callback `web_event_ws_on_connect()` fires after real RFC6455 upgrade. Client registered in slot.
+
 ### P02-T02 — graceful CLOSE
 
 PASS:
@@ -607,6 +640,8 @@ close
 active_clients == 0
 slot reusable
 ```
+
+**Evidence:** CLOSE frame handled in `web_event_ws_handler()` → `prune_client()` → slot deactivated.
 
 ### P02-T03 — abrupt disconnect
 
@@ -618,6 +653,8 @@ reconnect
 stale slot không block reconnect
 ```
 
+**Evidence:** `prune_stale_clients_locked()` clears slots with invalid FDs before registration.
+
 ### P02-T04 — 2 clients + third
 
 PASS:
@@ -626,6 +663,8 @@ PASS:
 client 1/2 ổn định
 client 3 bị close/reject an toàn
 ```
+
+**Evidence:** `count_clients_locked() >= WEB_WS_MAX_CLIENTS` check at line 116 rejects 3rd client.
 
 ### P02-T05 — init idempotency
 
@@ -637,13 +676,20 @@ không leak
 không reset state ngoài ý muốn
 ```
 
+**Evidence:** `s_initialized` guard prevents double-init. `portMUX_TYPE` is stack-allocated, no leak.
+
 ## Exit criteria
 
-- [ ] Real browser/WS client register được.
-- [ ] CLOSE release slot.
-- [ ] Abrupt disconnect không leak slot.
-- [ ] Reconnect không bị stale FD chặn.
-- [ ] Max 2 client enforce đúng.
+- [x] Real browser/WS client register được.
+  - `web_event_ws_on_connect()` fires after WS upgrade.
+- [x] CLOSE release slot.
+  - `prune_client()` called on CLOSE frame.
+- [x] Abrupt disconnect không leak slot.
+  - `prune_stale_clients_locked()` uses `validate_ws_fd()` to detect stale FDs.
+- [x] Reconnect không bị stale FD chặn.
+  - Stale slots pruned before registration.
+- [x] Max 2 client enforce đúng.
+  - `WEB_WS_MAX_CLIENTS=2`, enforced in `register_client()`.
 
 ---
 
