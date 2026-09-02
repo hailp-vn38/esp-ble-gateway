@@ -587,6 +587,17 @@ esp_err_t mcp_tool_exposure_init(void)
         return ESP_ERR_NO_MEM;
     }
 
+    /* The catalog owns the executable bindings consumed by tools/list and
+     * tools/call.  Initializing only the exposure record tables leaves the
+     * catalog storage NULL: enables can then persist successfully while every
+     * catalog add fails with ESP_ERR_NO_MEM. */
+    esp_err_t err = mcp_tool_catalog_init(NULL, NULL);
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "Failed to initialize MCP tool catalog: %s",
+                 esp_err_to_name(err));
+        return err;
+    }
+
     xSemaphoreTake(s_mutex, portMAX_DELAY);
 
     /* Allocate state tables first so a failure unwinds without leaking
@@ -646,7 +657,7 @@ esp_err_t mcp_tool_exposure_init(void)
     /* Load persisted exposure catalog. */
     size_t loaded = 0;
     uint32_t revision = 0;
-    esp_err_t err = mcp_exposure_store_load(
+    err = mcp_exposure_store_load(
         s_persisted, CONFIG_MCP_EXPOSURE_RECORD_MAX, &loaded, &revision);
     if (err == ESP_ERR_INVALID_VERSION) {
         /* Schema version mismatch (v2→v3) — clear store, records will be
@@ -759,6 +770,11 @@ esp_err_t mcp_tool_exposure_enable(
     mcp_tool_digest_compute(target, digest);
 
     /* Persist-first: save the record. */
+    bool had_existing = existing < s_persisted_count;
+    mcp_exposure_persisted_record_t previous = {0};
+    if (had_existing) {
+        previous = s_persisted[existing];
+    }
     if (existing < s_persisted_count) {
         /* Update existing record. */
         s_persisted[existing].state = MCP_EXPOSURE_ENABLED;
@@ -772,6 +788,7 @@ esp_err_t mcp_tool_exposure_enable(
             return ESP_ERR_NO_MEM;
         }
         mcp_exposure_persisted_record_t *rec = &s_persisted[s_persisted_count];
+        memset(rec, 0, sizeof(*rec));
         strlcpy(rec->device_id, device_id, sizeof(rec->device_id));
         strlcpy(rec->command, command, sizeof(rec->command));
         rec->state = MCP_EXPOSURE_ENABLED;
@@ -784,20 +801,47 @@ esp_err_t mcp_tool_exposure_enable(
 
     err = persist_save_locked();
     if (err != ESP_OK) {
-        /* Rollback persisted state but do not resurrect on revoke. */
+        /* NVS was not committed; restore the in-memory record as well. */
+        if (had_existing) {
+            s_persisted[existing] = previous;
+        } else {
+            s_persisted_count--;
+            memset(&s_persisted[s_persisted_count], 0,
+                   sizeof(s_persisted[s_persisted_count]));
+        }
         xSemaphoreGive(s_mutex);
         return err;
     }
 
     /* Publish: add to enabled catalog. */
-    add_enabled_locked(tool_name, device_id, command, digest);
-
     mcp_tool_binding_t binding = {0};
     strlcpy(binding.tool_name, tool_name, sizeof(binding.tool_name));
     strlcpy(binding.device_id, device_id, sizeof(binding.device_id));
     strlcpy(binding.command, command, sizeof(binding.command));
     memcpy(&binding.capability, target, sizeof(device_schema_tool_t));
-    mcp_tool_catalog_add(&binding);
+    err = mcp_tool_catalog_add(&binding);
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "Failed to publish tool %s: %s", tool_name,
+                 esp_err_to_name(err));
+
+        /* Do not report an enabled exposure that tools/list cannot execute. */
+        if (had_existing) {
+            s_persisted[existing] = previous;
+        } else {
+            s_persisted_count--;
+            memset(&s_persisted[s_persisted_count], 0,
+                   sizeof(s_persisted[s_persisted_count]));
+        }
+        esp_err_t rollback_err = persist_save_locked();
+        if (rollback_err != ESP_OK) {
+            ESP_LOGE(TAG, "Failed to persist exposure rollback for %s: %s",
+                     tool_name, esp_err_to_name(rollback_err));
+        }
+        xSemaphoreGive(s_mutex);
+        return err;
+    }
+
+    add_enabled_locked(tool_name, device_id, command, digest);
 
     xSemaphoreGive(s_mutex);
 

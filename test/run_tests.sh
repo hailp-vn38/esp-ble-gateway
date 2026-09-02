@@ -142,21 +142,33 @@ ser.rts = False
 start = time.monotonic()
 output = []
 summary_seen_at = None
+last_output_at = time.monotonic()
+test_count = 0
 try:
     while time.monotonic() - start < timeout:
         raw = ser.readline()
         if raw:
             line = raw.decode('utf-8', errors='replace').rstrip()
             output.append(line)
+            last_output_at = time.monotonic()
             # Live print key lines
             if ('PASS' in line or 'FAIL' in line or 'Running' in line or
                     'assert failed' in line or 'Guru Meditation' in line):
                 print(line, flush=True)
+                if ':PASS' in line or ':FAIL' in line:
+                    test_count += 1
             elif 'Test ' in line and 'summary' in line.lower():
                 print(line, flush=True)
             if re.search(r'\b\d+ Tests? \d+ Failures? \d+ Ignored\b', line):
                 summary_seen_at = time.monotonic()
-        if summary_seen_at is not None and time.monotonic() - summary_seen_at >= 1.0:
+        else:
+            # No data for 3s — device might be at Unity menu, send Enter
+            if time.monotonic() - last_output_at > 3.0:
+                ser.write(b'\n')
+                ser.flush()
+                last_output_at = time.monotonic()
+                print("[auto] Sent Enter (idle 3s)", flush=True)
+        if summary_seen_at is not None and time.monotonic() - summary_seen_at >= 2.0:
             break
 except KeyboardInterrupt:
     pass
