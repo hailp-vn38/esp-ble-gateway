@@ -8,7 +8,7 @@
 #include "esp_http_server.h"
 #include "esp_log.h"
 #include "freertos/FreeRTOS.h"
-#include "freertos/semphr.h"
+#include "freertos/portmacro.h"
 
 #include "gateway_events.h"
 
@@ -39,11 +39,12 @@ typedef struct {
 
     ws_client_t clients[WEB_WS_MAX_CLIENTS];
 
-    SemaphoreHandle_t mutex;
+    portMUX_TYPE lock;
     httpd_handle_t server;
 } web_event_ws_state_t;
 
 static web_event_ws_state_t s_ws;
+static bool s_initialized;
 
 /* ── Forward declarations ───────────────────────────────────────────── */
 
@@ -53,12 +54,12 @@ static void web_event_ws_drain(void *arg);
 
 static void lock_ws(void)
 {
-    xSemaphoreTake(s_ws.mutex, pdMS_TO_TICKS(1000));
+    portENTER_CRITICAL(&s_ws.lock);
 }
 
 static void unlock_ws(void)
 {
-    xSemaphoreGive(s_ws.mutex);
+    portEXIT_CRITICAL(&s_ws.lock);
 }
 
 static int count_clients_locked(void)
@@ -167,7 +168,6 @@ static int serialize_event(const gateway_event_t *ev, char *buf, size_t len)
     }
 
     if (n < 0 || (size_t)n >= len) {
-        s_ws.resync_required = true;
         return -1;
     }
     return n;
@@ -241,7 +241,13 @@ static void web_event_ws_drain(void *arg)
     for (int e = 0; e < batch_count; e++) {
         char json[WEB_WS_JSON_MAX];
         int n = serialize_event(&batch[e], json, sizeof(json));
-        if (n <= 0) continue;
+        if (n <= 0) {
+            /* Serialize failure: flag resync for next drain cycle */
+            lock_ws();
+            s_ws.resync_required = true;
+            unlock_ws();
+            continue;
+        }
 
         httpd_ws_frame_t frame = {
             .final = true,
@@ -305,10 +311,10 @@ static void on_gateway_event(const gateway_event_t *event, void *context)
  *   automatically before calling the handler.
  * - handle_ws_control_frames=true enables PING/PONG/CLOSE frame handling
  *   at the httpd level; the handler only sees text/binary data frames.
- * - The handshake callback (ws_pre_handshake_cb) is NOT used here because
- *   connection-time policy is not needed for LAN-only deployment.
- * - httpd_send_frame_async() is HTTPD-safe: it queues the frame via
- *   httpd_queue_work() internally, so it can be called from any task context.
+ * - httpd_ws_send_frame_async() sends through the session socket directly
+ *   in HTTPD context; it must NOT be called from producer tasks.
+ *   The architecture routes through: producer -> ring -> httpd_queue_work()
+ *   -> drain worker -> httpd_ws_send_frame_async().
  * - HTTPD purges the LRU socket when max_open_sockets is reached; our
  *   2-client limit prevents dashboard connections from being evicted.
  */
@@ -353,11 +359,14 @@ static esp_err_t web_event_ws_handler(httpd_req_t *req)
 
 esp_err_t web_event_ws_init(void)
 {
-    memset(&s_ws, 0, sizeof(s_ws));
-    s_ws.mutex = xSemaphoreCreateMutex();
-    if (s_ws.mutex == NULL) {
-        return ESP_ERR_NO_MEM;
+    if (s_initialized) {
+        return ESP_OK;
     }
+
+    memset(&s_ws, 0, sizeof(s_ws));
+    s_ws.lock = (portMUX_TYPE)portMUX_INITIALIZER_UNLOCKED;
+    s_initialized = true;
+
     return ESP_OK;
 }
 

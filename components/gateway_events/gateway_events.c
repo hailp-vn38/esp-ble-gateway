@@ -4,14 +4,15 @@
 
 #include "esp_log.h"
 #include "freertos/FreeRTOS.h"
-#include "freertos/semphr.h"
+#include "freertos/portmacro.h"
 
 static const char *TAG = "gw_events";
 
 /* ── State ─────────────────────────────────────────────────────────── */
 
+static portMUX_TYPE s_lock = portMUX_INITIALIZER_UNLOCKED;
+static bool s_initialized;
 static uint32_t s_seq;
-static SemaphoreHandle_t s_mutex;
 
 typedef struct {
     gateway_event_listener_t fn;
@@ -25,16 +26,13 @@ static listener_slot_t s_listeners[GATEWAY_EVENT_MAX_LISTENERS];
 
 esp_err_t gateway_events_init(void)
 {
+    if (s_initialized) {
+        return ESP_OK;
+    }
+
     s_seq = 0;
     memset(s_listeners, 0, sizeof(s_listeners));
-
-    if (s_mutex == NULL) {
-        s_mutex = xSemaphoreCreateMutex();
-        if (s_mutex == NULL) {
-            ESP_LOGE(TAG, "mutex creation failed");
-            return ESP_ERR_NO_MEM;
-        }
-    }
+    s_initialized = true;
 
     ESP_LOGI(TAG, "gateway_events initialized (max %d listeners)",
              GATEWAY_EVENT_MAX_LISTENERS);
@@ -50,24 +48,24 @@ esp_err_t gateway_events_register(gateway_event_listener_t listener,
         return ESP_ERR_INVALID_ARG;
     }
 
-    if (s_mutex == NULL) {
+    if (!s_initialized) {
         return ESP_ERR_INVALID_STATE;
     }
 
-    xSemaphoreTake(s_mutex, pdMS_TO_TICKS(1000));
+    portENTER_CRITICAL(&s_lock);
 
     for (int i = 0; i < GATEWAY_EVENT_MAX_LISTENERS; i++) {
         if (!s_listeners[i].in_use) {
             s_listeners[i].fn = listener;
             s_listeners[i].context = context;
             s_listeners[i].in_use = true;
-            xSemaphoreGive(s_mutex);
+            portEXIT_CRITICAL(&s_lock);
             ESP_LOGD(TAG, "listener registered in slot %d", i);
             return ESP_OK;
         }
     }
 
-    xSemaphoreGive(s_mutex);
+    portEXIT_CRITICAL(&s_lock);
     ESP_LOGW(TAG, "listener registration failed: no free slot");
     return ESP_ERR_NO_MEM;
 }
@@ -80,21 +78,19 @@ void gateway_events_publish(gateway_event_t *event)
         return;
     }
 
-    /* If not initialized, silently drop */
-    if (s_mutex == NULL) {
+    if (!s_initialized) {
         return;
     }
 
-    /* Assign monotonic sequence under lock */
-    xSemaphoreTake(s_mutex, pdMS_TO_TICKS(1000));
-    event->seq = ++s_seq;
-
-    /* Copy listener list to avoid holding lock during callbacks */
     listener_slot_t local[GATEWAY_EVENT_MAX_LISTENERS];
-    memcpy(local, s_listeners, sizeof(local));
-    xSemaphoreGive(s_mutex);
 
-    /* Fan-out without holding any lock */
+    portENTER_CRITICAL(&s_lock);
+
+    event->seq = ++s_seq;
+    memcpy(local, s_listeners, sizeof(local));
+
+    portEXIT_CRITICAL(&s_lock);
+
     for (int i = 0; i < GATEWAY_EVENT_MAX_LISTENERS; i++) {
         if (local[i].in_use && local[i].fn != NULL) {
             local[i].fn(event, local[i].context);
@@ -106,12 +102,12 @@ void gateway_events_publish(gateway_event_t *event)
 
 uint32_t gateway_events_current_seq(void)
 {
-    if (s_mutex == NULL) {
+    if (!s_initialized) {
         return 0;
     }
-    xSemaphoreTake(s_mutex, pdMS_TO_TICKS(1000));
+    portENTER_CRITICAL(&s_lock);
     uint32_t current = s_seq;
-    xSemaphoreGive(s_mutex);
+    portEXIT_CRITICAL(&s_lock);
     return current;
 }
 
@@ -119,11 +115,11 @@ uint32_t gateway_events_current_seq(void)
 
 void gateway_events_reset_for_test(void)
 {
-    if (s_mutex == NULL) {
+    if (!s_initialized) {
         return;
     }
-    xSemaphoreTake(s_mutex, pdMS_TO_TICKS(1000));
+    portENTER_CRITICAL(&s_lock);
     s_seq = 0;
     memset(s_listeners, 0, sizeof(s_listeners));
-    xSemaphoreGive(s_mutex);
+    portEXIT_CRITICAL(&s_lock);
 }

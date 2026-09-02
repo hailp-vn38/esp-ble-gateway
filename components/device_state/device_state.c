@@ -7,7 +7,7 @@
 #include "esp_log.h"
 #include "esp_timer.h"
 #include "freertos/FreeRTOS.h"
-#include "freertos/semphr.h"
+#include "freertos/portmacro.h"
 #include "gateway_events.h"
 
 static const char *TAG = "device_state";
@@ -16,19 +16,8 @@ static const char *TAG = "device_state";
 
 static device_state_entry_t s_entries[DEVICE_STATE_MAX_ENTRIES];
 static size_t s_count;
-static SemaphoreHandle_t s_mutex;
-
-/* ── Helpers ────────────────────────────────────────────────────────── */
-
-static void lock_state(void)
-{
-    xSemaphoreTake(s_mutex, pdMS_TO_TICKS(1000));
-}
-
-static void unlock_state(void)
-{
-    xSemaphoreGive(s_mutex);
-}
+static portMUX_TYPE s_lock = portMUX_INITIALIZER_UNLOCKED;
+static bool s_initialized;
 
 static device_state_entry_t *find_entry(const char *device_id,
                                          const char *feature_id,
@@ -102,16 +91,13 @@ static void on_schema_committed(const char *device_id, uint32_t revision,
 
 esp_err_t device_state_init(void)
 {
+    if (s_initialized) {
+        return ESP_OK;
+    }
+
     memset(s_entries, 0, sizeof(s_entries));
     s_count = 0;
-
-    if (s_mutex == NULL) {
-        s_mutex = xSemaphoreCreateMutex();
-        if (s_mutex == NULL) {
-            ESP_LOGE(TAG, "mutex creation failed");
-            return ESP_ERR_NO_MEM;
-        }
-    }
+    s_initialized = true;
 
     esp_err_t err = device_schema_register_commit_listener2(
         on_schema_committed, NULL);
@@ -137,14 +123,14 @@ bool device_state_on_notify(const char *device_id, const gw_message_t *msg)
         return false;
     }
 
-    lock_state();
+    portENTER_CRITICAL(&s_lock);
 
     device_state_entry_t *entry = find_entry(device_id, msg->feature_id,
                                               msg->property_id);
     if (entry == NULL) {
         entry = allocate_entry();
         if (entry == NULL) {
-            unlock_state();
+            portEXIT_CRITICAL(&s_lock);
             ESP_LOGW(TAG, "[%s] state table full, dropping %s",
                      device_id, msg->feature_id);
             return true;
@@ -179,7 +165,7 @@ bool device_state_on_notify(const char *device_id, const gw_message_t *msg)
         ev.int_value = msg->feature_value_int;
     }
 
-    unlock_state();
+    portEXIT_CRITICAL(&s_lock);
 
     gateway_events_publish(&ev);
 
@@ -198,14 +184,14 @@ esp_err_t device_state_get(const char *device_id,
         return ESP_ERR_INVALID_ARG;
     }
 
-    lock_state();
+    portENTER_CRITICAL(&s_lock);
     const device_state_entry_t *entry = find_entry(device_id, feature_id,
                                                     property_id);
     bool valid = (entry != NULL && entry->valid);
     if (valid) {
         *out = *entry;
     }
-    unlock_state();
+    portEXIT_CRITICAL(&s_lock);
 
     return valid ? ESP_OK : ESP_ERR_NOT_FOUND;
 }
@@ -218,7 +204,7 @@ esp_err_t device_state_snapshot(const char *device_id,
     }
     out_snapshot->count = 0;
 
-    lock_state();
+    portENTER_CRITICAL(&s_lock);
 
     for (size_t i = 0; i < s_count && out_snapshot->count < DEVICE_STATE_SNAPSHOT_MAX; i++) {
         if (strcmp(s_entries[i].device_id, device_id) == 0) {
@@ -227,7 +213,7 @@ esp_err_t device_state_snapshot(const char *device_id,
         }
     }
 
-    unlock_state();
+    portEXIT_CRITICAL(&s_lock);
     return ESP_OK;
 }
 
@@ -237,7 +223,7 @@ void device_state_forget(const char *device_id)
         return;
     }
 
-    lock_state();
+    portENTER_CRITICAL(&s_lock);
 
     size_t write = 0;
     for (size_t read = 0; read < s_count; read++) {
@@ -254,13 +240,13 @@ void device_state_forget(const char *device_id)
     }
     s_count = write;
 
-    unlock_state();
+    portEXIT_CRITICAL(&s_lock);
 }
 
 void device_state_reset_for_test(void)
 {
-    lock_state();
+    portENTER_CRITICAL(&s_lock);
     memset(s_entries, 0, sizeof(s_entries));
     s_count = 0;
-    unlock_state();
+    portEXIT_CRITICAL(&s_lock);
 }
