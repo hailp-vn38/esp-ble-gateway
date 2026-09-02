@@ -12,6 +12,7 @@
 
 #include "command_dispatcher.h"
 #include "command_executor.h"
+#include "gateway_events.h"
 #include "web_http.h"
 
 static const char *TAG = "web_device_api";
@@ -101,6 +102,8 @@ static int fill_device_message(const cJSON *json, gw_message_t *message,
 
 static esp_err_t devices_get_handler(httpd_req_t *request)
 {
+    uint32_t base_seq = gateway_events_current_seq();
+
     gw_message_t message = {.protocol_version = GW_PROTOCOL_VERSION};
     strlcpy(message.type, "gateway_command", sizeof(message.type));
     strlcpy(message.command, "list_devices", sizeof(message.command));
@@ -119,6 +122,11 @@ static esp_err_t devices_get_handler(httpd_req_t *request)
         return web_send_api_error(request, "500 Internal Server Error",
                                   "Dispatcher returned an invalid device list");
     }
+
+    char seq_text[16];
+    snprintf(seq_text, sizeof(seq_text), "%" PRIu32, base_seq);
+    httpd_resp_set_hdr(request, "X-Gateway-Event-Seq", seq_text);
+
     return web_send_json(request, array);
 }
 

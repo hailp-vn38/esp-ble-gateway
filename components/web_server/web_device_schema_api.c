@@ -12,6 +12,7 @@
 #include "device_schema.h"
 #include "device_state.h"
 #include "device_template.h"
+#include "gateway_events.h"
 #include "web_http.h"
 
 static const char *TAG = "web_schema_api";
@@ -99,6 +100,8 @@ static esp_err_t schema_get_handler(httpd_req_t *request)
                                        "Missing device_id", "invalid_request");
     }
 
+    uint32_t base_seq = gateway_events_current_seq();
+
     device_schema_snapshot_t snapshot;
     esp_err_t error = device_schema_get(device_id, &snapshot);
     if (error == ESP_ERR_NOT_FOUND) {
@@ -173,6 +176,10 @@ static esp_err_t schema_get_handler(httpd_req_t *request)
             cJSON_AddItemToArray(features_arr, feat_json);
         }
     }
+
+    char seq_text[16];
+    snprintf(seq_text, sizeof(seq_text), "%" PRIu32, base_seq);
+    httpd_resp_set_hdr(request, "X-Gateway-Event-Seq", seq_text);
 
     return web_send_json(request, response);
 }
