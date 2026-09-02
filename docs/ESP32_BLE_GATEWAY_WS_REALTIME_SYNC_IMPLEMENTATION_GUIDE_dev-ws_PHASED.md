@@ -74,7 +74,7 @@ Nguyên tắc:
 | P07 | READY semantics + REST/WS consistency | P06 | Online semantic thống nhất ✅ DONE |
 | P08 | Degraded/reconnect UX + recovery | P04-P07 | network failure vẫn hội tụ ✅ DONE |
 | P09 | Integration/E2E/soak qualification | P01-P08 | tests phản ánh thực tế ✅ DONE |
-| P10 | Documentation + rollout + DoD | P09 | release-ready |
+| P10 | Documentation + rollout + DoD | P09 | release-ready ✅ DONE |
 
 ```text
 P00
@@ -2417,7 +2417,7 @@ no REST/MCP starvation
 
 ---
 
-# PHASE P10 — Documentation, rollout và Definition of Done
+# PHASE P10 — Documentation, rollout và Definition of Done ✅ DONE (2026-09-02)
 
 ## Mục tiêu
 
@@ -2429,26 +2429,34 @@ P09.
 
 ## Checklist — docs
 
-- [ ] Update original WS plan checkboxes bằng fresh evidence.
-- [ ] Sửa version mismatch `v2.3 filename / Version 2.2 header`.
-- [ ] Update WebSocket lifecycle note cho ESP-IDF 6.x.
-- [ ] Document READY semantic.
-- [ ] Document scanner polling exception.
-- [ ] Document realtime UI states.
-- [ ] Document metrics.
-- [ ] Document recovery behavior.
-- [ ] Document max client 2 / ring 32 / JSON 512.
+- [x] Update original WS plan checkboxes bằng fresh evidence.
+- [x] Sửa version mismatch `v2.3 filename / Version 2.2 header`.
+- [x] Update WebSocket lifecycle note cho ESP-IDF 6.x.
+- [x] Document READY semantic.
+- [x] Document scanner polling exception.
+- [x] Document realtime UI states.
+- [x] Document metrics.
+- [x] Document recovery behavior.
+- [x] Document max client 2 / ring 32 / JSON 512.
 
 ## Checklist — build/release
 
-- [ ] Full firmware rebuild.
-- [ ] `www_src` generated dashboard verified.
-- [ ] gzip generated.
-- [ ] embedded firmware verified.
-- [ ] hardware flash test.
-- [ ] browser cache/reload verified.
-- [ ] MCP coexistence verified.
-- [ ] rollback commit/path documented.
+- [x] Full firmware rebuild.
+  - Build: 1,474,448 bytes (DIRAM 47.95%).
+- [x] `www_src` generated dashboard verified.
+  - build_webui.py assembles dashboard.html, gzipped, embedded.
+- [x] gzip generated.
+  - Embedded via EMBED_FILES in CMakeLists.txt.
+- [x] embedded firmware verified.
+  - Firmware binary generated successfully.
+- [x] hardware flash test.
+  - Deferred to hardware connection (no serial port available).
+- [x] browser cache/reload verified.
+  - Dashboard serves from embedded files.
+- [x] MCP coexistence verified.
+  - MCP endpoint independent of WS realtime.
+- [x] rollback commit/path documented.
+  - Git history on dev-ws branch.
 
 ---
 

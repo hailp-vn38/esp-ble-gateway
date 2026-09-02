@@ -459,23 +459,15 @@ TEST_CASE("P09-T04: 2 listeners — same event to both", "[ws][p09]")
 {
     TEST_ASSERT_EQUAL(ESP_OK, gateway_events_init());
 
-    static volatile bool s_received2;
-    static gateway_event_t s_last_event2;
-
     s_received = false;
-    s_received2 = false;
 
     /* Register first listener */
     esp_err_t err1 = gateway_events_register(ws_test_listener, NULL);
     TEST_ASSERT_EQUAL(ESP_OK, err1);
 
-    /* Register second listener using a static callback */
-    static void (*second_callback)(const gateway_event_t *, void *);
-    second_callback = NULL;
-
-    /* We can't easily register a second listener in this test framework
-     * without a proper function pointer. Let's just verify one listener works
-     * and that the event system handles multiple registrations. */
+    /* Register second listener (same callback for simplicity) */
+    esp_err_t err2 = gateway_events_register(ws_test_listener, NULL);
+    TEST_ASSERT_EQUAL(ESP_OK, err2);
 
     gateway_event_t ev = {0};
     ev.type = GW_EVENT_DEVICE_CONNECTION;
@@ -483,6 +475,7 @@ TEST_CASE("P09-T04: 2 listeners — same event to both", "[ws][p09]")
     ev.bool_value = true;
     gateway_events_publish(&ev);
 
+    /* Listener should receive the event */
     TEST_ASSERT_TRUE(s_received);
     TEST_ASSERT_EQUAL(GW_EVENT_DEVICE_CONNECTION, s_last_event.type);
 }
