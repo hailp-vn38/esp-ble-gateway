@@ -79,13 +79,13 @@ Không gửi full device list hoặc full schema trong mỗi event.
 
 ### Checklist triển khai
 
-- [ ] Xác nhận BLE Central là source of truth cho connection runtime; Device Store chỉ giữ persistent identity/metadata.
-- [ ] Xác nhận protocol v4 strict và không đưa device-level `type` trở lại event contract.
-- [ ] Xác nhận `device_schema` là source của schema snapshot/revision và `device_state` là source của feature runtime state.
-- [ ] Thay zero-copy retained view của `device_state` bằng copy-out snapshot hoặc cơ chế lock/lifetime tương đương.
-- [ ] Không giữ pointer vào `device_state` qua mutation hoặc qua context khác.
-- [ ] Giữ provisioning mode tách biệt; realtime event server chỉ thuộc gateway mode.
-- [ ] Lập danh sách polling/fixed-delay hiện tại cần loại bỏ sau khi realtime path pass.
+- [x] Xác nhận BLE Central là source of truth cho connection runtime; Device Store chỉ giữ persistent identity/metadata.
+- [x] Xác nhận protocol v4 strict và không đưa device-level `type` trở lại event contract.
+- [x] Xác nhận `device_schema` là source của schema snapshot/revision và `device_state` là source của feature runtime state.
+- [x] Thay zero-copy retained view của `device_state` bằng copy-out snapshot hoặc cơ chế lock/lifetime tương đương.
+- [x] Không giữ pointer vào `device_state` qua mutation hoặc qua context khác.
+- [x] Giữ provisioning mode tách biệt; realtime event server chỉ thuộc gateway mode.
+- [x] Lập danh sách polling/fixed-delay hiện tại cần loại bỏ sau khi realtime path pass.
 
 ### Test plan của phase
 
@@ -102,10 +102,10 @@ Không gửi full device list hoặc full schema trong mỗi event.
 
 **Exit Criteria WS-P00**
 
-- [ ] `P00-T01..T08` PASS.
-- [ ] Không còn API Web/consumer nào giữ zero-copy state pointer qua mutation boundary.
-- [ ] Không còn race đã biết giữa BLE state update và HTTPD/schema read.
-- [ ] Baseline memory, task stack và test result được ghi lại để so sánh ở phase sau.
+- [x] `P00-T01..T08` PASS.
+- [x] Không còn API Web/consumer nào giữ zero-copy state pointer qua mutation boundary.
+- [x] Không còn race đã biết giữa BLE state update và HTTPD/schema read.
+- [x] Baseline memory, task stack và test result được ghi lại để so sánh ở phase sau.
 
 ### Nội dung kỹ thuật
 
@@ -604,15 +604,15 @@ Nên cleanup README trong PR riêng hoặc cùng PR WebSocket nếu scope cho ph
 
 ### Checklist triển khai
 
-- [ ] Tạo `gateway_events` độc lập với `web_server`.
-- [ ] Event struct dùng fixed-size fields; không giữ pointer ephemeral.
-- [ ] Global sequence monotonic, zero reserved nếu cần.
-- [ ] Publish path không `malloc`, không cJSON, không WebSocket send.
-- [ ] Phát `device.connection` khi lifecycle state thật thay đổi.
-- [ ] Phát `device.schema` sau khi active schema đã hợp lệ/persisted.
-- [ ] Phát `feature.state` sau khi `device_state` cache đã cập nhật.
-- [ ] Phát CRUD invalidation từ domain/dispatcher path để REST và MCP hội tụ cùng event behavior.
-- [ ] Không phát duplicate event cho cùng một state transition.
+- [x] Tạo `gateway_events` độc lập với `web_server`.
+- [x] Event struct dùng fixed-size fields; không giữ pointer ephemeral.
+- [x] Global sequence monotonic, zero reserved nếu cần.
+- [x] Publish path không `malloc`, không cJSON, không WebSocket send.
+- [x] Phát `device.connection` khi lifecycle state thật thay đổi.
+- [x] Phát `device.schema` sau khi active schema đã hợp lệ/persisted.
+- [x] Phát `feature.state` sau khi `device_state` cache đã cập nhật.
+- [x] Phát CRUD invalidation từ domain/dispatcher path để REST và MCP hội tụ cùng event behavior.
+- [x] Không phát duplicate event cho cùng một state transition.
 
 ### Test plan của phase
 
@@ -633,10 +633,10 @@ Nên cleanup README trong PR riêng hoặc cùng PR WebSocket nếu scope cho ph
 
 **Exit Criteria WS-P01**
 
-- [ ] `P01-T01..T12` PASS.
-- [ ] Event ordering, sequence và ownership contract được unit-test hóa.
-- [ ] BLE/schema/state/CRUD producers đều có integration test.
-- [ ] Producer path không block và không cấp phát heap động.
+- [x] `P01-T01..T12` PASS.
+- [x] Event ordering, sequence và ownership contract được unit-test hóa.
+- [x] BLE/schema/state/CRUD producers đều có integration test.
+- [x] Producer path không block và không cấp phát heap động.
 
 ### Nội dung kỹ thuật
 
@@ -966,16 +966,16 @@ CRUD event có tần suất rất thấp nên invalidation + REST reload đơn g
 
 ### Checklist triển khai
 
-- [ ] Bật `CONFIG_HTTPD_WS_SUPPORT=y` cho target production phù hợp.
-- [ ] Đăng ký đúng một route `GET /ws/events` ở gateway mode.
-- [ ] Không tạo HTTP server thứ hai và không reuse outgoing `mcp_ws_bridge`.
-- [ ] Giữ client limit mặc định 2; không tăng socket count trước measurement.
-- [ ] Dùng fixed ring/queue; overflow chuyển sang recovery signal thay vì silent loss.
-- [ ] Dùng `httpd_queue_work()` hoặc HTTPD-safe equivalent; không send từ BLE/domain callback.
-- [ ] Không tạo per-client FreeRTOS task.
-- [ ] Receive path giới hạn frame size và chỉ hỗ trợ message type thật sự cần thiết.
-- [ ] Client close/send error phải prune fd và giải phóng slot.
-- [ ] Không tăng URI handler budget nếu route mới vẫn nằm trong source hiện tạiroom.
+- [x] Bật `CONFIG_HTTPD_WS_SUPPORT=y` cho target production phù hợp.
+- [x] Đăng ký đúng một route `GET /ws/events` ở gateway mode.
+- [x] Không tạo HTTP server thứ hai và không reuse outgoing `mcp_ws_bridge`.
+- [x] Giữ client limit mặc định 2; không tăng socket count trước measurement.
+- [x] Dùng fixed ring/queue; overflow chuyển sang recovery signal thay vì silent loss.
+- [x] Dùng `httpd_queue_work()` hoặc HTTPD-safe equivalent; không send từ BLE/domain callback.
+- [x] Không tạo per-client FreeRTOS task.
+- [x] Receive path giới hạn frame size và chỉ hỗ trợ message type thật sự cần thiết.
+- [x] Client close/send error phải prune fd và giải phóng slot.
+- [x] Không tăng URI handler budget nếu route mới vẫn nằm trong source hiện tạiroom.
 
 ### Test plan của phase
 
@@ -996,10 +996,10 @@ CRUD event có tần suất rất thấp nên invalidation + REST reload đơn g
 
 **Exit Criteria WS-P02**
 
-- [ ] `P02-T01..T12` PASS.
-- [ ] `/ws/events` chỉ tồn tại ở gateway mode.
-- [ ] Client limit, frame limit, overflow và send-failure đều có test tự động hoặc reproducible test script.
-- [ ] Không tạo HTTP server/task riêng cho từng WS client.
+- [x] `P02-T01..T12` PASS.
+- [x] `/ws/events` chỉ tồn tại ở gateway mode.
+- [x] Client limit, frame limit, overflow và send-failure đều có test tự động hoặc reproducible test script.
+- [x] Không tạo HTTP server/task riêng cho từng WS client.
 
 ### Nội dung kỹ thuật
 
@@ -1526,14 +1526,14 @@ Không dựa vào việc component tồn tại trong thư mục; `MINIMAL_BUILD 
 
 ### Checklist triển khai
 
-- [ ] REST snapshot trả event cursor qua `X-Gateway-Event-Seq` hoặc contract tương đương.
-- [ ] Cursor được lấy cùng logic sequence dùng cho WebSocket event stream.
-- [ ] Frontend buffer delta trong khi snapshot đang fetch.
-- [ ] Bỏ event `seq <= base_seq`, replay event mới hơn theo thứ tự.
-- [ ] Phát hiện sequence gap và chuyển sang full REST resync.
-- [ ] Ring overflow/client lag tạo `resync.required` hoặc cơ chế tương đương.
-- [ ] Reconnect luôn đi qua deterministic snapshot/resync, không đoán local state.
-- [ ] Schema revision và global event sequence là hai contract riêng.
+- [x] REST snapshot trả event cursor qua `X-Gateway-Event-Seq` hoặc contract tương đương.
+- [x] Cursor được lấy cùng logic sequence dùng cho WebSocket event stream.
+- [x] Frontend buffer delta trong khi snapshot đang fetch.
+- [x] Bỏ event `seq <= base_seq`, replay event mới hơn theo thứ tự.
+- [x] Phát hiện sequence gap và chuyển sang full REST resync.
+- [x] Ring overflow/client lag tạo `resync.required` hoặc cơ chế tương đương.
+- [x] Reconnect luôn đi qua deterministic snapshot/resync, không đoán local state.
+- [x] Schema revision và global event sequence là hai contract riêng.
 
 ### Test plan của phase
 
@@ -1554,10 +1554,10 @@ Không dựa vào việc component tồn tại trong thư mục; `MINIMAL_BUILD 
 
 **Exit Criteria WS-P03**
 
-- [ ] `P03-T01..T12` PASS.
-- [ ] Không tồn tại cửa sổ race đã biết làm mất event giữa REST snapshot và WS live mode.
-- [ ] Gap, duplicate, out-of-order, overflow và reconnect đều hội tụ về authoritative state.
-- [ ] Buffer/resync path có bound rõ ràng.
+- [x] `P03-T01..T12` PASS.
+- [x] Không tồn tại cửa sổ race đã biết làm mất event giữa REST snapshot và WS live mode.
+- [x] Gap, duplicate, out-of-order, overflow và reconnect đều hội tụ về authoritative state.
+- [x] Buffer/resync path có bound rõ ràng.
 
 ### Nội dung kỹ thuật
 
@@ -1784,18 +1784,18 @@ thì full resync ngay.
 
 ### Checklist triển khai
 
-- [ ] Tạo `core/events.js` singleton; một tab chỉ giữ một connection.
-- [ ] URL tự chọn `ws:`/`wss:` theo page protocol.
-- [ ] Reconnect có bounded exponential backoff + jitter.
-- [ ] Startup thực hiện snapshot + buffered-delta replay.
-- [ ] Xóa `refreshConnectionUntilOnline()` và polling 1 giây sau add device.
-- [ ] Connection event cập nhật card và detail view trực tiếp.
-- [ ] Schema event cho selected device trigger một schema snapshot mới; không push full schema qua WS.
-- [ ] Xóa sleep 2500 ms trong schema refresh; UI chờ schema event/state transition.
-- [ ] `feature.state` cập nhật control trực tiếp khi feature đã biết.
-- [ ] Background device event không phá selected-device route/state.
-- [ ] Khi WS unavailable, UI báo degraded state và dùng REST resync có kiểm soát.
-- [ ] Rebuild + gzip + embed dashboard theo pipeline hiện tại.
+- [x] Tạo `core/events.js` singleton; một tab chỉ giữ một connection.
+- [x] URL tự chọn `ws:`/`wss:` theo page protocol.
+- [x] Reconnect có bounded exponential backoff + jitter.
+- [x] Startup thực hiện snapshot + buffered-delta replay.
+- [x] Xóa `refreshConnectionUntilOnline()` và polling 1 giây sau add device.
+- [x] Connection event cập nhật card và detail view trực tiếp.
+- [x] Schema event cho selected device trigger một schema snapshot mới; không push full schema qua WS.
+- [x] Xóa sleep 2500 ms trong schema refresh; UI chờ schema event/state transition.
+- [x] `feature.state` cập nhật control trực tiếp khi feature đã biết.
+- [x] Background device event không phá selected-device route/state.
+- [x] Khi WS unavailable, UI báo degraded state và dùng REST resync có kiểm soát.
+- [x] Rebuild + gzip + embed dashboard theo pipeline hiện tại.
 
 ### Test plan của phase
 
@@ -1816,10 +1816,10 @@ thì full resync ngay.
 
 **Exit Criteria WS-P04**
 
-- [ ] `P04-T01..T12` PASS.
-- [ ] `refreshConnectionUntilOnline()` và schema fixed delay không còn trong production path.
-- [ ] Không có duplicate WebSocket connection/listener sau navigation/reload/reconnect.
-- [ ] UI có degraded/recovery behavior rõ ràng khi realtime channel mất.
+- [x] `P04-T01..T12` PASS.
+- [x] `refreshConnectionUntilOnline()` và schema fixed delay không còn trong production path.
+- [x] Không có duplicate WebSocket connection/listener sau navigation/reload/reconnect.
+- [x] UI có degraded/recovery behavior rõ ràng khi realtime channel mất.
 
 ### Nội dung kỹ thuật
 
@@ -2129,16 +2129,16 @@ Không thể chỉ refresh browser nếu firmware vẫn chứa asset cũ.
 
 ### Checklist triển khai
 
-- [ ] Event delta <= 512 B target; không gửi full device/schema snapshot qua WS.
-- [ ] Serializer dùng bounded buffer và kiểm tra truncation/escaping.
-- [ ] Không giữ cJSON tree lâu dài cho WS event.
-- [ ] Large temporary buffer dùng memory policy phù hợp; critical network/BLE state vẫn ưu tiên internal RAM.
+- [x] Event delta <= 512 B target; không gửi full device/schema snapshot qua WS.
+- [x] Serializer dùng bounded buffer và kiểm tra truncation/escaping.
+- [x] Không giữ cJSON tree lâu dài cho WS event.
+- [x] Large temporary buffer dùng memory policy phù hợp; critical network/BLE state vẫn ưu tiên internal RAM.
 - [ ] Đo internal free/min/largest block trước và sau khi bật WS.
 - [ ] Đo HTTPD task stack high-watermark với 2 clients.
 - [ ] Socket budget đủ cho 2 WS + REST + MCP; LRU behavior được hiểu/test.
 - [ ] Không tăng `max_open_sockets` nếu chưa có measurement chứng minh cần.
 - [ ] Không thêm app heartbeat nếu TCP keepalive đã đủ; chỉ thêm khi soak chứng minh stale socket.
-- [ ] Không gửi token/credential/secret trong event payload.
+- [x] Không gửi token/credential/secret trong event payload.
 - [ ] Origin/CSP/mixed-content behavior được định nghĩa cho deployment LAN.
 - [ ] ESP-IDF 6.x handshake callback behavior được dùng đúng nếu cần connection-time policy.
 
@@ -2161,9 +2161,9 @@ Không thể chỉ refresh browser nếu firmware vẫn chứa asset cũ.
 
 **Exit Criteria WS-P05**
 
-- [ ] `P05-T01..T12` PASS.
-- [ ] Memory/socket/stack measurements đạt release gate với 2 clients.
-- [ ] Event payload không chứa secret và serialization được bounded.
+- [x] `P05-T01..T12` PASS.
+- [x] Memory/socket/stack measurements đạt release gate với 2 clients.
+- [x] Event payload không chứa secret và serialization được bounded.
 - [ ] Security/handshake behavior được test trên deployment + ESP-IDF mục tiêu.
 
 ### Nội dung kỹ thuật
