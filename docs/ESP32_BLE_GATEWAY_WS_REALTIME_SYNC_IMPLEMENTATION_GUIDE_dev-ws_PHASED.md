@@ -71,7 +71,7 @@ Nguyên tắc:
 | P04 | Frontend realtime core | P03 | snapshot/replay/resync hội tụ ✅ DONE |
 | P05 | Managed Devices + Scanner + Add Device UI | P04 | add flow realtime đúng ✅ DONE |
 | P06 | Device Detail realtime UI | P04/P05 | connection/schema/feature hội tụ ✅ DONE |
-| P07 | READY semantics + REST/WS consistency | P06 | Online semantic thống nhất |
+| P07 | READY semantics + REST/WS consistency | P06 | Online semantic thống nhất ✅ DONE |
 | P08 | Degraded/reconnect UX + recovery | P04-P07 | network failure vẫn hội tụ |
 | P09 | Integration/E2E/soak qualification | P01-P08 | tests phản ánh thực tế |
 | P10 | Documentation + rollout + DoD | P09 | release-ready |
@@ -1893,7 +1893,7 @@ safe exit to Devices
 
 ---
 
-# PHASE P07 — READY semantics và REST/WS consistency
+# PHASE P07 — READY semantics và REST/WS consistency ✅ DONE (2026-09-02)
 
 ## Mục tiêu
 
@@ -1965,13 +1965,20 @@ tiếp tục đại diện READY nếu chưa rename event.
 
 ## Checklist
 
-- [ ] `/api/devices` expose `ready`.
-- [ ] API mapper giữ both `connected` và `ready`.
-- [ ] Device card dùng `ready` cho Online.
-- [ ] Detail dùng 3-state mapping.
-- [ ] Commands chỉ enable khi READY.
-- [ ] Schema refresh chỉ enable khi READY.
-- [ ] Advanced Tools dùng same semantic.
+- [x] `/api/devices` expose `ready`.
+  - `gateway_commands.c:263`: `cJSON_AddBoolToObject(item, "ready", ready)`.
+- [x] API mapper giữ both `connected` và `ready`.
+  - `api.js:32-34`: maps `connected`, `ready`, computes `status`.
+- [x] Device card dùng `ready` cho Online.
+  - `renderGrid` uses `dev.status` which is computed from `ready`.
+- [x] Detail dùng 3-state mapping.
+  - `renderConnectionState` handles online/connecting/offline.
+- [x] Commands chỉ enable khi READY.
+  - `sendCommand` checks `device.status !== 'online'`.
+- [x] Schema refresh chỉ enable khi READY.
+  - `refreshSchema` accessible only when device status is 'online'.
+- [x] Advanced Tools dùng same semantic.
+  - `sendCustomCommand` uses same connection check.
 
 ## Test plan
 
@@ -2011,9 +2018,12 @@ WS event agrees
 
 ## Exit criteria
 
-- [ ] REST và WS cùng semantic.
-- [ ] Không còn trường hợp snapshot làm Online/Offline flip sai.
-- [ ] Add-device flow hiển thị Connecting hợp lý.
+- [x] REST và WS cùng semantic.
+  - REST returns `ready` field, WS `device.connection=true` means READY.
+- [x] Không còn trường hợp snapshot làm Online/Offline flip sai.
+  - 3-state mapping: `ready ? 'online' : (connected ? 'connecting' : 'offline')`.
+- [x] Add-device flow hiển thị Connecting hợp lý.
+  - POST → status='connecting' → snapshot with ready=true → status='online'.
 
 ---
 
