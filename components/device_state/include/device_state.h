@@ -40,6 +40,15 @@ esp_err_t device_state_init(void);
 bool device_state_on_notify(const char *device_id, const gw_message_t *msg);
 
 /**
+ * Observer for command ACK notifications. Updates device_state cache and
+ * publishes GW_EVENT_FEATURE_STATE when the ACK carries structured feature
+ * state (has_feature_id + has_property_id + has_feature_value_*).
+ * Does NOT consume the ACK — it must still reach command_dispatcher.
+ */
+void device_state_on_command_ack(const char *device_id,
+                                 const gw_message_t *msg);
+
+/**
  * Get current state for a specific (device_id, feature_id, property_id).
  * Returns ESP_ERR_NOT_FOUND if no entry exists.
  */

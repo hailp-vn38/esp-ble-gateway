@@ -53,9 +53,33 @@ const devices = {
         this._syncRequested = false;
         const doSync = async () => {
             try {
+                const selectedId = state.selectedDeviceDetail?.id ?? null;
+
                 const snapshot = await api.getDevicesSnapshot();
+                let schemaSnapshot = null;
+                if (selectedId) {
+                    try {
+                        schemaSnapshot = await api.getDeviceSchemaSnapshot(selectedId);
+                    } catch (_) {
+                        schemaSnapshot = null;
+                    }
+                }
+
                 this._applyDeviceSnapshot(snapshot.devices);
-                events.goLive(snapshot.eventSeq);
+
+                if (schemaSnapshot &&
+                    state.selectedDeviceDetail?.id === selectedId) {
+                    this._applySchemaSnapshot(schemaSnapshot.schema);
+                }
+
+                const schemaSeq = schemaSnapshot?.eventSeq ?? 0;
+                const baseSeq = snapshot.eventSeq > schemaSeq
+                    ? snapshot.eventSeq : schemaSeq;
+                events.goLive(baseSeq);
+
+                this._reconcileFeatureCacheAfterSnapshot(
+                    selectedId, schemaSnapshot?.eventSeq ?? 0);
+
                 ui.setRealtimeBanner('hide');
             } catch (e) {
                 // Will retry on reconnect
@@ -114,6 +138,46 @@ const devices = {
         }
     },
 
+    _applySchemaSnapshot(schema) {
+        if (!schema) return;
+        const selectedId = state.selectedDeviceDetail?.id ?? null;
+        if (!selectedId || schema.device_id !== selectedId) return;
+
+        this.renderSchemaState(schema.state);
+        const features = Array.isArray(schema.features) ? schema.features : [];
+        const tools = Array.isArray(schema.tools) ? schema.tools : [];
+        this.currentFeatures = features;
+        this.currentTools = tools;
+        this.renderFeatures(features, tools, state.selectedDeviceDetail);
+    },
+
+    _reconcileFeatureCacheAfterSnapshot(deviceId, snapshotSeq) {
+        if (!deviceId || snapshotSeq === 0) return;
+        const featureMap = state.featureStateByDevice.get(deviceId);
+        if (!featureMap) return;
+
+        for (const [key, cached] of featureMap) {
+            if (cached.seq && cached.seq > snapshotSeq) {
+                // Apply to currentFeatures if visible
+                for (const feat of this.currentFeatures) {
+                    const featKey = `${feat.feature_id}:${feat.property_id}`;
+                    if (featKey === key) {
+                        if (!feat.state) feat.state = {};
+                        feat.state.valid = true;
+                        if (cached.valueType === 'bool') feat.state.value_bool = cached.value;
+                        else if (cached.valueType === 'int') feat.state.value_int = cached.value;
+                        feat.state.updated_at_ms = cached.updatedAtMs;
+                        break;
+                    }
+                }
+            }
+        }
+        // Re-render if features are loaded
+        if (this.currentFeatures.length > 0 && state.selectedDeviceDetail?.id === deviceId) {
+            this.renderFeatures(this.currentFeatures, this.currentTools, state.selectedDeviceDetail);
+        }
+    },
+
     _applyConnectionEvent(ev) {
         const dev = state.connectedDevices.find(d => d.id === ev.deviceId);
         if (dev) {
@@ -153,6 +217,7 @@ const devices = {
         const featureMap = deviceMap.get(ev.deviceId);
         const key = `${ev.featureId}:${ev.propertyId}`;
         featureMap.set(key, {
+            seq: ev.seq,
             valueType: ev.valueType,
             value: ev.value,
             updatedAtMs: ev.updatedAtMs
@@ -217,9 +282,25 @@ const devices = {
 
     async _initialLoad() {
         try {
+            const selectedId = state.selectedDeviceDetail?.id ?? null;
             const snapshot = await api.getDevicesSnapshot();
+            let schemaSnapshot = null;
+            if (selectedId) {
+                try {
+                    schemaSnapshot = await api.getDeviceSchemaSnapshot(selectedId);
+                } catch (_) {
+                    schemaSnapshot = null;
+                }
+            }
             this._applyDeviceSnapshot(snapshot.devices);
-            events.goLive(snapshot.eventSeq);
+            if (schemaSnapshot &&
+                state.selectedDeviceDetail?.id === selectedId) {
+                this._applySchemaSnapshot(schemaSnapshot.schema);
+            }
+            const schemaSeq = schemaSnapshot?.eventSeq ?? 0;
+            const baseSeq = snapshot.eventSeq > schemaSeq
+                ? snapshot.eventSeq : schemaSeq;
+            events.goLive(baseSeq);
             return true;
         } catch(e) {
             // REST snapshot failed — will retry on ws:connected
@@ -515,7 +596,8 @@ const devices = {
         this.renderFeaturesLoading(container);
         if (!syncMcpAfterLoad) void mcpTools.loadDevice(device.id);
         try {
-            const snapshot = await api.getDeviceSchema(device.id);
+            const result = await api.getDeviceSchemaSnapshot(device.id);
+            const snapshot = result.schema;
             if (loadId !== this.schemaLoadId ||
                 state.selectedDeviceDetail?.id !== device.id) return;
             this.renderSchemaState(snapshot.state);
@@ -524,6 +606,8 @@ const devices = {
             this.currentFeatures = features;
             this.currentTools = tools;
             this.renderFeatures(features, tools, device);
+            // Reconcile cached feature events newer than schema snapshot cursor
+            this._reconcileFeatureCacheAfterSnapshot(device.id, result.eventSeq);
             if (syncMcpAfterLoad) await mcpTools.loadDevice(device.id);
             return true;
         } catch (error) {

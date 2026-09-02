@@ -25,6 +25,8 @@ static void on_device_notify(const char *device_id, const gw_message_t *msg)
 {
     if (device_schema_on_notify(device_id, msg)) return;
     if (device_state_on_notify(device_id, msg)) return;
+    /* Observer: updates cache from structured ACK, does NOT consume it. */
+    device_state_on_command_ack(device_id, msg);
     command_dispatcher_on_device_notify(device_id, msg);
 }
 

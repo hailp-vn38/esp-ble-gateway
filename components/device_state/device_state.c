@@ -87,6 +87,65 @@ static void on_schema_committed(const char *device_id, uint32_t revision,
     }
 }
 
+/* ── Shared state-apply helper ──────────────────────────────────────── */
+
+static void apply_feature_state(const char *device_id,
+                                const char *feature_id,
+                                uint8_t property_id,
+                                bool has_bool, bool bool_value,
+                                bool has_int, int32_t int_value,
+                                const char *source)
+{
+    portENTER_CRITICAL(&s_lock);
+
+    device_state_entry_t *entry = find_entry(device_id, feature_id,
+                                              property_id);
+    if (entry == NULL) {
+        entry = allocate_entry();
+        if (entry == NULL) {
+            portEXIT_CRITICAL(&s_lock);
+            ESP_LOGW(TAG, "[%s] state table full, dropping %s",
+                     device_id, feature_id);
+            return;
+        }
+        strlcpy(entry->device_id, device_id, sizeof(entry->device_id));
+        strlcpy(entry->feature_id, feature_id,
+                sizeof(entry->feature_id));
+        entry->property_id = property_id;
+    }
+
+    if (has_bool) {
+        entry->value_bool = bool_value;
+    }
+    if (has_int) {
+        entry->value_int = int_value;
+    }
+    entry->valid = true;
+    entry->updated_at_ms = esp_timer_get_time() / 1000;
+
+    /* Copy values for event before unlock */
+    gateway_event_t ev = {0};
+    ev.type = GW_EVENT_FEATURE_STATE;
+    strlcpy(ev.device_id, device_id, sizeof(ev.device_id));
+    strlcpy(ev.feature_id, feature_id, sizeof(ev.feature_id));
+    ev.property_id = property_id;
+    ev.updated_at_ms = entry->updated_at_ms;
+    if (has_bool) {
+        ev.value_kind = GW_EVENT_VALUE_BOOL;
+        ev.bool_value = bool_value;
+    } else if (has_int) {
+        ev.value_kind = GW_EVENT_VALUE_INT;
+        ev.int_value = int_value;
+    }
+
+    portEXIT_CRITICAL(&s_lock);
+
+    gateway_events_publish(&ev);
+
+    ESP_LOGI(TAG, "[%s] feature=%s prop=%u source=%s state updated",
+             device_id, feature_id, property_id, source);
+}
+
 /* ── Public API ─────────────────────────────────────────────────────── */
 
 esp_err_t device_state_init(void)
@@ -123,56 +182,40 @@ bool device_state_on_notify(const char *device_id, const gw_message_t *msg)
         return false;
     }
 
-    portENTER_CRITICAL(&s_lock);
-
-    device_state_entry_t *entry = find_entry(device_id, msg->feature_id,
-                                              msg->property_id);
-    if (entry == NULL) {
-        entry = allocate_entry();
-        if (entry == NULL) {
-            portEXIT_CRITICAL(&s_lock);
-            ESP_LOGW(TAG, "[%s] state table full, dropping %s",
-                     device_id, msg->feature_id);
-            return true;
-        }
-        strlcpy(entry->device_id, device_id, sizeof(entry->device_id));
-        strlcpy(entry->feature_id, msg->feature_id,
-                sizeof(entry->feature_id));
-        entry->property_id = msg->property_id;
-    }
-
-    if (msg->has_feature_value_bool) {
-        entry->value_bool = msg->feature_value_bool;
-    }
-    if (msg->has_feature_value_int) {
-        entry->value_int = msg->feature_value_int;
-    }
-    entry->valid = true;
-    entry->updated_at_ms = esp_timer_get_time() / 1000;
-
-    /* Copy values for event before unlock */
-    gateway_event_t ev = {0};
-    ev.type = GW_EVENT_FEATURE_STATE;
-    strlcpy(ev.device_id, device_id, sizeof(ev.device_id));
-    strlcpy(ev.feature_id, msg->feature_id, sizeof(ev.feature_id));
-    ev.property_id = msg->property_id;
-    ev.updated_at_ms = entry->updated_at_ms;
-    if (msg->has_feature_value_bool) {
-        ev.value_kind = GW_EVENT_VALUE_BOOL;
-        ev.bool_value = msg->feature_value_bool;
-    } else if (msg->has_feature_value_int) {
-        ev.value_kind = GW_EVENT_VALUE_INT;
-        ev.int_value = msg->feature_value_int;
-    }
-
-    portEXIT_CRITICAL(&s_lock);
-
-    gateway_events_publish(&ev);
-
-    ESP_LOGI(TAG, "[%s] feature=%s prop=%u state updated",
-             device_id, msg->feature_id, msg->property_id);
-
+    apply_feature_state(device_id, msg->feature_id, msg->property_id,
+                        msg->has_feature_value_bool, msg->feature_value_bool,
+                        msg->has_feature_value_int, msg->feature_value_int,
+                        "event");
     return true;
+}
+
+void device_state_on_command_ack(const char *device_id, const gw_message_t *msg)
+{
+    if (device_id == NULL || msg == NULL) {
+        return;
+    }
+
+    if (strcmp(msg->type, "device_ack") != 0) {
+        return;
+    }
+
+    /* Only apply when command was accepted. */
+    if (!msg->bool_value) {
+        return;
+    }
+
+    if (!msg->has_feature_id || !msg->has_property_id) {
+        return;
+    }
+
+    if (!msg->has_feature_value_bool && !msg->has_feature_value_int) {
+        return;
+    }
+
+    apply_feature_state(device_id, msg->feature_id, msg->property_id,
+                        msg->has_feature_value_bool, msg->feature_value_bool,
+                        msg->has_feature_value_int, msg->feature_value_int,
+                        "ack");
 }
 
 esp_err_t device_state_get(const char *device_id,
