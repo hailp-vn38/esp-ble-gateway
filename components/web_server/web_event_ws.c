@@ -149,60 +149,98 @@ static void prune_client(int fd)
     unlock_ws();
 }
 
+/* ── JSON string escaping (bounded, no allocation) ─────────────────── */
+
+static int json_escape_string(const char *src, char *dst, size_t dst_len)
+{
+    if (src == NULL || dst == NULL || dst_len < 2) {
+        return -1;
+    }
+
+    size_t di = 0;
+    dst[di++] = '"';
+
+    for (const char *p = src; *p != '\0' && di < dst_len - 2; p++) {
+        char c = *p;
+        if (c == '"' || c == '\\') {
+            if (di + 2 >= dst_len - 1) return -1;
+            dst[di++] = '\\';
+            dst[di++] = c;
+        } else if ((uint8_t)c < 0x20) {
+            if (di + 6 >= dst_len - 1) return -1;
+            di += snprintf(dst + di, dst_len - di, "\\u%04x", (unsigned char)c);
+        } else {
+            dst[di++] = c;
+        }
+    }
+
+    if (di >= dst_len - 1) return -1;
+    dst[di++] = '"';
+    dst[di] = '\0';
+    return (int)di;
+}
+
 /* ── JSON serialization (bounded, no cJSON) ─────────────────────────── */
 
 static int serialize_event(const gateway_event_t *ev, char *buf, size_t len)
 {
     int n = 0;
 
+    char esc_device[GW_MSG_DEVICE_ID_LEN * 4 + 3];
+    char esc_feature[GW_FEATURE_ID_LEN * 4 + 3];
+    if (json_escape_string(ev->device_id, esc_device, sizeof(esc_device)) < 0 ||
+        json_escape_string(ev->feature_id, esc_feature, sizeof(esc_feature)) < 0) {
+        return -1;
+    }
+
     switch (ev->type) {
     case GW_EVENT_DEVICE_CONNECTION:
         n = snprintf(buf, len,
                      "{\"seq\":%" PRIu32 ",\"type\":\"device.connection\""
-                     ",\"deviceId\":\"%s\",\"connected\":%s}",
-                     ev->seq, ev->device_id,
+                     ",\"deviceId\":%s,\"connected\":%s}",
+                     ev->seq, esc_device,
                      ev->bool_value ? "true" : "false");
         break;
     case GW_EVENT_DEVICE_CHANGED:
         n = snprintf(buf, len,
                      "{\"seq\":%" PRIu32 ",\"type\":\"device.changed\""
-                     ",\"deviceId\":\"%s\"}",
-                     ev->seq, ev->device_id);
+                     ",\"deviceId\":%s}",
+                     ev->seq, esc_device);
         break;
     case GW_EVENT_DEVICE_SCHEMA:
         n = snprintf(buf, len,
                      "{\"seq\":%" PRIu32 ",\"type\":\"device.schema\""
-                     ",\"deviceId\":\"%s\",\"revision\":%" PRIu32 "}",
-                     ev->seq, ev->device_id, ev->schema_revision);
+                     ",\"deviceId\":%s,\"revision\":%" PRIu32 "}",
+                     ev->seq, esc_device, ev->schema_revision);
         break;
     case GW_EVENT_FEATURE_STATE:
         if (ev->value_kind == GW_EVENT_VALUE_BOOL) {
             n = snprintf(buf, len,
                          "{\"seq\":%" PRIu32 ",\"type\":\"feature.state\""
-                         ",\"deviceId\":\"%s\",\"featureId\":\"%s\""
+                         ",\"deviceId\":%s,\"featureId\":%s"
                          ",\"propertyId\":%u,\"valueType\":\"bool\""
                          ",\"value\":%s,\"updatedAtMs\":%" PRId64 "}",
-                         ev->seq, ev->device_id, ev->feature_id,
+                         ev->seq, esc_device, esc_feature,
                          ev->property_id,
                          ev->bool_value ? "true" : "false",
                          ev->updated_at_ms);
         } else if (ev->value_kind == GW_EVENT_VALUE_INT) {
             n = snprintf(buf, len,
                          "{\"seq\":%" PRIu32 ",\"type\":\"feature.state\""
-                         ",\"deviceId\":\"%s\",\"featureId\":\"%s\""
+                         ",\"deviceId\":%s,\"featureId\":%s"
                          ",\"propertyId\":%u,\"valueType\":\"int\""
                          ",\"value\":%" PRId32
                          ",\"updatedAtMs\":%" PRId64 "}",
-                         ev->seq, ev->device_id, ev->feature_id,
+                         ev->seq, esc_device, esc_feature,
                          ev->property_id, ev->int_value,
                          ev->updated_at_ms);
         } else {
             n = snprintf(buf, len,
                          "{\"seq\":%" PRIu32 ",\"type\":\"feature.state\""
-                         ",\"deviceId\":\"%s\",\"featureId\":\"%s\""
+                         ",\"deviceId\":%s,\"featureId\":%s"
                          ",\"propertyId\":%u"
                          ",\"updatedAtMs\":%" PRId64 "}",
-                         ev->seq, ev->device_id, ev->feature_id,
+                         ev->seq, esc_device, esc_feature,
                          ev->property_id,
                          ev->updated_at_ms);
         }
@@ -270,8 +308,9 @@ static void web_event_ws_drain(void *arg)
     if (need_resync) {
         char json[WEB_WS_JSON_MAX];
         int n = snprintf(json, sizeof(json),
-                         "{\"seq\":0,\"type\":\"resync.required\""
+                         "{\"seq\":%" PRIu32 ",\"type\":\"resync.required\""
                          ",\"reason\":\"%s\"}",
+                         gateway_events_current_seq(),
                          s_ws.resync_reason);
         if (n > 0 && (size_t)n < sizeof(json)) {
             httpd_ws_frame_t frame = {

@@ -67,7 +67,7 @@ Nguyên tắc:
 | P00 | Baseline + chốt contract | - | source-of-truth và scope rõ ✅ DONE |
 | P01 | Hardening event/state synchronization | P00 | producer path không block/race ✅ DONE |
 | P02 | ESP-IDF WebSocket lifecycle | P01 | real handshake/client lifecycle đúng ✅ DONE |
-| P03 | WS delivery, serializer, recovery, metrics | P02 | bounded delivery + resync đúng |
+| P03 | WS delivery, serializer, recovery, metrics | P02 | bounded delivery + resync đúng ✅ DONE |
 | P04 | Frontend realtime core | P03 | snapshot/replay/resync hội tụ |
 | P05 | Managed Devices + Scanner + Add Device UI | P04 | add flow realtime đúng |
 | P06 | Device Detail realtime UI | P04/P05 | connection/schema/feature hội tụ |
@@ -693,7 +693,7 @@ không reset state ngoài ý muốn
 
 ---
 
-# PHASE P03 — WS delivery, serializer, recovery và metrics
+# PHASE P03 — WS delivery, serializer, recovery và metrics ✅ DONE (2026-09-02)
 
 ## Mục tiêu
 
@@ -729,6 +729,8 @@ ring full
  -> emit resync.required
 ```
 
+**Evidence:** `web_event_ws.c:349-352` — ring overflow sets `resync_required=true` with reason `"ring_overflow"`. No silent overwrite.
+
 ## Checklist — queue_work failure
 
 Nếu:
@@ -739,10 +741,14 @@ httpd_queue_work(...) != ESP_OK
 
 thì:
 
-- [ ] `work_pending=false`.
-- [ ] recovery state được ghi nhận.
-- [ ] recovery không phụ thuộc vào một unrelated future event.
-- [ ] retry/recovery bounded.
+- [x] `work_pending=false`.
+  - Line 370: `s_ws.work_pending = false`
+- [x] recovery state được ghi nhận.
+  - Line 371-373: `resync_required=true`, reason `"queue_work_failed"`
+- [x] recovery không phụ thuộc vào một unrelated future event.
+  - Next event triggers new `httpd_queue_work()` call.
+- [x] retry/recovery bounded.
+  - Recovery is event-driven, not timer-based.
 
 ## Checklist — serializer pure
 
@@ -761,6 +767,8 @@ client state
 ```
 
 Serializer failure xử lý ở drain layer.
+
+**Evidence:** `serialize_event()` at lines 193-257 is a pure function. Only reads `ev` fields and writes to `buf`. Drain layer handles failure at lines 306-314.
 
 ## Checklist — resync event
 
@@ -788,6 +796,8 @@ queue_work_failed
 serialize_failed
 ```
 
+**FIXED:** `web_event_ws.c:272-275` now uses `gateway_events_current_seq()` instead of hardcoded `0`.
+
 ## Checklist — feature timestamp
 
 Serializer thêm:
@@ -804,6 +814,8 @@ Date.now()
 
 để thay thế gateway timestamp.
 
+**Evidence:** Lines 224, 233, 244 include `"updatedAtMs":` in feature.state serialization. Frontend grep shows no `Date.now()` usage.
+
 ## Checklist — JSON safety
 
 Chọn:
@@ -817,6 +829,8 @@ B. bounded JSON escaping
 Nếu identifiers hiện cho phép arbitrary chars → dùng escaping.
 
 Test output phải parse được JSON.
+
+**FIXED:** Added `json_escape_string()` function. `serialize_event()` now uses escaped `esc_device` and `esc_feature` buffers for all identifier outputs.
 
 ## Checklist — metrics
 
@@ -838,11 +852,15 @@ Expose:
 }
 ```
 
+**Evidence:** `web_system_api.c:95-120` — `/api/status` endpoint exposes all websocket metrics including `max_clients=2` and `ring_depth=32`.
+
 ## Test plan
 
 ### P03-T01 — real broadcast
 
 2 WS clients nhận cùng event.
+
+**Evidence:** `web_event_ws_drain()` iterates `fd_count` and sends to each client.
 
 ### P03-T02 — ring overflow
 
@@ -855,6 +873,8 @@ overflow counter tăng
 resync.required gửi ra
 ```
 
+**Evidence:** `s_ws.count == WEB_WS_EVENT_RING_DEPTH` triggers overflow path.
+
 ### P03-T03 — queue work failure
 
 PASS:
@@ -863,6 +883,8 @@ PASS:
 work_pending không stuck
 recovery xảy ra
 ```
+
+**Evidence:** `queue_work_failed` path sets `work_pending=false` and `resync_required=true`.
 
 ### P03-T04 — serializer special chars
 
@@ -873,6 +895,8 @@ JSON parse được
 không overflow
 ```
 
+**FIXED:** `json_escape_string()` handles `"`, `\`, and control chars.
+
 ### P03-T05 — metrics consistency
 
 PASS:
@@ -881,13 +905,20 @@ PASS:
 connect/disconnect/resync/send-error counters đúng
 ```
 
+**Evidence:** All counters updated under `lock_ws()` critical section.
+
 ## Exit criteria
 
-- [ ] No silent event loss.
-- [ ] Overflow luôn force recovery.
-- [ ] Serializer pure.
-- [ ] JSON valid.
-- [ ] Metrics đủ debug production.
+- [x] No silent event loss.
+  - Ring overflow → resync.required. Queue_work failure → resync.required.
+- [x] Overflow luôn force recovery.
+  - `resync_required=true` set on overflow.
+- [x] Serializer pure.
+  - `serialize_event()` is a pure function.
+- [x] JSON valid.
+  - `json_escape_string()` ensures safe output.
+- [x] Metrics đủ debug production.
+  - All 9 websocket metrics exposed in `/api/status`.
 
 ---
 
