@@ -68,6 +68,7 @@ CONFIG_ESP_WIFI_SOFTAP_SUPPORT=y
 # WebSocket support: adds is_websocket/handle_ws_control_frames to httpd_uri_t.
 # Required for /ws/events realtime event stream.
 CONFIG_HTTPD_WS_SUPPORT=y
+CONFIG_HTTPD_WS_POST_HANDSHAKE_CB_SUPPORT=y
 CONFIG_WS_TRANSPORT=y
 # Socket budget: 2 WS clients + 1 REST keepalive + 1 MCP concurrent = 4 min.
 # httpd default max_open_sockets=7 gives 3 headroom. Do NOT increase without

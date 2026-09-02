@@ -71,14 +71,49 @@ static int count_clients_locked(void)
     return n;
 }
 
+static bool validate_ws_fd(int fd)
+{
+    if (s_ws.server == NULL) {
+        return false;
+    }
+    return httpd_ws_get_fd_info(s_ws.server, fd) == HTTPD_WS_CLIENT_WEBSOCKET;
+}
+
+static void prune_stale_clients_locked(void)
+{
+    for (int i = 0; i < WEB_WS_MAX_CLIENTS; i++) {
+        if (s_ws.clients[i].active &&
+            !validate_ws_fd(s_ws.clients[i].fd)) {
+            ESP_LOGI(TAG, "Pruned stale client fd=%d slot=%d",
+                     s_ws.clients[i].fd, i);
+            s_ws.clients[i].active = false;
+        }
+    }
+}
+
 static bool register_client(int fd)
 {
     lock_ws();
+
+    /* Check if this exact fd is already registered */
+    for (int i = 0; i < WEB_WS_MAX_CLIENTS; i++) {
+        if (s_ws.clients[i].active && s_ws.clients[i].fd == fd) {
+            unlock_ws();
+            ESP_LOGD(TAG, "Client fd=%d already registered slot=%d", fd, i);
+            return true;
+        }
+    }
+
+    /* Prune stale slots before enforcing limit */
+    prune_stale_clients_locked();
+
     if (count_clients_locked() >= WEB_WS_MAX_CLIENTS) {
         unlock_ws();
         ESP_LOGW(TAG, "Client rejected: limit %d reached", WEB_WS_MAX_CLIENTS);
         return false;
     }
+
+    /* Handle FD reuse: clear any inactive slot with same numeric fd */
     for (int i = 0; i < WEB_WS_MAX_CLIENTS; i++) {
         if (!s_ws.clients[i].active) {
             s_ws.clients[i].fd = fd;
@@ -88,6 +123,7 @@ static bool register_client(int fd)
             return true;
         }
     }
+
     unlock_ws();
     return false;
 }
@@ -196,12 +232,18 @@ static void web_event_ws_drain(void *arg)
     s_ws.resync_required = false;
     s_ws.work_pending = false;
 
-    /* Snapshot client fds */
+    /* Snapshot client fds, validate they are still active WebSocket fds */
     int fds[WEB_WS_MAX_CLIENTS];
     int fd_count = 0;
     for (int i = 0; i < WEB_WS_MAX_CLIENTS; i++) {
         if (s_ws.clients[i].active) {
-            fds[fd_count++] = s_ws.clients[i].fd;
+            if (validate_ws_fd(s_ws.clients[i].fd)) {
+                fds[fd_count++] = s_ws.clients[i].fd;
+            } else {
+                ESP_LOGD(TAG, "Drain: pruned stale fd=%d slot=%d",
+                         s_ws.clients[i].fd, i);
+                s_ws.clients[i].active = false;
+            }
         }
     }
 
@@ -306,11 +348,13 @@ static void on_gateway_event(const gateway_event_t *event, void *context)
 
 /* ── WebSocket URI handler ────────────────────────────────────────────
  *
- * ESP-IDF 6.x WebSocket handshake behavior:
+ * ESP-IDF 6.x WebSocket lifecycle:
  * - httpd_uri_t.is_websocket=true tells httpd to perform the WS handshake
- *   automatically before calling the handler.
+ *   automatically before calling ws_post_handshake_cb.
+ * - ws_post_handshake_cb is called after the handshake completes; this is
+ *   the reliable registration point.
  * - handle_ws_control_frames=true enables PING/PONG/CLOSE frame handling
- *   at the httpd level; the handler only sees text/binary data frames.
+ *   at the httpd level; ws_control_handler receives CLOSE notifications.
  * - httpd_ws_send_frame_async() sends through the session socket directly
  *   in HTTPD context; it must NOT be called from producer tasks.
  *   The architecture routes through: producer -> ring -> httpd_queue_work()
@@ -319,28 +363,20 @@ static void on_gateway_event(const gateway_event_t *event, void *context)
  *   2-client limit prevents dashboard connections from being evicted.
  */
 
-static esp_err_t web_event_ws_handler(httpd_req_t *req)
+static esp_err_t web_event_ws_on_connect(httpd_req_t *req)
 {
-    if (req->method == HTTP_GET) {
-        /* Handshake: register client */
-        int fd = httpd_req_to_sockfd(req);
-        if (!register_client(fd)) {
-            return ESP_FAIL;
-        }
+    int fd = httpd_req_to_sockfd(req);
 
-        /* Enable control frame handling (PING/PONG/CLOSE) */
-        httpd_ws_frame_t pong = {
-            .type = HTTPD_WS_TYPE_TEXT,
-        };
-        esp_err_t err = httpd_ws_send_frame_async(
-            s_ws.server, fd, &pong);
-        if (err != ESP_OK) {
-            prune_client(fd);
-        }
-        return ESP_OK;
+    if (!register_client(fd)) {
+        ESP_LOGW(TAG, "Post-handshake registration failed fd=%d", fd);
+        return ESP_FAIL;
     }
 
-    /* Handle incoming frames (server-push only in phase 0) */
+    return ESP_OK;
+}
+
+static esp_err_t web_event_ws_handler(httpd_req_t *req)
+{
     httpd_ws_frame_t frame = {
         .type = HTTPD_WS_TYPE_TEXT,
     };
@@ -349,6 +385,13 @@ static esp_err_t web_event_ws_handler(httpd_req_t *req)
     esp_err_t err = httpd_ws_recv_frame(req, &frame, sizeof(buf));
     if (err != ESP_OK) {
         return err;
+    }
+
+    /* CLOSE frames: when handle_ws_control_frames=true, httpd handles
+     * PING/PONG but passes CLOSE to the handler for cleanup. */
+    if (frame.type == HTTPD_WS_TYPE_CLOSE) {
+        prune_client(httpd_req_to_sockfd(req));
+        return ESP_OK;
     }
 
     /* Phase 0: ignore incoming text frames */
@@ -392,6 +435,7 @@ esp_err_t web_event_ws_register(httpd_handle_t server)
         .handler = web_event_ws_handler,
         .is_websocket = true,
         .handle_ws_control_frames = true,
+        .ws_post_handshake_cb = web_event_ws_on_connect,
     };
 
     err = httpd_register_uri_handler(server, &ws_uri);
