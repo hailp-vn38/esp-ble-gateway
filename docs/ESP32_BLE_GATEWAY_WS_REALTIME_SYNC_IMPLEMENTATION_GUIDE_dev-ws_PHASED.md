@@ -69,7 +69,7 @@ Nguyên tắc:
 | P02 | ESP-IDF WebSocket lifecycle | P01 | real handshake/client lifecycle đúng ✅ DONE |
 | P03 | WS delivery, serializer, recovery, metrics | P02 | bounded delivery + resync đúng ✅ DONE |
 | P04 | Frontend realtime core | P03 | snapshot/replay/resync hội tụ ✅ DONE |
-| P05 | Managed Devices + Scanner + Add Device UI | P04 | add flow realtime đúng |
+| P05 | Managed Devices + Scanner + Add Device UI | P04 | add flow realtime đúng ✅ DONE |
 | P06 | Device Detail realtime UI | P04/P05 | connection/schema/feature hội tụ |
 | P07 | READY semantics + REST/WS consistency | P06 | Online semantic thống nhất |
 | P08 | Degraded/reconnect UX + recovery | P04-P07 | network failure vẫn hội tụ |
@@ -1242,7 +1242,7 @@ không reconnect
 
 ---
 
-# PHASE P05 — Managed Devices, Scanner và Add Device UI
+# PHASE P05 — Managed Devices, Scanner và Add Device UI ✅ DONE (2026-09-02)
 
 ## Mục tiêu
 
@@ -1289,11 +1289,16 @@ scan discovery != managed-device realtime
 
 Yêu cầu:
 
-- [ ] polling chỉ chạy trong active scan session.
-- [ ] stop khi firmware báo `scanning=false`.
-- [ ] stop khi user Stop.
-- [ ] stop timeout fallback.
-- [ ] không tạo permanent scanner polling.
+- [x] polling chỉ chạy trong active scan session.
+  - `setInterval` in `startScan()`, cleared in `stopScan()`.
+- [x] stop khi firmware báo `scanning=false`.
+  - Line 47: `if (!result.scanning) this.stopScan(true)`.
+- [x] stop khi user Stop.
+  - `stopScan()` clears interval and timeout.
+- [x] stop timeout fallback.
+  - Line 54-58: `setTimeout` 8s fallback.
+- [x] không tạo permanent scanner polling.
+  - Polling only in `startScan()`.
 
 ## 5.2 Scanner visible states
 
@@ -1348,6 +1353,8 @@ Inline error:
 BLE scan could not be completed.
 ```
 
+**Evidence:** `updateUI()` in `scanner.js:169-194` handles all visible states. Empty state rendered in `startScan()` line 39-46.
+
 ## 5.3 Scanner reconcile managed devices
 
 Nếu X đang hiển thị ở Scanner nhưng được add từ tab khác/MCP:
@@ -1365,6 +1372,8 @@ Add:
 reconcileManagedDevices()
 ```
 
+**Evidence:** `reconcileManagedDevices()` in `scanner.js:157-167` — filters `scannedDevices` against `connectedManagedDevices` and removes matching DOM elements. Called from `devices.js:113`.
+
 ## 5.4 Mobile select affordance
 
 Current hover-only action nên đổi:
@@ -1374,6 +1383,8 @@ opacity-100 sm:opacity-0 sm:group-hover:opacity-100
 ```
 
 Row vẫn clickable.
+
+**Evidence:** `scanner.js:160` — button class updated to `opacity-100 sm:opacity-0 sm:group-hover:opacity-100`.
 
 ## 5.5 Add Device flow
 
@@ -1392,6 +1403,8 @@ Select scan result
  -> Online
 ```
 
+**Evidence:** `addDeviceFromModal()` in `devices.js:658-724` — stops scan, POST, shows "Device saved. Connecting...", sets `pendingOpenDeviceId`, WS degraded falls back to `_syncFromSnapshot('local-add')`.
+
 ## 5.6 Add modal states
 
 ```text
@@ -1403,9 +1416,9 @@ ERROR
 
 ### SAVING
 
-- [ ] button disabled.
-- [ ] spinner.
-- [ ] prevent double submit.
+- [x] button disabled.
+- [x] spinner.
+- [x] prevent double submit.
 
 ### ACCEPTED
 
@@ -1416,6 +1429,8 @@ Device saved. Connecting…
 ```
 
 Không dùng wording khiến user hiểu device đã Online.
+
+**Evidence:** `addDeviceFromModal()` in `devices.js:662-663` sets `_saving=true`, shows spinner, prevents double submit. Line 702 shows "Device saved. Connecting…".
 
 ## 5.7 pendingOpenDeviceId
 
@@ -1437,6 +1452,8 @@ On snapshot:
 if found -> open Device Detail
 ```
 
+**Evidence:** `state.js:31` defines `pendingOpenDeviceId: null`. `devices.js:709` sets it after POST. `devices.js:99-107` reconciles in `_applyDeviceSnapshot()`.
+
 ## 5.8 Remove legacy post-add load
 
 Bỏ:
@@ -1454,6 +1471,8 @@ one controlled _syncFromSnapshot('local-add')
 ```
 
 Không polling 1s chờ online.
+
+**Evidence:** No `load()` after add. WS degraded path at `devices.js:713-716`.
 
 ## 5.9 Scanner realtime indicator
 
@@ -1514,11 +1533,11 @@ Select/Add visible without hover
 
 ## Exit criteria
 
-- [ ] Scanner UX rõ ràng.
-- [ ] Scan polling vẫn bounded.
-- [ ] Add flow không dùng legacy load race.
-- [ ] Persisted và Online là 2 state khác nhau.
-- [ ] Device mới vào Detail deterministic.
+- [x] Scanner UX rõ ràng.
+- [x] Scan polling vẫn bounded.
+- [x] Add flow không dùng legacy load race.
+- [x] Persisted và Online là 2 state khác nhau.
+- [x] Device mới vào Detail deterministic.
 
 ---
 

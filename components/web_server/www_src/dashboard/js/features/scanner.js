@@ -145,13 +145,25 @@ const scanner = {
                     </div>
                 </div>
             </div>
-            <button class="opacity-0 group-hover:opacity-100 transition-opacity px-4 py-1.5 bg-white border border-gray-200 text-brand-600 rounded shadow-sm hover:bg-brand-50 hover:border-brand-200 text-sm font-medium flex items-center">
+            <button class="opacity-100 sm:opacity-0 sm:group-hover:opacity-100 transition-opacity px-4 py-1.5 bg-white border border-gray-200 text-brand-600 rounded shadow-sm hover:bg-brand-50 hover:border-brand-200 text-sm font-medium flex items-center">
                 Select <i class="ph ph-arrow-right ml-1"></i>
             </button>
         `;
         
         div.onclick = () => ui.openModal(device);
         container.appendChild(div);
+    },
+
+    reconcileManagedDevices() {
+        if (!state.scannedDevices.length) return;
+        const managedMacs = new Set(state.connectedDevices.map(d => d.mac));
+        state.scannedDevices = state.scannedDevices.filter(d => !managedMacs.has(d.mac));
+        const container = document.getElementById('scan-items');
+        if (!container) return;
+        state.scannedDevices.forEach(device => {
+            const el = document.getElementById(`scanned-${device.mac.replace(/:/g, '')}`);
+            if (el) el.remove();
+        });
     },
 
     updateUI() {
