@@ -68,7 +68,7 @@ Nguyên tắc:
 | P01 | Hardening event/state synchronization | P00 | producer path không block/race ✅ DONE |
 | P02 | ESP-IDF WebSocket lifecycle | P01 | real handshake/client lifecycle đúng ✅ DONE |
 | P03 | WS delivery, serializer, recovery, metrics | P02 | bounded delivery + resync đúng ✅ DONE |
-| P04 | Frontend realtime core | P03 | snapshot/replay/resync hội tụ |
+| P04 | Frontend realtime core | P03 | snapshot/replay/resync hội tụ ✅ DONE |
 | P05 | Managed Devices + Scanner + Add Device UI | P04 | add flow realtime đúng |
 | P06 | Device Detail realtime UI | P04/P05 | connection/schema/feature hội tụ |
 | P07 | READY semantics + REST/WS consistency | P06 | Online semantic thống nhất |
@@ -922,7 +922,7 @@ connect/disconnect/resync/send-error counters đúng
 
 ---
 
-# PHASE P04 — Frontend realtime core
+# PHASE P04 — Frontend realtime core ✅ DONE (2026-09-02)
 
 ## Mục tiêu
 
@@ -1010,6 +1010,8 @@ degraded recovery
 local add recovery
 ```
 
+**Evidence:** `_syncFromSnapshot()` in `devices.js:47-74` is the single sync path. Used by `ws:connected` (line 39), `resync:required` (line 35), `device.changed` via `_scheduleDeviceResync()` (line 179), and `local-add` (line 713).
+
 ## Checklist — duplicate/gap order
 
 Correct:
@@ -1026,6 +1028,8 @@ if (lastSeq !== 0 && msg.seq !== lastSeq + 1) {
 ```
 
 Không gap-check trước duplicate-check.
+
+**Evidence:** `_acceptSequencedEvent()` in `events.js:121-132` — duplicate check (line 122) before gap check (line 127).
 
 ## Checklist — replay
 
@@ -1045,6 +1049,8 @@ startup replay
 reconnect replay
 ```
 
+**Evidence:** `_replayBuffered()` in `events.js:90-101` uses `_acceptSequencedEvent()`. Live events also use `_acceptSequencedEvent()` (line 149).
+
 ## Checklist — sequence validation
 
 Reject:
@@ -1054,6 +1060,8 @@ Reject:
 msg.seq < 0
 typeof msg.type !== 'string'
 ```
+
+**Evidence:** `_isValidEvent()` in `events.js:104-108` checks all three conditions.
 
 ## Checklist — session reset
 
@@ -1068,6 +1076,8 @@ _sessionId++;
 
 Không replay buffer của gateway session cũ sau reboot.
 
+**Evidence:** `onclose` in `events.js:51-62` clears buffer, live, resyncPending. `goLive()` increments `_sessionId` (line 86).
+
 ## Checklist — explicit close
 
 Add:
@@ -1077,6 +1087,8 @@ _stopped = true
 ```
 
 `events.close()` không được reconnect.
+
+**Evidence:** `close()` in `events.js:213-223` sets `_stopped=true`, clears timers, closes socket. `init()` checks `_stopped` (line 20). `_scheduleReconnect()` only called if `!_stopped` (line 59).
 
 ## Checklist — resync single-flight
 
@@ -1094,6 +1106,8 @@ mark requested
 chạy tối đa một follow-up snapshot
 ```
 
+**Evidence:** `_syncFromSnapshot()` in `devices.js:47-74` — if `_syncPromise` exists, sets `_syncRequested=true` and returns. After sync completes, if `_syncRequested`, calls `_syncFromSnapshot('queued')`.
+
 ## Checklist — selected device reconcile
 
 Sau device snapshot:
@@ -1106,6 +1120,8 @@ selected ID mất
  -> clear selected
  -> navigate Devices
 ```
+
+**Evidence:** `_applyDeviceSnapshot()` in `devices.js:76-115` — lines 82-96 reconcile selected device.
 
 ## Checklist — API
 
@@ -1130,6 +1146,8 @@ return:
 }
 ```
 
+**Evidence:** `getDevicesSnapshot()` in `api.js:23-37` returns `{ eventSeq, devices }`. `getDeviceSchemaSnapshot()` in `api.js:100-104` returns `{ schema, eventSeq }`.
+
 ## Test plan
 
 ### P04-T01 — duplicate
@@ -1146,6 +1164,8 @@ ignore
 không resync
 ```
 
+**Evidence:** `events.js:122-124` — `msg.seq <= this._lastSeq` returns early.
+
 ### P04-T02 — gap
 
 ```text
@@ -1158,6 +1178,8 @@ PASS:
 ```text
 single resync
 ```
+
+**Evidence:** `events.js:127-132` — gap detected, emits `resync:required`.
 
 ### P04-T03 — replay gap
 
@@ -1174,6 +1196,8 @@ PASS:
 không silently LIVE
 ```
 
+**Evidence:** `_replayBuffered()` filters `e.seq > this._lastSeq`, then `_acceptSequencedEvent()` detects gap at seq 23.
+
 ### P04-T04 — gateway reboot
 
 ```text
@@ -1188,6 +1212,8 @@ old buffer không replay
 new snapshot thắng
 ```
 
+**Evidence:** `onclear` clears buffer. `goLive()` resets `_lastSeq` from snapshot.
+
 ### P04-T05 — explicit close
 
 PASS:
@@ -1197,14 +1223,22 @@ events.close()
 không reconnect
 ```
 
+**Evidence:** `_stopped=true` prevents `_scheduleReconnect()`.
+
 ## Exit criteria
 
-- [ ] Một authoritative snapshot path.
-- [ ] Duplicate không trigger resync.
-- [ ] Gap luôn recovery.
-- [ ] Replay dùng same validator.
-- [ ] Reconnect/new gateway session an toàn.
-- [ ] Resync single-flight.
+- [x] Một authoritative snapshot path.
+  - `_syncFromSnapshot()` is the single path.
+- [x] Duplicate không trigger resync.
+  - Duplicate check before gap check.
+- [x] Gap luôn recovery.
+  - Gap triggers `resync:required`.
+- [x] Replay dùng same validator.
+  - `_replayBuffered()` uses `_acceptSequencedEvent()`.
+- [x] Reconnect/new gateway session an toàn.
+  - Buffer cleared on close, `_sessionId` incremented.
+- [x] Resync single-flight.
+  - `_syncPromise` + `_syncRequested` pattern.
 
 ---
 
