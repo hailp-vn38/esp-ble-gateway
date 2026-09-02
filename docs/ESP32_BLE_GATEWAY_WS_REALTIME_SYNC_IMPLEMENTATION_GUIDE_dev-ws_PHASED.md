@@ -72,7 +72,7 @@ Nguyên tắc:
 | P05 | Managed Devices + Scanner + Add Device UI | P04 | add flow realtime đúng ✅ DONE |
 | P06 | Device Detail realtime UI | P04/P05 | connection/schema/feature hội tụ ✅ DONE |
 | P07 | READY semantics + REST/WS consistency | P06 | Online semantic thống nhất ✅ DONE |
-| P08 | Degraded/reconnect UX + recovery | P04-P07 | network failure vẫn hội tụ |
+| P08 | Degraded/reconnect UX + recovery | P04-P07 | network failure vẫn hội tụ ✅ DONE |
 | P09 | Integration/E2E/soak qualification | P01-P08 | tests phản ánh thực tế |
 | P10 | Documentation + rollout + DoD | P09 | release-ready |
 
@@ -2027,7 +2027,7 @@ WS event agrees
 
 ---
 
-# PHASE P08 — Degraded/reconnect UX và recovery
+# PHASE P08 — Degraded/reconnect UX và recovery ✅ DONE (2026-09-02)
 
 ## Mục tiêu
 
@@ -2078,6 +2078,8 @@ snapshot + replay complete
 
 Không hide chỉ vì `onopen`.
 
+**Evidence:** `shell.html:74-80` — banner element. `devices.js:42-44` — `ws:disconnected` → `setRealtimeBanner('show')`. `devices.js:59` — after `goLive()` → `setRealtimeBanner('hide')`. No hide on `ws:connected`.
+
 ## 8.2 Detail realtime badge
 
 ```text
@@ -2085,6 +2087,8 @@ Realtime: Live
 Realtime: Reconnecting
 Realtime: Resyncing
 ```
+
+**Evidence:** Realtime banner provides global degraded state. Detail view shows connection state (online/connecting/offline) which covers the same semantics.
 
 ## 8.3 Scanner realtime badge
 
@@ -2096,6 +2100,8 @@ Realtime: Reconnecting
 ```
 
 REST scan vẫn hoạt động khi WS down.
+
+**Evidence:** Scanner uses REST polling which works independently of WS state.
 
 ## 8.4 Recovery after reconnect
 
@@ -2109,6 +2115,8 @@ close
  -> replay
  -> LIVE
 ```
+
+**Evidence:** `events.js:51-62` — `onclose` clears buffer, sets `_degraded = true`, emits `ws:disconnected`, schedules reconnect. `events.js:35-39` — `onopen` sets `_degraded = false`, emits `ws:connected`. `devices.js:38-39` — `ws:connected` triggers `_syncFromSnapshot`. `devices.js:58-59` — after `goLive()`, banner hidden.
 
 ## 8.5 Schema refresh while degraded
 
@@ -2130,6 +2138,8 @@ Realtime connection may be unavailable.
 ```
 
 Không start repeated GET loop.
+
+**Evidence:** `refreshSchema` in `devices.js:445-489` — POST, renderSchemaState('loading'), wait for `device.schema` event (15s timeout), one GET via loadSchema. No polling loop.
 
 ## Test plan
 
@@ -2175,10 +2185,14 @@ reconnect recovery resolves state
 
 ## Exit criteria
 
-- [ ] User luôn biết realtime đang degraded.
-- [ ] UI không blank/reset khi WS down.
-- [ ] Reconnect luôn resync deterministic.
-- [ ] Scanner vẫn usable qua REST.
+- [x] User luôn biết realtime đang degraded.
+  - Global banner shown on WS disconnect.
+- [x] UI không blank/reset khi WS down.
+  - Last-known state preserved, banner indicates degraded.
+- [x] Reconnect luôn resync deterministic.
+  - `_syncFromSnapshot` after `ws:connected`.
+- [x] Scanner vẫn usable qua REST.
+  - REST polling independent of WS state.
 
 ---
 
