@@ -223,6 +223,8 @@ void device_state_forget(const char *device_id)
         return;
     }
 
+    size_t forgotten = 0;
+
     portENTER_CRITICAL(&s_lock);
 
     size_t write = 0;
@@ -234,13 +236,15 @@ void device_state_forget(const char *device_id)
             write++;
         }
     }
-    if (write < s_count) {
-        ESP_LOGI(TAG, "[%s] forgot %zu state entries",
-                 device_id, s_count - write);
-    }
+    forgotten = s_count - write;
     s_count = write;
 
     portEXIT_CRITICAL(&s_lock);
+
+    if (forgotten > 0) {
+        ESP_LOGI(TAG, "[%s] forgot %zu state entries",
+                 device_id, forgotten);
+    }
 }
 
 void device_state_reset_for_test(void)

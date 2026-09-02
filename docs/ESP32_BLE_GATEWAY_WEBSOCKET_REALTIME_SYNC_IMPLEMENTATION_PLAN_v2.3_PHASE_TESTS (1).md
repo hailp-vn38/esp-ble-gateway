@@ -1942,13 +1942,25 @@ applyConnectionEvent(message) {
         return;
     }
 
-    device.status = message.ready ? 'online' : 'offline';
+    // Current wire field `connected` represents BLE READY. Accept `ready`
+    // as a forward-compatible alias if the event contract is expanded.
+    const ready = message.ready ?? message.connected;
+    device.connected = ready;
+    device.ready = ready;
+    device.status = ready ? 'online' : 'offline';
 
     devices.renderGrid();
 
     if (state.selectedDeviceDetail?.id === device.id) {
         state.selectedDeviceDetail = device;
         devices.renderConnectionState(device);
+        if (devices.currentFeatures.length > 0) {
+            devices.renderFeatures(
+                devices.currentFeatures,
+                devices.currentTools,
+                device
+            );
+        }
 
         document
             .getElementById('feature-offline-notice')

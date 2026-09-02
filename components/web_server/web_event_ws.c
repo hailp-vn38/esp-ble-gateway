@@ -85,20 +85,35 @@ static bool validate_ws_fd(int fd)
     return httpd_ws_get_fd_info(s_ws.server, fd) == HTTPD_WS_CLIENT_WEBSOCKET;
 }
 
-static void prune_stale_clients_locked(void)
+static void prune_stale_clients_locked(int stale_fds[WEB_WS_MAX_CLIENTS])
 {
     for (int i = 0; i < WEB_WS_MAX_CLIENTS; i++) {
         if (s_ws.clients[i].active &&
             !validate_ws_fd(s_ws.clients[i].fd)) {
-            ESP_LOGI(TAG, "Pruned stale client fd=%d slot=%d",
-                     s_ws.clients[i].fd, i);
+            stale_fds[i] = s_ws.clients[i].fd;
             s_ws.clients[i].active = false;
+        }
+    }
+}
+
+static void log_pruned_stale_clients(
+    const int stale_fds[WEB_WS_MAX_CLIENTS])
+{
+    for (int i = 0; i < WEB_WS_MAX_CLIENTS; i++) {
+        if (stale_fds[i] >= 0) {
+            ESP_LOGI(TAG, "Pruned stale client fd=%d slot=%d",
+                     stale_fds[i], i);
         }
     }
 }
 
 static bool register_client(int fd)
 {
+    int stale_fds[WEB_WS_MAX_CLIENTS];
+    for (int i = 0; i < WEB_WS_MAX_CLIENTS; i++) {
+        stale_fds[i] = -1;
+    }
+
     lock_ws();
 
     /* Check if this exact fd is already registered */
@@ -111,10 +126,11 @@ static bool register_client(int fd)
     }
 
     /* Prune stale slots before enforcing limit */
-    prune_stale_clients_locked();
+    prune_stale_clients_locked(stale_fds);
 
     if (count_clients_locked() >= WEB_WS_MAX_CLIENTS) {
         unlock_ws();
+        log_pruned_stale_clients(stale_fds);
         ESP_LOGW(TAG, "Client rejected: limit %d reached", WEB_WS_MAX_CLIENTS);
         return false;
     }
@@ -126,27 +142,35 @@ static bool register_client(int fd)
             s_ws.clients[i].active = true;
             s_ws.connect_total++;
             unlock_ws();
+            log_pruned_stale_clients(stale_fds);
             ESP_LOGI(TAG, "Client registered fd=%d slot=%d", fd, i);
             return true;
         }
     }
 
     unlock_ws();
+    log_pruned_stale_clients(stale_fds);
     return false;
 }
 
 static void prune_client(int fd)
 {
+    int pruned_slot = -1;
+
     lock_ws();
     for (int i = 0; i < WEB_WS_MAX_CLIENTS; i++) {
         if (s_ws.clients[i].active && s_ws.clients[i].fd == fd) {
             s_ws.clients[i].active = false;
             s_ws.disconnect_total++;
-            ESP_LOGI(TAG, "Client pruned fd=%d slot=%d", fd, i);
+            pruned_slot = i;
             break;
         }
     }
     unlock_ws();
+
+    if (pruned_slot >= 0) {
+        ESP_LOGI(TAG, "Client pruned fd=%d slot=%d", fd, pruned_slot);
+    }
 }
 
 /* ── JSON string escaping (bounded, no allocation) ─────────────────── */
@@ -268,6 +292,10 @@ static void web_event_ws_drain(void *arg)
     gateway_event_t batch[WEB_WS_EVENT_RING_DEPTH];
     int batch_count = 0;
     bool need_resync = false;
+    int stale_fds[WEB_WS_MAX_CLIENTS];
+    for (int i = 0; i < WEB_WS_MAX_CLIENTS; i++) {
+        stale_fds[i] = -1;
+    }
 
     lock_ws();
 
@@ -291,14 +319,20 @@ static void web_event_ws_drain(void *arg)
             if (validate_ws_fd(s_ws.clients[i].fd)) {
                 fds[fd_count++] = s_ws.clients[i].fd;
             } else {
-                ESP_LOGD(TAG, "Drain: pruned stale fd=%d slot=%d",
-                         s_ws.clients[i].fd, i);
+                stale_fds[i] = s_ws.clients[i].fd;
                 s_ws.clients[i].active = false;
             }
         }
     }
 
     unlock_ws();
+
+    for (int i = 0; i < WEB_WS_MAX_CLIENTS; i++) {
+        if (stale_fds[i] >= 0) {
+            ESP_LOGD(TAG, "Drain: pruned stale fd=%d slot=%d",
+                     stale_fds[i], i);
+        }
+    }
 
     if (batch_count == 0 && !need_resync) {
         return;

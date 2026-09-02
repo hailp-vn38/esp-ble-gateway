@@ -162,6 +162,29 @@ static void on_wifi_prov_state_change(wifi_prov_state_t new_state, void *ctx)
     board_io_set_status(resolved);
 }
 
+static void start_external_mcp_bridge(void)
+{
+    if (!mcp_ws_bridge_is_supported()) {
+        return;
+    }
+
+    mcp_ws_config_t bridge_config = {0};
+    esp_err_t cfg_err = mcp_ws_bridge_config_load(&bridge_config);
+    if (cfg_err == ESP_OK && bridge_config.enabled) {
+        esp_err_t bridge_result = mcp_ws_bridge_init();
+        if (bridge_result == ESP_OK) {
+            bridge_result = mcp_ws_bridge_start();
+        }
+        if (bridge_result != ESP_OK) {
+            ESP_LOGW(TAG, "External MCP bridge unavailable: %s",
+                     esp_err_to_name(bridge_result));
+        }
+    } else {
+        ESP_LOGI(TAG, "External MCP bridge disabled; skipping init");
+    }
+    memset(&bridge_config, 0, sizeof(bridge_config));
+}
+
 void app_main(void)
 {
     esp_err_t io_rc = board_io_init();
@@ -264,23 +287,7 @@ void app_main(void)
         ESP_LOGE(TAG, "Web server failed to start, /mcp endpoint not registered");
     }
 
-    if (mcp_ws_bridge_is_supported()) {
-        mcp_ws_config_t bridge_config = {0};
-        esp_err_t cfg_err = mcp_ws_bridge_config_load(&bridge_config);
-        if (cfg_err == ESP_OK && bridge_config.enabled) {
-            esp_err_t bridge_result = mcp_ws_bridge_init();
-            if (bridge_result == ESP_OK) {
-                bridge_result = mcp_ws_bridge_start();
-            }
-            if (bridge_result != ESP_OK) {
-                ESP_LOGW(TAG, "External MCP bridge unavailable: %s",
-                         esp_err_to_name(bridge_result));
-            }
-        } else {
-            ESP_LOGI(TAG, "External MCP bridge disabled; skipping init");
-        }
-        memset(&bridge_config, 0, sizeof(bridge_config));
-    }
+    start_external_mcp_bridge();
 
     ESP_LOGI(TAG, "ESP32 BLE Gateway started (Central + Web UI + JSON-RPC)");
 }

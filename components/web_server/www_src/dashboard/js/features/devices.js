@@ -117,14 +117,29 @@ const devices = {
     _applyConnectionEvent(ev) {
         const dev = state.connectedDevices.find(d => d.id === ev.deviceId);
         if (dev) {
-            dev.status = ev.connected ? 'connecting' : 'offline';
+            // device.connection is emitted by on_device_ready()/disconnect,
+            // so connected=true means command-usable GATT READY.  The
+            // intermediate CONNECTING state only comes from REST snapshots
+            // where connected=true and ready=false.
+            const ready = ev.connected === true;
+            dev.connected = ready;
+            dev.ready = ready;
+            dev.status = ready ? 'online' : 'offline';
             this.renderGrid();
             // Update detail view if open for this device
             if (state.selectedDeviceDetail && state.selectedDeviceDetail.id === ev.deviceId) {
+                state.selectedDeviceDetail.connected = ready;
+                state.selectedDeviceDetail.ready = ready;
                 state.selectedDeviceDetail.status = dev.status;
                 this.renderConnectionState(state.selectedDeviceDetail);
+                if (this.currentFeatures.length > 0) {
+                    this.renderFeatures(
+                        this.currentFeatures,
+                        this.currentTools,
+                        state.selectedDeviceDetail);
+                }
                 document.getElementById('feature-offline-notice').classList.toggle(
-                    'hidden', ev.connected);
+                    'hidden', ready);
             }
         }
     },

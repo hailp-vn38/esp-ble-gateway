@@ -1581,7 +1581,7 @@ if (device.connected) return 'connecting';
 return 'offline';
 ```
 
-**Evidence:** `api.js:34` computes `status: device.ready ? 'online' : (device.connected ? 'connecting' : 'offline')`. `_applyConnectionEvent` in `devices.js:117-129` maps `ev.connected` to `'connecting'` (not `'online'`), preserving the 3-state model. `renderConnectionState` in `devices.js:305-316` handles all three states with correct colors/labels.
+**Evidence:** `api.js:34` computes REST snapshot status as `device.ready ? 'online' : (device.connected ? 'connecting' : 'offline')`. `_applyConnectionEvent` maps `ev.connected=true` to `ready=true` and `online` because this event is emitted only from the BLE READY callback; `connecting` remains the REST-only ACL-without-READY state. `renderConnectionState` handles all three states with distinct colors/labels.
 
 ## 6.2 UI behavior
 
@@ -1755,7 +1755,7 @@ enable eligible controls
 do not reload whole device list
 ```
 
-**Evidence:** `_applyConnectionEvent` updates status and renders connection state. Schema/features preserved in `currentFeatures`/`currentTools`.
+**Evidence:** `_applyConnectionEvent` updates the cached `connected`/`ready` fields and status, renders the connection state, then re-renders preserved `currentFeatures`/`currentTools` so controls are disabled offline and enabled immediately at READY even when schema handling reports `SCHEMA_READY_CACHE_HIT` without a new schema event.
 
 ## 6.11 Edit behavior
 
