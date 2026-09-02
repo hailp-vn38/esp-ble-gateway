@@ -2133,14 +2133,14 @@ Không thể chỉ refresh browser nếu firmware vẫn chứa asset cũ.
 - [x] Serializer dùng bounded buffer và kiểm tra truncation/escaping.
 - [x] Không giữ cJSON tree lâu dài cho WS event.
 - [x] Large temporary buffer dùng memory policy phù hợp; critical network/BLE state vẫn ưu tiên internal RAM.
-- [ ] Đo internal free/min/largest block trước và sau khi bật WS.
-- [ ] Đo HTTPD task stack high-watermark với 2 clients.
-- [ ] Socket budget đủ cho 2 WS + REST + MCP; LRU behavior được hiểu/test.
-- [ ] Không tăng `max_open_sockets` nếu chưa có measurement chứng minh cần.
-- [ ] Không thêm app heartbeat nếu TCP keepalive đã đủ; chỉ thêm khi soak chứng minh stale socket.
+- [x] Đo internal free/min/largest block trước và sau khi bật WS.
+- [x] Đo HTTPD task stack high-watermark với 2 clients.
+- [x] Socket budget đủ cho 2 WS + REST + MCP; LRU behavior được hiểu/test.
+- [x] Không tăng `max_open_sockets` nếu chưa có measurement chứng minh cần.
+- [x] Không thêm app heartbeat nếu TCP keepalive đã đủ; chỉ thêm khi soak chứng minh stale socket.
 - [x] Không gửi token/credential/secret trong event payload.
-- [ ] Origin/CSP/mixed-content behavior được định nghĩa cho deployment LAN.
-- [ ] ESP-IDF 6.x handshake callback behavior được dùng đúng nếu cần connection-time policy.
+- [x] Origin/CSP/mixed-content behavior được định nghĩa cho deployment LAN.
+- [x] ESP-IDF 6.x handshake callback behavior được dùng đúng nếu cần connection-time policy.
 
 ### Test plan của phase
 
@@ -2164,7 +2164,7 @@ Không thể chỉ refresh browser nếu firmware vẫn chứa asset cũ.
 - [x] `P05-T01..T12` PASS.
 - [x] Memory/socket/stack measurements đạt release gate với 2 clients.
 - [x] Event payload không chứa secret và serialization được bounded.
-- [ ] Security/handshake behavior được test trên deployment + ESP-IDF mục tiêu.
+- [x] Security/handshake behavior được test trên deployment + ESP-IDF mục tiêu.
 
 ### Nội dung kỹ thuật
 

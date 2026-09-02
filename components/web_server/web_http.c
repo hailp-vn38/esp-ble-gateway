@@ -8,10 +8,21 @@
 static const char *TAG = "web_http";
 
 // Common hardening headers on every API response (Plan v2 §64, P2 review).
+// P05: Origin/CSP policy for LAN deployment — no external resources,
+// inline scripts only, connect back to self for WS.
 static void set_security_headers(httpd_req_t *request)
 {
     httpd_resp_set_hdr(request, "X-Content-Type-Options", "nosniff");
     httpd_resp_set_hdr(request, "Referrer-Policy", "no-referrer");
+    httpd_resp_set_hdr(request, "X-Frame-Options", "DENY");
+    httpd_resp_set_hdr(request, "Content-Security-Policy",
+                       "default-src 'self'; "
+                       "script-src 'self' 'unsafe-inline'; "
+                       "style-src 'self' 'unsafe-inline'; "
+                       "img-src 'self' data:; "
+                       "connect-src 'self' ws: wss:; "
+                       "font-src 'self'; "
+                       "frame-ancestors 'none'");
 }
 
 esp_err_t web_send_json(httpd_req_t *request, cJSON *json)

@@ -45,6 +45,8 @@ esp_err_t web_settings_api_register(httpd_handle_t server);
 
 esp_err_t web_event_ws_init(void);
 esp_err_t web_event_ws_register(httpd_handle_t server);
+void web_event_ws_get_stats(int *active_clients, uint32_t *ring_used,
+                            uint32_t *resync_count);
 
 // Shared helper used by command and device APIs for async dispatch results.
 void web_send_dispatch_result(httpd_req_t *request,

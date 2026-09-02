@@ -298,7 +298,20 @@ static void on_gateway_event(const gateway_event_t *event, void *context)
     }
 }
 
-/* ── WebSocket URI handler ──────────────────────────────────────────── */
+/* ── WebSocket URI handler ────────────────────────────────────────────
+ *
+ * ESP-IDF 6.x WebSocket handshake behavior:
+ * - httpd_uri_t.is_websocket=true tells httpd to perform the WS handshake
+ *   automatically before calling the handler.
+ * - handle_ws_control_frames=true enables PING/PONG/CLOSE frame handling
+ *   at the httpd level; the handler only sees text/binary data frames.
+ * - The handshake callback (ws_pre_handshake_cb) is NOT used here because
+ *   connection-time policy is not needed for LAN-only deployment.
+ * - httpd_send_frame_async() is HTTPD-safe: it queues the frame via
+ *   httpd_queue_work() internally, so it can be called from any task context.
+ * - HTTPD purges the LRU socket when max_open_sockets is reached; our
+ *   2-client limit prevents dashboard connections from being evicted.
+ */
 
 static esp_err_t web_event_ws_handler(httpd_req_t *req)
 {
@@ -382,4 +395,16 @@ esp_err_t web_event_ws_register(httpd_handle_t server)
     ESP_LOGI(TAG, "/ws/events registered (max %d clients, ring %d)",
              WEB_WS_MAX_CLIENTS, WEB_WS_EVENT_RING_DEPTH);
     return ESP_OK;
+}
+
+/* ── Stats for /api/status ──────────────────────────────────────────── */
+
+void web_event_ws_get_stats(int *active_clients, uint32_t *ring_used,
+                            uint32_t *resync_count)
+{
+    lock_ws();
+    if (active_clients) *active_clients = count_clients_locked();
+    if (ring_used) *ring_used = s_ws.count;
+    if (resync_count) *resync_count = s_ws.resync_required ? 1 : 0;
+    unlock_ws();
 }
