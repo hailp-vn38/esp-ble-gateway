@@ -7,7 +7,7 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 
-/* ── Helper ─────────────────────────────────────────────────────────── */
+/* ── Helpers ─────────────────────────────────────────────────────────── */
 
 static void reset_all(void)
 {
@@ -22,6 +22,51 @@ static void test_listener(const gateway_event_t *event, void *context)
     (void)context;
     s_listener_count++;
     s_last_event = *event;
+}
+
+static int s_count_a, s_count_b;
+
+static void listener_a(const gateway_event_t *e, void *ctx)
+{
+    (void)e;
+    (void)ctx;
+    s_count_a++;
+}
+
+static void listener_b(const gateway_event_t *e, void *ctx)
+{
+    (void)e;
+    (void)ctx;
+    s_count_b++;
+}
+
+static int s_good_count;
+
+static void bad_listener(const gateway_event_t *e, void *ctx)
+{
+    (void)e;
+    (void)ctx;
+    /* no-op: simulates a failing listener */
+}
+
+static void good_listener(const gateway_event_t *e, void *ctx)
+{
+    (void)e;
+    (void)ctx;
+    s_good_count++;
+}
+
+static void publish_task(void *arg)
+{
+    int *counter = (int *)arg;
+    gateway_event_t ev = {0};
+    ev.type = GW_EVENT_FEATURE_STATE;
+    for (int i = 0; i < 50; i++) {
+        gateway_events_publish(&ev);
+        (*counter)++;
+        vTaskDelay(pdMS_TO_TICKS(1));
+    }
+    vTaskDelete(NULL);
 }
 
 /* ── Tests ──────────────────────────────────────────────────────────── */
@@ -139,22 +184,8 @@ TEST_CASE("multiple listeners all receive event", "[gateway_events]")
     reset_all();
     gateway_events_init();
 
-    static int count_a, count_b;
-    count_a = 0;
-    count_b = 0;
-
-    static void listener_a(const gateway_event_t *e, void *ctx)
-    {
-        (void)e;
-        (void)ctx;
-        count_a++;
-    }
-    static void listener_b(const gateway_event_t *e, void *ctx)
-    {
-        (void)e;
-        (void)ctx;
-        count_b++;
-    }
+    s_count_a = 0;
+    s_count_b = 0;
 
     TEST_ASSERT_EQUAL_INT(ESP_OK, gateway_events_register(listener_a, NULL));
     TEST_ASSERT_EQUAL_INT(ESP_OK, gateway_events_register(listener_b, NULL));
@@ -163,8 +194,8 @@ TEST_CASE("multiple listeners all receive event", "[gateway_events]")
     ev.type = GW_EVENT_DEVICE_CHANGED;
     gateway_events_publish(&ev);
 
-    TEST_ASSERT_EQUAL_INT(1, count_a);
-    TEST_ASSERT_EQUAL_INT(1, count_b);
+    TEST_ASSERT_EQUAL_INT(1, s_count_a);
+    TEST_ASSERT_EQUAL_INT(1, s_count_b);
 
     reset_all();
 }
@@ -181,28 +212,12 @@ TEST_CASE("concurrent publish from multiple tasks", "[gateway_events]")
     static int task_counter;
     task_counter = 0;
 
-    static void publish_task(void *arg)
-    {
-        int *counter = (int *)arg;
-        gateway_event_t ev = {0};
-        ev.type = GW_EVENT_FEATURE_STATE;
-        for (int i = 0; i < 50; i++) {
-            gateway_events_publish(&ev);
-            (*counter)++;
-            vTaskDelay(pdMS_TO_TICKS(1));
-        }
-        vTaskDelete(NULL);
-    }
-
     xTaskCreate(publish_task, "p1", 4096, &task_counter, 5, NULL);
     xTaskCreate(publish_task, "p2", 4096, &task_counter, 5, NULL);
 
     vTaskDelay(pdMS_TO_TICKS(300));
 
-    /* s_listener_count should equal total publishes (100) */
     TEST_ASSERT_EQUAL_INT(100, s_listener_count);
-
-    /* seq should be 100 */
     TEST_ASSERT_EQUAL_UINT32(100, gateway_events_current_seq());
 
     reset_all();
@@ -213,23 +228,7 @@ TEST_CASE("listener failure does not break other listeners", "[gateway_events]")
     reset_all();
     gateway_events_init();
 
-    static int good_count;
-    good_count = 0;
-
-    static void bad_listener(const gateway_event_t *e, void *ctx)
-    {
-        (void)e;
-        (void)ctx;
-        /* Simulate crash in listener - we can't actually crash in a test,
-         * but we verify the design: bad listener should not prevent
-         * subsequent listeners from being called */
-    }
-    static void good_listener(const gateway_event_t *e, void *ctx)
-    {
-        (void)e;
-        (void)ctx;
-        good_count++;
-    }
+    s_good_count = 0;
 
     TEST_ASSERT_EQUAL_INT(ESP_OK, gateway_events_register(bad_listener, NULL));
     TEST_ASSERT_EQUAL_INT(ESP_OK, gateway_events_register(good_listener, NULL));
@@ -238,7 +237,7 @@ TEST_CASE("listener failure does not break other listeners", "[gateway_events]")
     ev.type = GW_EVENT_DEVICE_CHANGED;
     gateway_events_publish(&ev);
 
-    TEST_ASSERT_EQUAL_INT(1, good_count);
+    TEST_ASSERT_EQUAL_INT(1, s_good_count);
 
     reset_all();
 }

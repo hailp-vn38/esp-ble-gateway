@@ -249,10 +249,9 @@ static esp_err_t xiaozhi_reconnect_handler(httpd_req_t *request)
 esp_err_t web_settings_api_register(httpd_handle_t server)
 {
     static const httpd_uri_t routes[] = {
-        {"/api/settings", HTTP_GET, settings_get_handler, NULL},
-        {"/api/settings/xiaozhi", HTTP_PUT, xiaozhi_put_handler, NULL},
-        {"/api/settings/xiaozhi/reconnect", HTTP_POST,
-         xiaozhi_reconnect_handler, NULL},
+        WEB_URI_INIT("/api/settings", HTTP_GET, settings_get_handler),
+        WEB_URI_INIT("/api/settings/xiaozhi", HTTP_PUT, xiaozhi_put_handler),
+        WEB_URI_INIT("/api/settings/xiaozhi/reconnect", HTTP_POST, xiaozhi_reconnect_handler),
     };
 
     esp_err_t err = ESP_OK;

@@ -214,14 +214,10 @@ static esp_err_t dispatch_message_async(httpd_req_t *request,
 esp_err_t web_device_api_register(httpd_handle_t server)
 {
     static const httpd_uri_t routes[] = {
-        {.uri = "/api/devices", .method = HTTP_GET,
-         .handler = devices_get_handler},
-        {.uri = "/api/devices", .method = HTTP_POST,
-         .handler = devices_write_handler},
-        {.uri = "/api/devices", .method = HTTP_PUT,
-         .handler = devices_write_handler},
-        {.uri = "/api/devices", .method = HTTP_DELETE,
-         .handler = devices_delete_handler},
+        WEB_URI_INIT("/api/devices", HTTP_GET, devices_get_handler),
+        WEB_URI_INIT("/api/devices", HTTP_POST, devices_write_handler),
+        WEB_URI_INIT("/api/devices", HTTP_PUT, devices_write_handler),
+        WEB_URI_INIT("/api/devices", HTTP_DELETE, devices_delete_handler),
     };
     return web_register_routes(server, routes, WEB_ARRAY_SIZE(routes));
 }

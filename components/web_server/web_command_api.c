@@ -191,8 +191,7 @@ static esp_err_t command_post_handler(httpd_req_t *request)
 esp_err_t web_command_api_register(httpd_handle_t server)
 {
     static const httpd_uri_t routes[] = {
-        {.uri = "/api/command", .method = HTTP_POST,
-         .handler = command_post_handler},
+        WEB_URI_INIT("/api/command", HTTP_POST, command_post_handler),
     };
     return web_register_routes(server, routes, WEB_ARRAY_SIZE(routes));
 }

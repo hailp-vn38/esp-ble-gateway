@@ -197,12 +197,9 @@ esp_err_t web_ble_api_init(void)
 esp_err_t web_ble_api_register(httpd_handle_t server)
 {
     static const httpd_uri_t routes[] = {
-        {.uri = "/api/ble/scan", .method = HTTP_GET,
-         .handler = ble_scan_get_handler},
-        {.uri = "/api/ble/scan", .method = HTTP_POST,
-         .handler = ble_scan_post_handler},
-        {.uri = "/api/ble/scan", .method = HTTP_DELETE,
-         .handler = ble_scan_delete_handler},
+        WEB_URI_INIT("/api/ble/scan", HTTP_GET, ble_scan_get_handler),
+        WEB_URI_INIT("/api/ble/scan", HTTP_POST, ble_scan_post_handler),
+        WEB_URI_INIT("/api/ble/scan", HTTP_DELETE, ble_scan_delete_handler),
     };
     return web_register_routes(server, routes, WEB_ARRAY_SIZE(routes));
 }

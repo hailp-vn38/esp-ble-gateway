@@ -209,13 +209,11 @@ static esp_err_t captive_not_found_handler(httpd_req_t *request,
 esp_err_t web_assets_register_gateway(httpd_handle_t server)
 {
     static const httpd_uri_t routes[] = {
-        {.uri = "/", .method = HTTP_GET, .handler = index_get_handler},
-        {.uri = "/dashboard.css", .method = HTTP_GET,
-         .handler = dashboard_css_get_handler},
-        {.uri = "/icons.css", .method = HTTP_GET, .handler = icons_css_get_handler},
-        {.uri = "/assets/Phosphor.woff2", .method = HTTP_GET,
-         .handler = phosphor_font_get_handler},
-        {.uri = "/favicon.ico", .method = HTTP_GET, .handler = favicon_get_handler},
+        WEB_URI_INIT("/", HTTP_GET, index_get_handler),
+        WEB_URI_INIT("/dashboard.css", HTTP_GET, dashboard_css_get_handler),
+        WEB_URI_INIT("/icons.css", HTTP_GET, icons_css_get_handler),
+        WEB_URI_INIT("/assets/Phosphor.woff2", HTTP_GET, phosphor_font_get_handler),
+        WEB_URI_INIT("/favicon.ico", HTTP_GET, favicon_get_handler),
     };
     return web_register_routes(server, routes, WEB_ARRAY_SIZE(routes));
 }
@@ -223,16 +221,12 @@ esp_err_t web_assets_register_gateway(httpd_handle_t server)
 esp_err_t web_assets_register_provisioning(httpd_handle_t server)
 {
     static const httpd_uri_t routes[] = {
-        {.uri = "/", .method = HTTP_GET, .handler = provisioning_index_get_handler},
-        {.uri = "/favicon.ico", .method = HTTP_GET, .handler = favicon_get_handler},
-        {.uri = "/generate_204", .method = HTTP_GET,
-         .handler = captive_redirect_handler},
-        {.uri = "/hotspot-detect.html", .method = HTTP_GET,
-         .handler = captive_redirect_handler},
-        {.uri = "/connecttest.txt", .method = HTTP_GET,
-         .handler = captive_redirect_handler},
-        {.uri = "/ncsi.txt", .method = HTTP_GET,
-         .handler = captive_redirect_handler},
+        WEB_URI_INIT("/", HTTP_GET, provisioning_index_get_handler),
+        WEB_URI_INIT("/favicon.ico", HTTP_GET, favicon_get_handler),
+        WEB_URI_INIT("/generate_204", HTTP_GET, captive_redirect_handler),
+        WEB_URI_INIT("/hotspot-detect.html", HTTP_GET, captive_redirect_handler),
+        WEB_URI_INIT("/connecttest.txt", HTTP_GET, captive_redirect_handler),
+        WEB_URI_INIT("/ncsi.txt", HTTP_GET, captive_redirect_handler),
     };
     return web_register_routes(server, routes, WEB_ARRAY_SIZE(routes));
 }

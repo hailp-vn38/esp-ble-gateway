@@ -187,9 +187,9 @@ static esp_err_t mcp_token_delete_handler(httpd_req_t *request)
 esp_err_t web_mcp_token_api_register(httpd_handle_t server)
 {
     static const httpd_uri_t routes[] = {
-        {"/api/mcp-token", HTTP_PUT, mcp_token_update_handler, NULL},
-        {"/api/mcp-token", HTTP_DELETE, mcp_token_delete_handler, NULL},
-        {"/api/mcp-token/generate", HTTP_POST, mcp_token_generate_handler, NULL},
+        WEB_URI_INIT("/api/mcp-token", HTTP_PUT, mcp_token_update_handler),
+        WEB_URI_INIT("/api/mcp-token", HTTP_DELETE, mcp_token_delete_handler),
+        WEB_URI_INIT("/api/mcp-token/generate", HTTP_POST, mcp_token_generate_handler),
     };
 
     esp_err_t err = ESP_OK;

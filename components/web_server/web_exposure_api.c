@@ -305,10 +305,8 @@ static esp_err_t exposure_put_handler(httpd_req_t *request)
 esp_err_t web_exposure_api_register(httpd_handle_t server)
 {
     static const httpd_uri_t routes[] = {
-        {.uri = "/api/mcp/exposures", .method = HTTP_GET,
-         .handler = exposure_get_handler},
-        {.uri = "/api/mcp/exposures", .method = HTTP_PUT,
-         .handler = exposure_put_handler},
+        WEB_URI_INIT("/api/mcp/exposures", HTTP_GET, exposure_get_handler),
+        WEB_URI_INIT("/api/mcp/exposures", HTTP_PUT, exposure_put_handler),
     };
     return web_register_routes(server, routes, WEB_ARRAY_SIZE(routes));
 }

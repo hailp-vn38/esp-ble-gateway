@@ -1,21 +1,24 @@
 
   Component                  PASS  FAIL  Total  Status
   ───────────────────────────────────────────────────────
-  ble_central                  31     0     31  [32mALL PASS[0m
-  board_io                     64     0     64  [32mALL PASS[0m
-  cbor_codec                    9     0      9  [32mALL PASS[0m
-  command_dispatcher           31     0     31  [32mALL PASS[0m
-  command_executor              4     0      4  [32mALL PASS[0m
-  device_schema                22     0     22  [32mALL PASS[0m
-  device_state                 11     0     11  [32mALL PASS[0m
-  device_store                 10     0     10  [32mALL PASS[0m
-  device_template               7     0      7  [32mALL PASS[0m
-  mcp_endpoint                 55     0     55  [32mALL PASS[0m
-  mcp_ws_bridge                18     0     18  [32mALL PASS[0m
-  memory_policy                 4     0      4  [32mALL PASS[0m
-  web_server                    6     0      6  [32mALL PASS[0m
-  wifi_provisioning            28     0     28  [32mALL PASS[0m
+  ble_central                 214     0    214  [32mALL PASS[0m
+  board_io                    576     0    576  [32mALL PASS[0m
+  cbor_codec                   81     0     81  [32mALL PASS[0m
+  command_dispatcher          279     0    279  [32mALL PASS[0m
+  command_executor             36     0     36  [32mALL PASS[0m
+  device_schema               198     0    198  [32mALL PASS[0m
   ───────────────────────────────────────────────────────
-  [31mTOTAL                       300     0    300[0m
+  [31mTOTAL                      1384     0   1384[0m
 
-  Unity summary: 292 Tests 0 Failures 0 Ignored
+  [31mUnity summary missing: test suite did not finish.[0m
+  [31mFatal runtime errors:[0m
+    assert failed: xQueueSemaphoreTake queue.c:1709 (( pxQueue ))
+    assert failed: xQueueSemaphoreTake queue.c:1709 (( pxQueue ))
+    assert failed: xQueueSemaphoreTake queue.c:1709 (( pxQueue ))
+    assert failed: xQueueSemaphoreTake queue.c:1709 (( pxQueue ))
+    assert failed: xQueueSemaphoreTake queue.c:1709 (( pxQueue ))
+    assert failed: xQueueSemaphoreTake queue.c:1709 (( pxQueue ))
+    assert failed: xQueueSemaphoreTake queue.c:1709 (( pxQueue ))
+    assert failed: xQueueSemaphoreTake queue.c:1709 (( pxQueue ))
+    assert failed: xQueueSemaphoreTake queue.c:1709 (( pxQueue ))
+

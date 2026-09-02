@@ -65,6 +65,10 @@ httpd_handle_t web_server_start(void)
         ESP_LOGE(TAG, "Could not initialize gateway web API state");
         return NULL;
     }
+    if (web_event_ws_init() != ESP_OK) {
+        ESP_LOGE(TAG, "Could not initialize WebSocket event state");
+        return NULL;
+    }
 
     static const route_registrar_t registrars[] = {
         web_assets_register_gateway,
@@ -74,9 +78,16 @@ httpd_handle_t web_server_start(void)
         web_system_api_register_gateway,
         web_ble_api_register,
     };
-    return start_server(registrars, sizeof(registrars) / sizeof(registrars[0]),
-                        WEB_GATEWAY_MAX_URI_HANDLERS, WEB_GATEWAY_STACK_SIZE,
-                        "Gateway");
+    httpd_handle_t server = start_server(
+        registrars, sizeof(registrars) / sizeof(registrars[0]),
+        WEB_GATEWAY_MAX_URI_HANDLERS, WEB_GATEWAY_STACK_SIZE, "Gateway");
+    if (server != NULL) {
+        /* WebSocket event endpoint: registered after server is running */
+        if (web_event_ws_register(server) != ESP_OK) {
+            ESP_LOGW(TAG, "/ws/events not registered; realtime disabled");
+        }
+    }
+    return server;
 }
 
 httpd_handle_t web_server_start_provisioning(void)

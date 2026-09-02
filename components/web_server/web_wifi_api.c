@@ -329,14 +329,10 @@ esp_err_t web_wifi_api_init(void)
 esp_err_t web_wifi_api_register(httpd_handle_t server)
 {
     static const httpd_uri_t routes[] = {
-        {.uri = "/api/wifi/scan", .method = HTTP_GET,
-         .handler = wifi_scan_get_handler},
-        {.uri = "/api/wifi/scan", .method = HTTP_POST,
-         .handler = wifi_scan_post_handler},
-        {.uri = "/api/wifi", .method = HTTP_GET,
-         .handler = wifi_status_get_handler},
-        {.uri = "/api/wifi", .method = HTTP_POST,
-         .handler = wifi_post_handler},
+        WEB_URI_INIT("/api/wifi/scan", HTTP_GET, wifi_scan_get_handler),
+        WEB_URI_INIT("/api/wifi/scan", HTTP_POST, wifi_scan_post_handler),
+        WEB_URI_INIT("/api/wifi", HTTP_GET, wifi_status_get_handler),
+        WEB_URI_INIT("/api/wifi", HTTP_POST, wifi_post_handler),
     };
     return web_register_routes(server, routes, WEB_ARRAY_SIZE(routes));
 }

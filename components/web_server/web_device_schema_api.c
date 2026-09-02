@@ -246,10 +246,8 @@ static esp_err_t schema_refresh_handler(httpd_req_t *request)
 esp_err_t web_device_schema_api_register(httpd_handle_t server)
 {
     static const httpd_uri_t routes[] = {
-        {.uri = "/api/devices/schema", .method = HTTP_GET,
-         .handler = schema_get_handler},
-        {.uri = "/api/devices/schema/refresh", .method = HTTP_POST,
-         .handler = schema_refresh_handler},
+        WEB_URI_INIT("/api/devices/schema", HTTP_GET, schema_get_handler),
+        WEB_URI_INIT("/api/devices/schema/refresh", HTTP_POST, schema_refresh_handler),
     };
     return web_register_routes(server, routes, WEB_ARRAY_SIZE(routes));
 }

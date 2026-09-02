@@ -133,10 +133,8 @@ static esp_err_t provisioning_status_get_handler(httpd_req_t *request)
 esp_err_t web_system_api_register_gateway(httpd_handle_t server)
 {
     static const httpd_uri_t routes[] = {
-        {.uri = "/api/status", .method = HTTP_GET,
-         .handler = status_get_handler},
-        {.uri = "/api/restart", .method = HTTP_POST,
-         .handler = restart_post_handler},
+        WEB_URI_INIT("/api/status", HTTP_GET, status_get_handler),
+        WEB_URI_INIT("/api/restart", HTTP_POST, restart_post_handler),
     };
     return web_register_routes(server, routes, WEB_ARRAY_SIZE(routes));
 }
@@ -144,8 +142,7 @@ esp_err_t web_system_api_register_gateway(httpd_handle_t server)
 esp_err_t web_system_api_register_provisioning(httpd_handle_t server)
 {
     static const httpd_uri_t routes[] = {
-        {.uri = "/api/status", .method = HTTP_GET,
-         .handler = provisioning_status_get_handler},
+        WEB_URI_INIT("/api/status", HTTP_GET, provisioning_status_get_handler),
     };
     return web_register_routes(server, routes, WEB_ARRAY_SIZE(routes));
 }
