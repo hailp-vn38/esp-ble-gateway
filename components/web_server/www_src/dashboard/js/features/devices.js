@@ -5,12 +5,115 @@ const devices = {
     currentFeatures: [],
     currentTools: [],
     loadPromise: null,
-    connectionRefreshes: new Map(),
+    _eventsInitialized: false,
+
+    _initEvents() {
+        if (this._eventsInitialized) return;
+        this._eventsInitialized = true;
+
+        events.on('device.connection', (ev) => {
+            this._handleConnectionEvent(ev);
+        });
+
+        events.on('device.changed', (ev) => {
+            this._handleChangedEvent(ev);
+        });
+
+        events.on('feature.state', (ev) => {
+            this._handleFeatureStateEvent(ev);
+        });
+
+        events.on('device.schema', (ev) => {
+            this._handleSchemaEvent(ev);
+        });
+
+        events.on('resync:required', () => {
+            this._handleResync();
+        });
+
+        events.on('ws:connected', () => {
+            this._syncFromSnapshot();
+        });
+
+        events.on('ws:disconnected', () => {
+            this._showDegradedBanner();
+        });
+    },
+
+    async _syncFromSnapshot() {
+        try {
+            const snapshot = await api.getDevicesSnapshot();
+            state.connectedDevices = snapshot.devices;
+            state.devicesLoaded = true;
+            this.renderGrid();
+            events.goLive(snapshot.eventSeq);
+        } catch (e) {
+            // Will retry on reconnect
+        }
+    },
+
+    _handleConnectionEvent(ev) {
+        const dev = state.connectedDevices.find(d => d.id === ev.deviceId);
+        if (dev) {
+            dev.status = ev.connected ? 'online' : 'offline';
+            this.renderGrid();
+            // Update detail view if open for this device
+            if (state.selectedDeviceDetail && state.selectedDeviceDetail.id === ev.deviceId) {
+                state.selectedDeviceDetail.status = dev.status;
+                this.renderConnectionState(state.selectedDeviceDetail);
+                document.getElementById('feature-offline-notice').classList.toggle(
+                    'hidden', ev.connected);
+            }
+        } else if (ev.connected) {
+            // New device from BLE — will be picked up by next snapshot
+            this._syncFromSnapshot();
+        }
+    },
+
+    _handleChangedEvent(ev) {
+        // Device added/edited/deleted — refresh list from snapshot
+        this._syncFromSnapshot();
+    },
+
+    _handleFeatureStateEvent(ev) {
+        if (!state.selectedDeviceDetail) return;
+        if (state.selectedDeviceDetail.id !== ev.deviceId) return;
+
+        // Update feature state in currentFeatures
+        for (const feat of this.currentFeatures) {
+            if (feat.feature_id === ev.featureId &&
+                feat.property_id === ev.propertyId) {
+                if (!feat.state) feat.state = {};
+                feat.state.valid = true;
+                if (ev.valueType === 'bool') feat.state.value_bool = ev.value;
+                else if (ev.valueType === 'int') feat.state.value_int = ev.value;
+                feat.state.updated_at_ms = Date.now();
+                // Re-render the feature cards
+                this.renderFeatures(this.currentFeatures, this.currentTools, state.selectedDeviceDetail);
+                break;
+            }
+        }
+    },
+
+    _handleSchemaEvent(ev) {
+        if (!state.selectedDeviceDetail) return;
+        if (state.selectedDeviceDetail.id !== ev.deviceId) return;
+        // Schema changed for selected device — reload schema
+        this.loadSchema(state.selectedDeviceDetail, true);
+    },
+
+    _handleResync() {
+        this._syncFromSnapshot();
+    },
+
+    _showDegradedBanner() {
+        // Minimal: could add a visible banner, for now just log
+    },
 
     async load() {
-        // Navigation can invoke switchTab() once from the click handler and
-        // once again from hashchange. Share the in-flight request so opening
-        // the Devices tab does not issue duplicate API calls.
+        this._initEvents();
+        events.init();
+
         if (this.loadPromise) return this.loadPromise;
 
         const loadOperation = this.loadFresh();
@@ -32,32 +135,6 @@ const devices = {
             ui.showToast("Failed to load devices", "error");
             return false;
         }
-    },
-
-    refreshConnectionUntilOnline(deviceId) {
-        if (this.connectionRefreshes.has(deviceId)) return;
-
-        const refreshToken = {};
-        this.connectionRefreshes.set(deviceId, refreshToken);
-        void (async () => {
-            try {
-                // BLE connection establishment continues after add_device
-                // returns. Reconcile the runtime status for a bounded period
-                // so the card changes from offline to online without reload.
-                for (let attempt = 0; attempt < 12; attempt++) {
-                    const device = state.connectedDevices.find(dev => dev.id === deviceId);
-                    if (!device || device.status === 'online') return;
-
-                    await new Promise(resolve => setTimeout(resolve, 1000));
-                    if (this.connectionRefreshes.get(deviceId) !== refreshToken) return;
-                    await this.load();
-                }
-            } finally {
-                if (this.connectionRefreshes.get(deviceId) === refreshToken) {
-                    this.connectionRefreshes.delete(deviceId);
-                }
-            }
-        })();
     },
 
     renderGrid() {
@@ -295,7 +372,9 @@ const devices = {
         this.renderSchemaState('loading');
         try {
             await api.refreshDeviceSchema(device.id);
-            await new Promise(resolve => setTimeout(resolve, 2500));
+            // Schema event from WS will trigger loadSchema; wait briefly
+            // for event delivery, then poll as fallback.
+            await new Promise(resolve => setTimeout(resolve, 500));
             const loaded = await this.loadSchema(device, true);
             if (loaded) ui.showToast(i18n.t('device_detail.schema_updated'), 'success');
         } catch (error) {
@@ -542,7 +621,6 @@ const devices = {
             }
             
             await this.load();
-            this.refreshConnectionUntilOnline(newDevice.id);
 
         } catch(e) {
             ui.showToast(`Failed to add device: ${e.message}`, "error");
@@ -565,7 +643,6 @@ const devices = {
         
         try {
             await api.removeDevice(deviceId);
-            this.connectionRefreshes.delete(deviceId);
             state.connectedDevices = state.connectedDevices.filter(d => d.id !== deviceId);
 
             ui.showToast(i18n.t('device_detail.removed'), "info");

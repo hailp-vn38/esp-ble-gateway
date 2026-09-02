@@ -1,6 +1,6 @@
 // --- ESP32 API Interface ---
 const api = {
-    async request(path, options = {}) {
+    async requestWithMeta(path, options = {}) {
         options.credentials = 'same-origin';
         const response = await fetch(path, options);
         let data;
@@ -12,7 +12,27 @@ const api = {
         if (!response.ok || data.success === false) {
             throw new Error(data.message || `HTTP ${response.status}`);
         }
+        const rawSeq = response.headers.get('X-Gateway-Event-Seq');
+        const eventSeq = rawSeq ? Number(rawSeq) : 0;
+        return { data, eventSeq };
+    },
+    async request(path, options = {}) {
+        const { data } = await this.requestWithMeta(path, options);
         return data;
+    },
+    async getDevicesSnapshot() {
+        const { data, eventSeq } = await this.requestWithMeta('/api/devices');
+        return {
+            eventSeq,
+            devices: data.map(device => ({
+                id: device.device_id,
+                mac: device.ble_addr || device.device_id,
+                addrType: device.ble_addr_type || 0,
+                customName: device.name,
+                status: device.connected ? 'online' : 'offline',
+                rssi: null
+            }))
+        };
     },
     async getDevices() {
         const list = await this.request('/api/devices');
