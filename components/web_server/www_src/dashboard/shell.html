@@ -70,6 +70,15 @@
 
         <!-- Scrollable View Container -->
         <div class="flex-1 overflow-y-auto bg-gray-50/50 p-4 md:p-8 relative w-full">
+            <!-- Realtime Degraded Banner -->
+            <div id="realtime-degraded-banner"
+                 class="hidden mb-4 rounded-lg border border-amber-200
+                        bg-amber-50 p-3 text-sm text-amber-800"
+                 role="status">
+                Realtime connection unavailable.
+                Showing the last synchronized state.
+            </div>
+
             <!-- @include views/devices.html -->
             <!-- @include views/device_detail.html -->
             <!-- @include views/scanner.html -->

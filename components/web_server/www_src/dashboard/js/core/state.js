@@ -27,7 +27,10 @@ const state = {
     scannedDevices: [],
     connectedDevices: [],
     selectedDeviceForAdd: null,
-    selectedDeviceDetail: null
+    selectedDeviceDetail: null,
+    pendingOpenDeviceId: null,
+    featureStateByDevice: new Map(),
+    schemaRevisionByDevice: new Map()
 };
 
 const escapeHtml = value => String(value).replace(/[&<>'"]/g, character => ({

@@ -105,5 +105,14 @@ const ui = {
             toast.classList.add('opacity-0', 'translate-x-10');
             setTimeout(() => toast.remove(), 300);
         }, 3000);
+    },
+    setRealtimeBanner(state) {
+        const banner = document.getElementById('realtime-degraded-banner');
+        if (!banner) return;
+        if (state === 'show') {
+            banner.classList.remove('hidden');
+        } else {
+            banner.classList.add('hidden');
+        }
     }
 };

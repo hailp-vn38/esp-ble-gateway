@@ -6,17 +6,21 @@ const devices = {
     currentTools: [],
     loadPromise: null,
     _eventsInitialized: false,
+    _deviceResyncTimer: null,
+    _syncPromise: null,
+    _syncRequested: false,
+    _pendingSchemaRefresh: null,
 
     _initEvents() {
         if (this._eventsInitialized) return;
         this._eventsInitialized = true;
 
         events.on('device.connection', (ev) => {
-            this._handleConnectionEvent(ev);
+            this._applyConnectionEvent(ev);
         });
 
         events.on('device.changed', (ev) => {
-            this._handleChangedEvent(ev);
+            this._scheduleDeviceResync();
         });
 
         events.on('feature.state', (ev) => {
@@ -28,31 +32,89 @@ const devices = {
         });
 
         events.on('resync:required', () => {
-            this._handleResync();
+            this._syncFromSnapshot('resync');
         });
 
         events.on('ws:connected', () => {
-            this._syncFromSnapshot();
+            this._syncFromSnapshot('ws:connected');
         });
 
         events.on('ws:disconnected', () => {
-            this._showDegradedBanner();
+            ui.setRealtimeBanner('show');
         });
     },
 
-    async _syncFromSnapshot() {
+    async _syncFromSnapshot(reason) {
+        if (this._syncPromise) {
+            this._syncRequested = true;
+            return;
+        }
+
+        this._syncRequested = false;
+        const doSync = async () => {
+            try {
+                const snapshot = await api.getDevicesSnapshot();
+                this._applyDeviceSnapshot(snapshot.devices);
+                events.goLive(snapshot.eventSeq);
+                ui.setRealtimeBanner('hide');
+            } catch (e) {
+                // Will retry on reconnect
+            }
+        };
+
+        this._syncPromise = doSync();
         try {
-            const snapshot = await api.getDevicesSnapshot();
-            state.connectedDevices = snapshot.devices;
-            state.devicesLoaded = true;
-            this.renderGrid();
-            events.goLive(snapshot.eventSeq);
-        } catch (e) {
-            // Will retry on reconnect
+            await this._syncPromise;
+        } finally {
+            this._syncPromise = null;
+            if (this._syncRequested) {
+                this._syncFromSnapshot('queued');
+            }
         }
     },
 
-    _handleConnectionEvent(ev) {
+    _applyDeviceSnapshot(devicesSnapshot) {
+        const selectedId = state.selectedDeviceDetail?.id ?? null;
+
+        state.connectedDevices = devicesSnapshot;
+        state.devicesLoaded = true;
+
+        if (selectedId) {
+            const selected = state.connectedDevices.find(
+                item => item.id === selectedId
+            );
+
+            if (selected) {
+                state.selectedDeviceDetail = selected;
+                this.renderConnectionState(selected);
+                this.renderDeviceHeader(selected);
+            } else {
+                // Device was removed
+                state.selectedDeviceDetail = null;
+                nav.switchTab('devices');
+            }
+        }
+
+        // Reconcile pending open device
+        if (state.pendingOpenDeviceId) {
+            const pending = state.connectedDevices.find(
+                d => d.id === state.pendingOpenDeviceId
+            );
+            if (pending) {
+                state.pendingOpenDeviceId = null;
+                this.openDetailView(pending);
+            }
+        }
+
+        this.renderGrid();
+
+        // Notify scanner to reconcile managed devices
+        if (typeof scanner !== 'undefined' && scanner.reconcileManagedDevices) {
+            scanner.reconcileManagedDevices();
+        }
+    },
+
+    _applyConnectionEvent(ev) {
         const dev = state.connectedDevices.find(d => d.id === ev.deviceId);
         if (dev) {
             dev.status = ev.connected ? 'online' : 'offline';
@@ -64,22 +126,27 @@ const devices = {
                 document.getElementById('feature-offline-notice').classList.toggle(
                     'hidden', ev.connected);
             }
-        } else if (ev.connected) {
-            // New device from BLE — will be picked up by next snapshot
-            this._syncFromSnapshot();
         }
     },
 
-    _handleChangedEvent(ev) {
-        // Device added/edited/deleted — refresh list from snapshot
-        this._syncFromSnapshot();
-    },
-
     _handleFeatureStateEvent(ev) {
+        // Cache feature state for all devices
+        const deviceMap = state.featureStateByDevice;
+        if (!deviceMap.has(ev.deviceId)) {
+            deviceMap.set(ev.deviceId, new Map());
+        }
+        const featureMap = deviceMap.get(ev.deviceId);
+        const key = `${ev.featureId}:${ev.propertyId}`;
+        featureMap.set(key, {
+            valueType: ev.valueType,
+            value: ev.value,
+            updatedAtMs: ev.updatedAtMs
+        });
+
+        // Update visible controls only if this is the selected device
         if (!state.selectedDeviceDetail) return;
         if (state.selectedDeviceDetail.id !== ev.deviceId) return;
 
-        // Update feature state in currentFeatures
         for (const feat of this.currentFeatures) {
             if (feat.feature_id === ev.featureId &&
                 feat.property_id === ev.propertyId) {
@@ -87,8 +154,7 @@ const devices = {
                 feat.state.valid = true;
                 if (ev.valueType === 'bool') feat.state.value_bool = ev.value;
                 else if (ev.valueType === 'int') feat.state.value_int = ev.value;
-                feat.state.updated_at_ms = Date.now();
-                // Re-render the feature cards
+                feat.state.updated_at_ms = ev.updatedAtMs;
                 this.renderFeatures(this.currentFeatures, this.currentTools, state.selectedDeviceDetail);
                 break;
             }
@@ -96,18 +162,27 @@ const devices = {
     },
 
     _handleSchemaEvent(ev) {
+        // Cache schema revision
+        state.schemaRevisionByDevice.set(ev.deviceId, ev.revision);
+
         if (!state.selectedDeviceDetail) return;
         if (state.selectedDeviceDetail.id !== ev.deviceId) return;
-        // Schema changed for selected device — reload schema
+
+        // Schema changed for selected device — reload schema once
         this.loadSchema(state.selectedDeviceDetail, true);
     },
 
-    _handleResync() {
-        this._syncFromSnapshot();
+    _scheduleDeviceResync() {
+        if (this._deviceResyncTimer) return;
+        this._deviceResyncTimer = setTimeout(() => {
+            this._deviceResyncTimer = null;
+            void this._syncFromSnapshot('device.changed');
+        }, 75);
     },
 
-    _showDegradedBanner() {
-        // Minimal: could add a visible banner, for now just log
+    renderDeviceHeader(dev) {
+        document.getElementById('detail-name').textContent = dev.customName;
+        document.getElementById('detail-mac').textContent = dev.mac;
     },
 
     async load() {
@@ -116,7 +191,7 @@ const devices = {
 
         if (this.loadPromise) return this.loadPromise;
 
-        const loadOperation = this.loadFresh();
+        const loadOperation = this._initialLoad();
         this.loadPromise = loadOperation;
         try {
             return await loadOperation;
@@ -125,14 +200,14 @@ const devices = {
         }
     },
 
-    async loadFresh() {
+    async _initialLoad() {
         try {
-            state.connectedDevices = await api.getDevices();
-            state.devicesLoaded = true;
-            this.renderGrid();
+            const snapshot = await api.getDevicesSnapshot();
+            this._applyDeviceSnapshot(snapshot.devices);
+            events.goLive(snapshot.eventSeq);
             return true;
         } catch(e) {
-            ui.showToast("Failed to load devices", "error");
+            // REST snapshot failed — will retry on ws:connected
             return false;
         }
     },
@@ -202,8 +277,7 @@ const devices = {
         this.currentFeatures = [];
         this.currentTools = [];
         document.getElementById('device-advanced-section').open = false;
-        document.getElementById('detail-name').textContent = dev.customName;
-        document.getElementById('detail-mac').textContent = dev.mac;
+        this.renderDeviceHeader(dev);
 
         const duplicateIdentifier = dev.id === dev.mac;
         document.getElementById('detail-identifier-row').classList.toggle('hidden', !duplicateIdentifier);
@@ -276,17 +350,13 @@ const devices = {
         try {
             await api.updateDevice(state.selectedDeviceDetail.id, { customName: newName });
 
-            // Update local state
-            const devIndex = state.connectedDevices.findIndex(d => d.id === state.selectedDeviceDetail.id);
-            if(devIndex > -1) {
-                state.connectedDevices[devIndex].customName = newName;
-
-                // Update current detail view
-                this.openDetailView(state.connectedDevices[devIndex]);
-                
-                ui.showToast(i18n.t('device_detail.updated'), "success");
-                ui.closeEditModal();
-            }
+            // Optimistic local header update
+            state.selectedDeviceDetail.customName = newName;
+            this.renderDeviceHeader(state.selectedDeviceDetail);
+            
+            // device.changed will provide authoritative snapshot
+            ui.showToast(i18n.t('device_detail.updated'), "success");
+            ui.closeEditModal();
         } catch(e) {
             ui.showToast(`${i18n.t('device_detail.update_failed')}: ${e.message}`, "error");
         } finally {
@@ -370,17 +440,39 @@ const devices = {
         button.querySelector('i').classList.add('animate-spin');
         label.textContent = i18n.t('device_detail.refreshing');
         this.renderSchemaState('loading');
+        this._pendingSchemaRefresh = device.id;
         try {
             await api.refreshDeviceSchema(device.id);
-            // Schema event from WS will trigger loadSchema; wait briefly
-            // for event delivery, then poll as fallback.
-            await new Promise(resolve => setTimeout(resolve, 500));
+            // device.schema WS event will trigger loadSchema; wait for event
+            // delivery with a UX-only timeout, not a polling fallback.
+            const timeoutPromise = new Promise(resolve => setTimeout(resolve, 15000));
+            const schemaPromise = new Promise(resolve => {
+                const handler = (ev) => {
+                    if (ev.deviceId === device.id) {
+                        events.off('device.schema', handler);
+                        resolve(true);
+                    }
+                };
+                events.on('device.schema', handler);
+                // Also resolve if resync happens
+                const resyncHandler = () => {
+                    events.off('resync:required', resyncHandler);
+                    resolve(true);
+                };
+                events.on('resync:required', resyncHandler);
+            });
+            await Promise.race([schemaPromise, timeoutPromise]);
+            events.off('device.schema', () => {});
+            events.off('resync:required', () => {});
+            this._pendingSchemaRefresh = null;
             const loaded = await this.loadSchema(device, true);
             if (loaded) ui.showToast(i18n.t('device_detail.schema_updated'), 'success');
+            else ui.showToast(i18n.t('device_detail.schema_load_error'), 'error');
         } catch (error) {
             ui.showToast(error.message, 'error');
             this.renderSchemaState('error');
         } finally {
+            this._pendingSchemaRefresh = null;
             button.disabled = false;
             button.querySelector('i').classList.remove('animate-spin');
             label.textContent = i18n.t('device_detail.refresh');
@@ -594,33 +686,32 @@ const devices = {
             ui.showToast(`Adding ${newDevice.customName}...`, "info");
 
             // NimBLE cannot start a connection while discovery is active.
-            // End the scan first so add_device can connect immediately
-            // instead of waiting for the reconnect supervisor.
             if (state.isScanning) await scanner.stopScan();
 
-            // Call backend API
+            // Call backend API — do NOT re-enter load()
             await api.addDevice(newDevice);
             
-            // Update local state immediately so an active scan cannot add
-            // the newly connected device back before the device list reloads.
+            // Remove from scan results
             state.scannedDevices = state.scannedDevices.filter(d => d.mac !== newDevice.mac);
-            if (!state.connectedDevices.some(d => d.mac === newDevice.mac)) {
-                state.connectedDevices.push(newDevice);
-            }
             
-            ui.showToast(`Added ${newDevice.customName} successfully`, "success");
+            ui.showToast(`Device saved. Connecting...`, "success");
             
             ui.closeModal();
             
-            // Always remove the item, including when scanning has stopped
-            // and this was the final result in the list.
+            // Remove scan row
             const el = document.getElementById(`scanned-${newDevice.mac.replace(/:/g, '')}`);
             if(el) {
                 el.classList.add('scale-95', 'opacity-0');
                 setTimeout(() => el.remove(), 200);
             }
             
-            await this.load();
+            // Set pending open — device.changed snapshot will open detail
+            state.pendingOpenDeviceId = newDevice.id;
+
+            // If WS is degraded, do one controlled REST recovery
+            if (!events.connected || !events.live) {
+                await this._syncFromSnapshot('local-add');
+            }
 
         } catch(e) {
             ui.showToast(`Failed to add device: ${e.message}`, "error");
@@ -643,16 +734,22 @@ const devices = {
         
         try {
             await api.removeDevice(deviceId);
-            state.connectedDevices = state.connectedDevices.filter(d => d.id !== deviceId);
+
+            // Clear caches for deleted device
+            state.featureStateByDevice.delete(deviceId);
+            state.schemaRevisionByDevice.delete(deviceId);
+            state.selectedDeviceDetail = null;
+            this.currentFeatures = [];
+            this.currentTools = [];
+            this._pendingSchemaRefresh = null;
 
             ui.showToast(i18n.t('device_detail.removed'), "info");
             
-            if(fromDetailView) {
+            if(fromDetailView || state.selectedDeviceDetail?.id === deviceId) {
                 nav.switchTab('devices');
-            } else {
-                this.renderGrid();
             }
             
+            // device.changed will provide authoritative snapshot
         } catch(e) {
             ui.showToast(i18n.t('device_detail.remove_failed'), "error");
         }

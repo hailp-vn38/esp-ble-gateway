@@ -11,12 +11,13 @@ const events = {
     _reconnectDelay: 1000,
     _reconnectMax: 30000,
     _reconnectAttempts: 0,
-    _degraded: false,
-    _resyncPending: false,
+    _degraded: true,
+    _stopped: false,
+    _sessionId: 0,
 
     // Initialize: connect WebSocket and begin buffering
     init() {
-        if (this._ws) return;
+        if (this._ws || this._stopped) return;
         this._connect();
     },
 
@@ -51,8 +52,13 @@ const events = {
             this._ws = null;
             this._live = false;
             this._degraded = true;
+            // Clear old-session buffer
+            this._buffer = [];
+            this._resyncPending = false;
             this._emit('ws:disconnected');
-            this._scheduleReconnect();
+            if (!this._stopped) {
+                this._scheduleReconnect();
+            }
         };
 
         this._ws.onerror = () => {
@@ -76,6 +82,8 @@ const events = {
     goLive(snapshotSeq) {
         this._lastSeq = snapshotSeq || 0;
         this._live = true;
+        this._resyncPending = false;
+        this._sessionId++;
         this._replayBuffered();
     },
 
@@ -89,29 +97,56 @@ const events = {
         this._buffer = [];
 
         for (const event of toReplay) {
-            this._applyEvent(event);
+            this._acceptSequencedEvent(event);
         }
     },
 
-    _onMessage(msg) {
+    _isValidEvent(msg) {
+        if (!msg || typeof msg !== 'object') return false;
+        if (typeof msg.type !== 'string' || !msg.type) return false;
+        if (!Number.isSafeInteger(msg.seq) || msg.seq < 0) return false;
+        return true;
+    },
+
+    _acceptSequencedEvent(msg) {
+        if (!this._isValidEvent(msg)) return;
+
         if (msg.type === 'resync.required') {
             this._resyncPending = true;
             this._live = false;
-            this._emit('resync:required');
+            this._emit('resync:required', msg);
             return;
         }
 
-        // Gap detection: expected seq was N+1 but got something else
-        if (this._live && this._lastSeq !== 0 && msg.seq !== this._lastSeq + 1) {
+        // Duplicate: ignore
+        if (msg.seq <= this._lastSeq) {
+            return;
+        }
+
+        // Gap detection
+        if (this._lastSeq !== 0 && msg.seq !== this._lastSeq + 1) {
             this._live = false;
             this._resyncPending = true;
-            this._emit('resync:required');
+            this._emit('resync:required', { reason: 'sequence_gap' });
+            return;
+        }
+
+        this._lastSeq = msg.seq;
+        this._applyEvent(msg);
+    },
+
+    _onMessage(msg) {
+        if (!this._isValidEvent(msg)) return;
+
+        if (msg.type === 'resync.required') {
+            this._resyncPending = true;
+            this._live = false;
+            this._emit('resync:required', msg);
             return;
         }
 
         if (this._live) {
-            this._lastSeq = msg.seq;
-            this._applyEvent(msg);
+            this._acceptSequencedEvent(msg);
         } else {
             // Buffer until goLive()
             this._buffer.push(msg);
@@ -119,7 +154,7 @@ const events = {
             if (this._buffer.length > 100) {
                 this._buffer = this._buffer.slice(-64);
                 this._resyncPending = true;
-                this._emit('resync:required');
+                this._emit('resync:required', { reason: 'buffer_overflow' });
             }
         }
     },
@@ -127,9 +162,6 @@ const events = {
     _applyEvent(event) {
         const type = event.type;
         if (!type) return;
-
-        // Update lastSeq for live events
-        if (event.seq > this._lastSeq) this._lastSeq = event.seq;
 
         // Fan out to registered handlers
         const handlers = this._listeners.get(type);
@@ -177,8 +209,9 @@ const events = {
     get degraded() { return this._degraded; },
     get lastSeq() { return this._lastSeq; },
 
-    // Shutdown
+    // Shutdown — must not reconnect
     close() {
+        this._stopped = true;
         if (this._reconnectTimer) {
             clearTimeout(this._reconnectTimer);
             this._reconnectTimer = null;
