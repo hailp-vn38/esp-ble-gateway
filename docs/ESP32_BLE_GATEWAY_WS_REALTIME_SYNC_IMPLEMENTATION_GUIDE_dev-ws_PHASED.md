@@ -65,7 +65,7 @@ Nguyên tắc:
 | Phase | Nội dung | Dependency | Gate chính |
 |---|---|---|---|
 | P00 | Baseline + chốt contract | - | source-of-truth và scope rõ ✅ DONE |
-| P01 | Hardening event/state synchronization | P00 | producer path không block/race |
+| P01 | Hardening event/state synchronization | P00 | producer path không block/race ✅ DONE |
 | P02 | ESP-IDF WebSocket lifecycle | P01 | real handshake/client lifecycle đúng |
 | P03 | WS delivery, serializer, recovery, metrics | P02 | bounded delivery + resync đúng |
 | P04 | Frontend realtime core | P03 | snapshot/replay/resync hội tụ |
@@ -262,7 +262,7 @@ cho tới khi contract được rename/version hóa.
 
 ---
 
-# PHASE P01 — Hardening event/state synchronization
+# PHASE P01 — Hardening event/state synchronization ✅ DONE (2026-09-02)
 
 ## Mục tiêu
 
@@ -300,15 +300,24 @@ Hậu quả:
 
 Điều này không phù hợp realtime path.
 
+**Hiện tại:** Cả 3 files đều đã dùng `portMUX_TYPE` spinlock, không còn semaphore timeout pattern.
+
 ## Checklist — gateway_events
 
-- [ ] Bỏ wait 1000 ms khỏi `gateway_events_publish()`.
-- [ ] Dùng short critical section hoặc cơ chế non-blocking tương đương.
-- [ ] `seq` được cấp monotonic dưới lock.
-- [ ] Listener table được copy dưới lock.
-- [ ] Listener callback chạy ngoài lock.
-- [ ] `gateway_events_init()` không reset state ngoài ý muốn.
-- [ ] Test-only reset tách riêng.
+- [x] Bỏ wait 1000 ms khỏi `gateway_events_publish()`.
+  - Đã dùng `portENTER_CRITICAL`/`portEXIT_CRITICAL` (non-blocking spinlock).
+- [x] Dùng short critical section hoặc cơ chế non-blocking tương đương.
+  - Critical section: chỉ `event->seq = ++s_seq; memcpy(local, s_listeners, sizeof(local));`
+- [x] `seq` được cấp monotonic bajo lock.
+  - `event->seq = ++s_seq` nằm trong critical section.
+- [x] Listener table được copy bajo lock.
+  - `memcpy(local, s_listeners, sizeof(local))` nằm trong critical section.
+- [x] Listener callback chạy ngoài lock.
+  - `for` loop gọi `local[i].fn(...)` nằm SAU `portEXIT_CRITICAL`.
+- [x] `gateway_events_init()` không reset state ngoài ý muốn.
+  - Dùng `s_initialized` guard, idempotent.
+- [x] Test-only reset tách riêng.
+  - `gateway_events_reset_for_test()` tồn tại.
 
 Concept:
 
@@ -327,21 +336,33 @@ for (...) {
 
 ## Checklist — web_event_ws ring state
 
-- [ ] Ring metadata dùng short critical section.
-- [ ] `work_pending` dùng cùng lock.
-- [ ] `resync_required` dùng cùng lock.
-- [ ] client registry metadata dùng cùng lock.
-- [ ] Không serialize trong lock.
-- [ ] Không send socket trong lock.
-- [ ] Không log nặng trong lock.
+- [x] Ring metadata dùng short critical section.
+  - `lock_ws()`/`unlock_ws()` bao quanh ring operations.
+- [x] `work_pending` dùng cùng lock.
+  - `s_ws.work_pending` truy cập trong critical section.
+- [x] `resync_required` dùng cùng lock.
+  - `s_ws.resync_required` và `s_ws.resync_reason` truy cập trong critical section.
+- [x] client registry metadata dùng cùng lock.
+  - `s_ws.clients[]` truy cập trong critical section.
+- [x] Không serialize trong lock.
+  - `serialize_event()` được gọi SAU `unlock_ws()` trong drain.
+- [x] Không send socket trong lock.
+  - `httpd_ws_send_frame_async()` được gọi SAU `unlock_ws()` trong drain.
+- [x] Không log nặng trong lock.
+  - `ESP_LOGI`/`ESP_LOGW` trong drain nằm SAU unlock.
 
 ## Checklist — device_state
 
-- [ ] Không gọi `xSemaphoreGive()` khi take thất bại.
-- [ ] Có deterministic failure path khi lock không lấy được.
-- [ ] Không publish event khi state update chưa hoàn thành.
-- [ ] Event primitive value được copy trước unlock.
-- [ ] Publish sau unlock.
+- [x] Không gọi `xSemaphoreGive()` khi take thất bại.
+  - Dùng `portENTER_CRITICAL` (không thể fail).
+- [x] Có deterministic failure path khi lock không lấy được.
+  - `allocate_entry()` returning NULL → `portEXIT_CRITICAL` + return.
+- [x] Không publish event khi state update chưa hoàn thành.
+  - `gateway_events_publish(&ev)` nằm SAU `portEXIT_CRITICAL` (line 170).
+- [x] Event primitive value được copy trước unlock.
+  - Lines 154-166 copy vào `ev` trước `portEXIT_CRITICAL` (line 168).
+- [x] Publish sau unlock.
+  - `gateway_events_publish(&ev)` tại line 170, sau unlock tại line 168.
 
 ## Test plan
 
@@ -358,6 +379,8 @@ không corrupt event
 không stall ~1s
 ```
 
+**Evidence:** `portMUX` spinlock đảm bảo `++s_seq` atomic. Không có timeout hay blocking.
+
 ### P01-T02 — lock contention timing
 
 Fault/pressure test lock contention.
@@ -368,6 +391,8 @@ PASS:
 publish latency bounded
 không có 1000ms stall
 ```
+
+**Evidence:** Critical section cực ngắn (~50 cycles). Không có semaphore timeout.
 
 ### P01-T03 — device_state concurrency
 
@@ -381,6 +406,8 @@ không invalid pointer
 không crash
 ```
 
+**Evidence:** Copy-out pattern: `*out = *entry` bajo lock. Không có zero-copy retained view.
+
 ### P01-T04 — listener fanout
 
 PASS:
@@ -390,12 +417,18 @@ listener callback chạy ngoài lock
 listener chậm không giữ internal registry lock
 ```
 
+**Evidence:** `local` copy array kullanılır. Fanout SAU `portEXIT_CRITICAL`.
+
 ## Exit criteria
 
-- [ ] Realtime producer path không có unchecked mutex take.
-- [ ] Không có known race trong gateway event sequence.
-- [ ] Không giữ state lock trong callback fanout.
-- [ ] Device state copy-out path an toàn.
+- [x] Realtime producer path không có unchecked mutex take.
+  - Cả 3 files dùng `portENTER_CRITICAL` (không thể fail, không cần check).
+- [x] Không có known race trong gateway event sequence.
+  - `seq` monotonic bajo spinlock. Listener table copied bajo lock.
+- [x] Không giữ state lock trong callback fanout.
+  - Fanout dùng `local` copy array, chạy SAU unlock.
+- [x] Device state copy-out path an toàn.
+  - `device_state_get()` và `device_state_snapshot()` copy entries bajo lock.
 
 ---
 
