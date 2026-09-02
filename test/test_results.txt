@@ -1,14 +1,14 @@
 
   Component                  PASS  FAIL  Total  Status
   ───────────────────────────────────────────────────────
-  ble_central                 214     0    214  [32mALL PASS[0m
+  ble_central                 213     0    213  [32mALL PASS[0m
   board_io                    576     0    576  [32mALL PASS[0m
   cbor_codec                   81     0     81  [32mALL PASS[0m
   command_dispatcher          279     0    279  [32mALL PASS[0m
   command_executor             36     0     36  [32mALL PASS[0m
   device_schema               198     0    198  [32mALL PASS[0m
   ───────────────────────────────────────────────────────
-  [31mTOTAL                      1384     0   1384[0m
+  [31mTOTAL                      1383     0   1383[0m
 
   [31mUnity summary missing: test suite did not finish.[0m
   [31mFatal runtime errors:[0m
