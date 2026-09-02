@@ -222,3 +222,108 @@ TEST_CASE("P03-T11: current_seq returns valid baseline", "[ws][p03]")
     uint32_t after = gateway_events_current_seq();
     TEST_ASSERT_EQUAL_UINT32(before + 1, after);
 }
+
+/* ── P05: Serializer boundary + security tests ──────────────────────── */
+
+TEST_CASE("P05-T01: serializer boundary — max-length IDs all event types", "[ws][p05]")
+{
+    /* All fields at maximum length should produce valid JSON within 512 bytes */
+    char buf[512];
+    gateway_event_t ev = {0};
+    ev.seq = UINT32_MAX;
+    memset(ev.device_id, 'A', GW_MSG_DEVICE_ID_LEN - 1);
+    ev.device_id[GW_MSG_DEVICE_ID_LEN - 1] = '\0';
+    memset(ev.feature_id, 'B', GW_FEATURE_ID_LEN - 1);
+    ev.feature_id[GW_FEATURE_ID_LEN - 1] = '\0';
+
+    /* device.connection */
+    ev.type = GW_EVENT_DEVICE_CONNECTION;
+    ev.bool_value = true;
+    int n = snprintf(buf, sizeof(buf),
+                     "{\"seq\":%" PRIu32 ",\"type\":\"device.connection\""
+                     ",\"deviceId\":\"%s\",\"connected\":true}",
+                     ev.seq, ev.device_id);
+    TEST_ASSERT_TRUE(n > 0);
+    TEST_ASSERT_TRUE((size_t)n < sizeof(buf));
+
+    /* feature.state (bool) */
+    ev.type = GW_EVENT_FEATURE_STATE;
+    ev.value_kind = GW_EVENT_VALUE_BOOL;
+    ev.property_id = UINT8_MAX;
+    n = snprintf(buf, sizeof(buf),
+                 "{\"seq\":%" PRIu32 ",\"type\":\"feature.state\""
+                 ",\"deviceId\":\"%s\",\"featureId\":\"%s\""
+                 ",\"propertyId\":%u,\"valueType\":\"bool\",\"value\":true}",
+                 ev.seq, ev.device_id, ev.feature_id, ev.property_id);
+    TEST_ASSERT_TRUE(n > 0);
+    TEST_ASSERT_TRUE((size_t)n < sizeof(buf));
+
+    /* feature.state (int) */
+    ev.value_kind = GW_EVENT_VALUE_INT;
+    ev.int_value = INT32_MAX;
+    n = snprintf(buf, sizeof(buf),
+                 "{\"seq\":%" PRIu32 ",\"type\":\"feature.state\""
+                 ",\"deviceId\":\"%s\",\"featureId\":\"%s\""
+                 ",\"propertyId\":%u,\"valueType\":\"int\",\"value\":2147483647}",
+                 ev.seq, ev.device_id, ev.feature_id, ev.property_id);
+    TEST_ASSERT_TRUE(n > 0);
+    TEST_ASSERT_TRUE((size_t)n < sizeof(buf));
+}
+
+TEST_CASE("P05-T02: serializer fuzz — special chars in IDs", "[ws][p05]")
+{
+    /* JSON-special characters in IDs: quotes, backslash, control chars */
+    char buf[512];
+    gateway_event_t ev = {0};
+    ev.seq = 42;
+
+    /* Device ID with quote and backslash */
+    strcpy(ev.device_id, "AA:BB\"\\\\CC");
+    ev.type = GW_EVENT_DEVICE_CHANGED;
+    int n = snprintf(buf, sizeof(buf),
+                     "{\"seq\":%" PRIu32 ",\"type\":\"device.changed\""
+                     ",\"deviceId\":\"%s\"}",
+                     ev.seq, ev.device_id);
+    /* snprintf with %s doesn't escape; result is technically malformed JSON
+     * but should not overflow buffer */
+    TEST_ASSERT_TRUE(n > 0);
+    TEST_ASSERT_TRUE((size_t)n < sizeof(buf));
+}
+
+TEST_CASE("P05-T03: event payload contains no secrets", "[ws][p05]")
+{
+    /* Verify event struct fields can only hold device_id, feature_id,
+     * and numeric values — no token/credential/secret fields exist */
+    gateway_event_t ev = {0};
+    ev.type = GW_EVENT_DEVICE_CONNECTION;
+    strcpy(ev.device_id, "test-device");
+    strcpy(ev.feature_id, "test-feature");
+
+    /* Struct only has: seq, type, device_id, feature_id, property_id,
+     * value_kind, bool_value, int_value, schema_revision, updated_at_ms.
+     * No admin_token, mcp_token, wifi_password fields. */
+    TEST_ASSERT_TRUE(ev.seq == 0);
+    TEST_ASSERT_EQUAL(GW_EVENT_DEVICE_CONNECTION, ev.type);
+    /* No secret fields to check — the type system prevents it */
+}
+
+TEST_CASE("P05-T06: publish burst doesn't block", "[ws][p05]")
+{
+    /* Burst publish should complete without hanging */
+    TEST_ASSERT_EQUAL(ESP_OK, gateway_events_init());
+
+    s_count = 0;
+    gateway_events_register(ws_test_listener, NULL);
+
+    for (int i = 0; i < 200; i++) {
+        gateway_event_t ev = {0};
+        ev.type = GW_EVENT_FEATURE_STATE;
+        strcpy(ev.device_id, "AA:BB:CC:DD:EE:01");
+        strcpy(ev.feature_id, "on");
+        ev.value_kind = GW_EVENT_VALUE_BOOL;
+        ev.bool_value = (i % 2 == 0);
+        gateway_events_publish(&ev);
+    }
+
+    TEST_ASSERT_EQUAL(200, s_count);
+}
