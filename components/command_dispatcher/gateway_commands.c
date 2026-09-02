@@ -252,10 +252,15 @@ static void cmd_list_devices(const gw_message_t *msg, dispatch_result_t *result)
             ble_central_get_device_status(devices[i].device_id, &status) ==
                 BLE_CENTRAL_OK &&
             status.connected;
+        bool ready =
+            ble_central_get_device_status(devices[i].device_id, &status) ==
+                BLE_CENTRAL_OK &&
+            status.ready;
 
         cJSON_AddStringToObject(item, "device_id", devices[i].device_id);
         cJSON_AddStringToObject(item, "name", devices[i].name);
         cJSON_AddBoolToObject(item, "connected", connected);
+        cJSON_AddBoolToObject(item, "ready", ready);
         cJSON_AddBoolToObject(item, "has_ble_addr", devices[i].has_ble_identity);
         if (devices[i].has_ble_identity) {
             char address[18];

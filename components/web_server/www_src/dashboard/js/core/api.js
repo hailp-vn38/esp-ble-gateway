@@ -29,7 +29,9 @@ const api = {
                 mac: device.ble_addr || device.device_id,
                 addrType: device.ble_addr_type || 0,
                 customName: device.name,
-                status: device.connected ? 'online' : 'offline',
+                connected: device.connected,
+                ready: device.ready,
+                status: device.ready ? 'online' : (device.connected ? 'connecting' : 'offline'),
                 rssi: null
             }))
         };
@@ -41,7 +43,9 @@ const api = {
             mac: device.ble_addr || device.device_id,
             addrType: device.ble_addr_type || 0,
             customName: device.name,
-            status: device.connected ? 'online' : 'offline',
+            connected: device.connected,
+            ready: device.ready,
+            status: device.ready ? 'online' : (device.connected ? 'connecting' : 'offline'),
             rssi: null
         }));
     },
