@@ -91,18 +91,32 @@ static esp_err_t status_get_handler(httpd_req_t *request)
                                     (double)worker_stack_min);
         }
 
-        // WebSocket transport metrics (P05: memory/socket budget)
+        // WebSocket transport metrics
         cJSON *ws = cJSON_AddObjectToObject(json, "websocket");
         if (ws != NULL) {
             int ws_clients = 0;
             uint32_t ws_ring_used = 0;
-            uint32_t ws_resync = 0;
-            web_event_ws_get_stats(&ws_clients, &ws_ring_used, &ws_resync);
+            bool ws_resync_pending = false;
+            uint32_t ws_resync_total = 0;
+            uint32_t ws_send_error_total = 0;
+            uint32_t ws_connect_total = 0;
+            uint32_t ws_disconnect_total = 0;
+            web_event_ws_get_stats(&ws_clients, &ws_ring_used,
+                                   &ws_resync_pending, &ws_resync_total,
+                                   &ws_send_error_total,
+                                   &ws_connect_total,
+                                   &ws_disconnect_total);
             cJSON_AddNumberToObject(ws, "active_clients", ws_clients);
             cJSON_AddNumberToObject(ws, "max_clients", 2);
             cJSON_AddNumberToObject(ws, "ring_used", ws_ring_used);
             cJSON_AddNumberToObject(ws, "ring_depth", 32);
-            cJSON_AddNumberToObject(ws, "resync_pending", ws_resync);
+            cJSON_AddBoolToObject(ws, "resync_pending", ws_resync_pending);
+            cJSON_AddNumberToObject(ws, "resync_total", ws_resync_total);
+            cJSON_AddNumberToObject(ws, "send_error_total",
+                                    ws_send_error_total);
+            cJSON_AddNumberToObject(ws, "connect_total", ws_connect_total);
+            cJSON_AddNumberToObject(ws, "disconnect_total",
+                                    ws_disconnect_total);
         }
     }
     return web_send_json(request, json);

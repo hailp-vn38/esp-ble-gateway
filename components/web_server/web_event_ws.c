@@ -36,8 +36,14 @@ typedef struct {
 
     bool work_pending;
     bool resync_required;
+    char resync_reason[32];
 
     ws_client_t clients[WEB_WS_MAX_CLIENTS];
+
+    uint32_t resync_total;
+    uint32_t send_error_total;
+    uint32_t connect_total;
+    uint32_t disconnect_total;
 
     portMUX_TYPE lock;
     httpd_handle_t server;
@@ -118,6 +124,7 @@ static bool register_client(int fd)
         if (!s_ws.clients[i].active) {
             s_ws.clients[i].fd = fd;
             s_ws.clients[i].active = true;
+            s_ws.connect_total++;
             unlock_ws();
             ESP_LOGI(TAG, "Client registered fd=%d slot=%d", fd, i);
             return true;
@@ -134,6 +141,7 @@ static void prune_client(int fd)
     for (int i = 0; i < WEB_WS_MAX_CLIENTS; i++) {
         if (s_ws.clients[i].active && s_ws.clients[i].fd == fd) {
             s_ws.clients[i].active = false;
+            s_ws.disconnect_total++;
             ESP_LOGI(TAG, "Client pruned fd=%d slot=%d", fd, i);
             break;
         }
@@ -173,25 +181,30 @@ static int serialize_event(const gateway_event_t *ev, char *buf, size_t len)
                          "{\"seq\":%" PRIu32 ",\"type\":\"feature.state\""
                          ",\"deviceId\":\"%s\",\"featureId\":\"%s\""
                          ",\"propertyId\":%u,\"valueType\":\"bool\""
-                         ",\"value\":%s}",
+                         ",\"value\":%s,\"updatedAtMs\":%" PRId64 "}",
                          ev->seq, ev->device_id, ev->feature_id,
                          ev->property_id,
-                         ev->bool_value ? "true" : "false");
+                         ev->bool_value ? "true" : "false",
+                         ev->updated_at_ms);
         } else if (ev->value_kind == GW_EVENT_VALUE_INT) {
             n = snprintf(buf, len,
                          "{\"seq\":%" PRIu32 ",\"type\":\"feature.state\""
                          ",\"deviceId\":\"%s\",\"featureId\":\"%s\""
                          ",\"propertyId\":%u,\"valueType\":\"int\""
-                         ",\"value\":%" PRId32 "}",
+                         ",\"value\":%" PRId32
+                         ",\"updatedAtMs\":%" PRId64 "}",
                          ev->seq, ev->device_id, ev->feature_id,
-                         ev->property_id, ev->int_value);
+                         ev->property_id, ev->int_value,
+                         ev->updated_at_ms);
         } else {
             n = snprintf(buf, len,
                          "{\"seq\":%" PRIu32 ",\"type\":\"feature.state\""
                          ",\"deviceId\":\"%s\",\"featureId\":\"%s\""
-                         ",\"propertyId\":%u}",
+                         ",\"propertyId\":%u"
+                         ",\"updatedAtMs\":%" PRId64 "}",
                          ev->seq, ev->device_id, ev->feature_id,
-                         ev->property_id);
+                         ev->property_id,
+                         ev->updated_at_ms);
         }
         break;
     case GW_EVENT_RESYNC_REQUIRED:
@@ -255,11 +268,12 @@ static void web_event_ws_drain(void *arg)
 
     /* Send resync.required first if flagged */
     if (need_resync) {
-        gateway_event_t resync = {0};
-        resync.type = GW_EVENT_RESYNC_REQUIRED;
         char json[WEB_WS_JSON_MAX];
-        int n = serialize_event(&resync, json, sizeof(json));
-        if (n > 0) {
+        int n = snprintf(json, sizeof(json),
+                         "{\"seq\":0,\"type\":\"resync.required\""
+                         ",\"reason\":\"%s\"}",
+                         s_ws.resync_reason);
+        if (n > 0 && (size_t)n < sizeof(json)) {
             httpd_ws_frame_t frame = {
                 .final = true,
                 .fragmented = false,
@@ -273,9 +287,15 @@ static void web_event_ws_drain(void *arg)
                 if (err != ESP_OK) {
                     ESP_LOGW(TAG, "Resync send failed fd=%d: %s",
                              fds[i], esp_err_to_name(err));
+                    lock_ws();
+                    s_ws.send_error_total++;
+                    unlock_ws();
                     prune_client(fds[i]);
                 }
             }
+            lock_ws();
+            s_ws.resync_total++;
+            unlock_ws();
         }
     }
 
@@ -287,6 +307,9 @@ static void web_event_ws_drain(void *arg)
             /* Serialize failure: flag resync for next drain cycle */
             lock_ws();
             s_ws.resync_required = true;
+            strlcpy(s_ws.resync_reason, "serialize_failed",
+                    sizeof(s_ws.resync_reason));
+            s_ws.send_error_total++;
             unlock_ws();
             continue;
         }
@@ -305,6 +328,9 @@ static void web_event_ws_drain(void *arg)
             if (err != ESP_OK) {
                 ESP_LOGW(TAG, "Send failed fd=%d: %s",
                          fds[i], esp_err_to_name(err));
+                lock_ws();
+                s_ws.send_error_total++;
+                unlock_ws();
                 prune_client(fds[i]);
             }
         }
@@ -322,6 +348,8 @@ static void on_gateway_event(const gateway_event_t *event, void *context)
 
     if (s_ws.count == WEB_WS_EVENT_RING_DEPTH) {
         s_ws.resync_required = true;
+        strlcpy(s_ws.resync_reason, "ring_overflow",
+                sizeof(s_ws.resync_reason));
     } else {
         s_ws.events[s_ws.write_index] = *event;
         s_ws.write_index =
@@ -341,6 +369,8 @@ static void on_gateway_event(const gateway_event_t *event, void *context)
             lock_ws();
             s_ws.work_pending = false;
             s_ws.resync_required = true;
+            strlcpy(s_ws.resync_reason, "queue_work_failed",
+                    sizeof(s_ws.resync_reason));
             unlock_ws();
         }
     }
@@ -453,11 +483,18 @@ esp_err_t web_event_ws_register(httpd_handle_t server)
 /* ── Stats for /api/status ──────────────────────────────────────────── */
 
 void web_event_ws_get_stats(int *active_clients, uint32_t *ring_used,
-                            uint32_t *resync_count)
+                            bool *resync_pending, uint32_t *resync_total,
+                            uint32_t *send_error_total,
+                            uint32_t *connect_total,
+                            uint32_t *disconnect_total)
 {
     lock_ws();
     if (active_clients) *active_clients = count_clients_locked();
     if (ring_used) *ring_used = s_ws.count;
-    if (resync_count) *resync_count = s_ws.resync_required ? 1 : 0;
+    if (resync_pending) *resync_pending = s_ws.resync_required;
+    if (resync_total) *resync_total = s_ws.resync_total;
+    if (send_error_total) *send_error_total = s_ws.send_error_total;
+    if (connect_total) *connect_total = s_ws.connect_total;
+    if (disconnect_total) *disconnect_total = s_ws.disconnect_total;
     unlock_ws();
 }
