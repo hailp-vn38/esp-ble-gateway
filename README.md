@@ -16,11 +16,13 @@ thiết bị DIY và cung cấp Web UI, REST API cùng endpoint JSON-RPC qua Wi-
 - Message BLE là CBOR chuẩn qua QCBOR 1.6.1; JSON dùng cJSON 1.7.19~2.
 - Dispatcher có registry động, định tuyến gateway/device command và chờ ACK
   riêng cho từng thiết bị.
-- Capability Discovery tự hỏi peripheral sau khi BLE session READY, lưu snapshot
-  command vào NVS và validate kiểu/range argument trước khi gửi.
+- Device Schema quản lý discovery, validation và persistence capability của peripheral.
+- **Realtime WebSocket Events**: gateway_events bus phát device.connection,
+  device.changed, device.schema, feature.state qua `/ws/events`. Web UI nhận
+  thay đổi theo event thay vì polling.
 - Web UI quản lý Wi-Fi, quét BLE, CRUD thiết bị, gửi lệnh và xem log/status.
-- Dashboard không chồng request định kỳ: trạng thái/thiết bị cập nhật mỗi 5 giây,
-  log mỗi 10 giây; lệnh thiết bị chạy trên worker riêng để không khóa HTTP task.
+- Dashboard dùng event-driven updates qua WebSocket singleton (`core/events.js`);
+  REST snapshot+delta recovery, không polling 1 giây.
 - `POST /mcp` hỗ trợ subset JSON-RPC 2.0 gồm `tools/list` và `tools/call`
   theo MCP 2026-07-28, bao gồm notification không có `id`.
 - **MCP Dynamic Tool Exposure**: mỗi command của thiết bị có thể được expose
@@ -36,11 +38,9 @@ Thiết bị con cần quảng bá và triển khai các UUID 16-bit sau:
 - Status characteristic (notify): `0xABF2`
 - CCCD chuẩn: `0x2902`
 
-Gateway dùng protocol version `3` và vẫn nhận message v1/v2. Payload CBOR là map
-có key số để giảm kích thước; schema nằm trong
-`components/cbor_codec/cbor_codec.c`. Peripheral v3 nhận command reserved
-`describe_capabilities`, rồi notify `capabilities_begin`, các
-`capability_item`, `capabilities_end` và ACK cuối cùng.
+Gateway dùng protocol version `4`. Payload CBOR là map có key số để giảm
+kích thước; schema nằm trong `components/cbor_codec/cbor_codec.c`. Peripheral
+v4 nhận command discovery, rồi notify tools/features và ACK cuối cùng.
 
 ## Build và flash
 
@@ -114,13 +114,14 @@ curl http://192.168.4.1/api/wifi
 |---|---|---|
 | `GET` | `/` | Web UI theo boot mode |
 | `GET` | `/api/status` | Trạng thái provisioning hoặc gateway |
-| `GET` | `/api/devices` | Danh sách thiết bị |
+| `GET` | `/api/devices` | Danh sách thiết bị (trả `X-Gateway-Event-Seq` header) |
 | `POST` | `/api/devices` | Thêm thiết bị |
 | `PUT` | `/api/devices` | Sửa tên hoặc loại thiết bị |
 | `DELETE` | `/api/devices?device_id=...` | Xóa thiết bị |
 | `POST` | `/api/command` | Gửi lệnh tới thiết bị và chờ ACK |
-| `GET` | `/api/capabilities?device_id=...` | Capability snapshot của thiết bị |
-| `POST` | `/api/capabilities/refresh` | Yêu cầu discovery lại capability |
+| `GET` | `/api/devices/schema?device_id=...` | Schema snapshot của thiết bị |
+| `POST` | `/api/devices/schema/refresh` | Yêu cầu discovery lại schema |
+| `GET` | `/ws/events` | WebSocket realtime event stream |
 
 ### API Wi-Fi (chỉ provisioning mode)
 
@@ -170,7 +171,7 @@ curl -X PUT http://<GATEWAY_IP>/api/mcp/exposures \
 ```sh
 curl -X POST http://<GATEWAY_IP>/api/devices \
   -H 'Content-Type: application/json' \
-  -d '{"device_id":"lamp-1","name":"Đèn bàn","type":"light","ble_addr":"11:22:33:44:55:66","ble_addr_type":0}'
+  -d '{"device_id":"lamp-1","name":"Đèn bàn","ble_addr":"11:22:33:44:55:66","ble_addr_type":0}'
 ```
 
 ## MCP Endpoint (JSON-RPC)
@@ -247,12 +248,40 @@ Dashboard quản lý thiết bị có sẵn tại `http://<GATEWAY_IP>/`. Các t
 Admin token cho MCP Tools lưu trong browser (localStorage). Cần nhập token
 ở tab Settings trước khi sử dụng MCP Tools.
 
+### Web UI rebuild
+
+Dashboard source nằm trong `components/web_server/www_src/`. Web UI được assemble
+từ shell.html + JS modules bởi `tools/build_webui.py`, rồi gzip và nhúng vào
+firmware qua `EMBED_FILES`. Sửa bất kỳ file JS/HTML nào trong `www_src/` đều
+cần rebuild + reflash:
+
+```sh
+idf.py build
+idf.py -p <PORT> flash
+```
+
+### WebSocket Realtime Events
+
+Gateway mở endpoint `GET /ws/events` (WebSocket) ở gateway mode. Event bus
+(`gateway_events`) phát các sự kiện khi state thay đổi:
+
+- `device.connection` — thiết bị online/offline
+- `device.changed` — CRUD thay đổi danh sách
+- `device.schema` — schema revision thay đổi
+- `feature.state` — giá trị feature thay đổi (BOOL/INT)
+- `resync.required` — overflow hoặc gap, yêu cầu full REST resync
+
+Web UI (`core/events.js`) mở WebSocket singleton, buffer event trong khi fetch
+REST snapshot, rồi replay delta. Reconnect có exponential backoff + jitter.
+Xem chi tiết trong
+[`docs/ESP32_BLE_GATEWAY_WEBSOCKET_REALTIME_SYNC_IMPLEMENTATION_PLAN_v2.3_PHASE_TESTS (1).md`](docs/ESP32_BLE_GATEWAY_WEBSOCKET_REALTIME_SYNC_IMPLEMENTATION_PLAN_v2.3_PHASE_TESTS%20(1).md).
+
 ## Unit test
 
-Test app riêng bao phủ 13 component: Device Store, Device Capabilities, CBOR,
-Command Dispatcher, Command Executor, MCP Endpoint, MCP Tool Exposure, MCP WS
-Bridge, Wi-Fi Provisioning, BLE Central, Web Server, Board I/O, Memory Policy.
-Test được compile tách biệt khỏi firmware production:
+Test app riêng bao phủ 14 component: Device Store, Device Schema, Device State,
+CBOR, Command Dispatcher, Command Executor, Gateway Events, MCP Endpoint, MCP
+Tool Exposure, MCP WS Bridge, Wi-Fi Provisioning, BLE Central, Web Server,
+Board I/O, Memory Policy. Test được compile tách biệt khỏi firmware production:
 
 ```sh
 cd test
@@ -271,12 +300,14 @@ triển khai service `0xABF0`.
 main/                           Khởi động và nối các module
 components/device_store/         NVS device registry
 components/device_schema/        Schema cache, discovery và validation
+components/device_state/         Runtime feature state (mutex-protected snapshot)
 components/wifi_provisioning/    Wi-Fi STA/SoftAP và captive DNS
 components/ble_central/          NimBLE Central/GATT Client
 components/cbor_codec/           QCBOR và JSON codec
 components/command_dispatcher/   Command registry, ACK routing
 components/command_executor/     Worker task chạy command offline
-components/web_server/           Web UI, REST API và admin auth
+components/gateway_events/       Event bus cho realtime WebSocket sync
+components/web_server/           Web UI, REST API, WebSocket events và admin auth
 components/mcp_endpoint/         JSON-RPC/MCP endpoint
 components/mcp_tool_exposure/    Dynamic tool exposure, catalog, naming, digest
 components/mcp_ws_bridge/        WebSocket bridge tới external MCP broker
@@ -290,6 +321,7 @@ docs/                            Thiết kế, spec và API documentation
 
 ## Tài liệu
 
+- [`docs/ESP32_BLE_GATEWAY_WEBSOCKET_REALTIME_SYNC_IMPLEMENTATION_PLAN_v2.3_PHASE_TESTS (1).md`](docs/ESP32_BLE_GATEWAY_WEBSOCKET_REALTIME_SYNC_IMPLEMENTATION_PLAN_v2.3_PHASE_TESTS%20(1).md) — Kế hoạch triển khai WebSocket realtime sync (P00-P07)
 - [`docs/MCP_API.md`](docs/MCP_API.md) — MCP endpoint API reference (static + dynamic tools)
 - [`docs/MCP_DYNAMIC_DEVICE_TOOLS_DASHBOARD_EXPOSURE_SPEC_v1.1.md`](docs/MCP_DYNAMIC_DEVICE_TOOLS_DASHBOARD_EXPOSURE_SPEC_v1.1.md) — Spec thiết kế dynamic tool exposure
 - [`docs/MCP_ENDPOINT_DUAL_ERA_UPDATE_PLAN_v1.1.md`](docs/MCP_ENDPOINT_DUAL_ERA_UPDATE_PLAN_v1.1.md) — Kế hoạch cập nhật dual-era MCP

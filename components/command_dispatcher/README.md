@@ -80,10 +80,10 @@ Message type trên wire:
 | `device_ack` | Peripheral trả lời | Phải echo đúng `request_id` |
 | `device_event` | Telemetry/notification | Không bao giờ complete pending command |
 
-> ⚠️ Peripheral firmware phải hỗ trợ protocol v2 (echo `request_id`). Peripheral v1 sẽ bị log `[ACK_UNMATCHED]`.
+> ⚠️ Peripheral firmware phải hỗ trợ protocol v4 (echo `request_id`). Peripheral v1/v2 sẽ bị log `[ACK_UNMATCHED]`.
 
-Protocol v3 bổ sung capability discovery. Khi snapshot đã biết, device command
-được kiểm tra qua `device_capabilities` trước khi cấp pending request; command
+Protocol v4 bổ sung device schema discovery. Khi snapshot đã biết, device command
+được kiểm tra qua `device_schema` trước khi cấp pending request; command
 không quảng bá hoặc argument sai type/range bị từ chối trước BLE write.
 
 ---
