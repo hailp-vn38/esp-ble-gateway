@@ -2,7 +2,7 @@
 
 #include <string.h>
 
-#include "command_executor.h"
+#include "device_command_service.h"
 #include "device_schema.h"
 #include "esp_log.h"
 #include "esp_timer.h"
@@ -43,7 +43,8 @@ static device_state_entry_t *allocate_entry(void)
 
 /* ── State seed (commit listener) ───────────────────────────────────── */
 
-static void seed_completion(const dispatch_result_t *result, void *context)
+static void seed_completion(const device_command_result_t *result,
+                            void *context)
 {
     (void)result;
     (void)context;
@@ -72,14 +73,27 @@ static void on_schema_committed(const char *device_id, uint32_t revision,
             continue;
         }
 
-        gw_message_t msg = {0};
-        msg.protocol_version = GW_PROTOCOL_VERSION;
-        strlcpy(msg.type, "device_command", sizeof(msg.type));
-        strlcpy(msg.device_id, device_id, sizeof(msg.device_id));
-        strlcpy(msg.command, "read_feature_state", sizeof(msg.command));
-        msg.has_device_id = true;
+        /* Skip non-BOOL properties for now: current device active-read
+         * contract only supports BOOL. INT reads will be populated by
+         * spontaneous events/ACKs. */
+        if (f->property_id != GW_PROP_ON_OFF &&
+            f->property_id != GW_PROP_CONTACT) {
+            ESP_LOGD(TAG, "[%s] seed skip %s prop=%u (unsupported active-read kind)",
+                     device_id, f->feature_id, f->property_id);
+            continue;
+        }
 
-        esp_err_t err = command_executor_submit(&msg, seed_completion, NULL);
+        device_command_request_t request = {0};
+        request.origin = DEVICE_CMD_ORIGIN_STATE_READ;
+        strlcpy(request.device_id, device_id, sizeof(request.device_id));
+        strlcpy(request.command, "read_feature_state", sizeof(request.command));
+        strlcpy(request.feature_id, f->feature_id, sizeof(request.feature_id));
+        request.has_feature_id = true;
+        request.property_id = f->property_id;
+        request.has_property_id = true;
+
+        esp_err_t err = device_command_service_submit(
+            &request, seed_completion, NULL);
         if (err != ESP_OK) {
             ESP_LOGD(TAG, "[%s] seed submit failed for %s: %s",
                      device_id, f->feature_id, esp_err_to_name(err));

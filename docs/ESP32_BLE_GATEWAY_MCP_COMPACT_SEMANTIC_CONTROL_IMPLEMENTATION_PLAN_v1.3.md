@@ -725,7 +725,7 @@ typedef struct {
 
 ---
 
-## Phase 2 - Migrate schema discovery and state synchronization
+## Phase 2 - Migrate schema discovery and state synchronization ✅ DONE (2026-09-03)
 
 ### Files
 
@@ -814,13 +814,13 @@ device_command_service_on_disconnect(device_id);
 
 ### Checklist / Exit criteria
 
-- [ ] Schema discovery no longer depends on command executor runtime path.
-- [ ] State seed no longer depends on command executor runtime path.
-- [ ] `read_feature_state` requests include feature/property addressing.
-- [ ] No false claim of INT active-read support is introduced.
-- [ ] Notify ordering preserves schema/state observers before generic ACK completion.
-- [ ] Schema and state tests pass.
-- [ ] Existing capability discovery works on representative hardware/fixture.
+- [x] Schema discovery no longer depends on command executor runtime path.
+- [x] State seed no longer depends on command executor runtime path.
+- [x] `read_feature_state` requests include feature/property addressing.
+- [x] No false claim of INT active-read support is introduced.
+- [x] Notify ordering preserves schema/state observers before generic ACK completion.
+- [x] Schema and state tests pass.
+- [x] Existing capability discovery works on representative hardware/fixture.
 
 ---
 

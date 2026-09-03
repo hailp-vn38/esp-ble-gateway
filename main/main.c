@@ -8,6 +8,7 @@
 #include "board_io.h"
 #include "command_dispatcher.h"
 #include "command_executor.h"
+#include "device_command_service.h"
 #include "device_store.h"
 #include "device_schema.h"
 #include "device_state.h"
@@ -28,7 +29,10 @@ static void on_device_notify(const char *device_id, const gw_message_t *msg)
     if (device_state_on_notify(device_id, msg)) return;
     /* Observer: updates cache from structured ACK, does NOT consume it. */
     device_state_on_command_ack(device_id, msg);
-    command_dispatcher_on_device_notify(device_id, msg);
+    /* Try new service first; fall back to legacy dispatcher for old callers */
+    if (!device_command_service_on_notify(device_id, msg)) {
+        command_dispatcher_on_device_notify(device_id, msg);
+    }
 }
 
 static void on_device_ready(const char *device_id)
@@ -54,6 +58,7 @@ static void on_device_disconnect(const char *device_id)
 
     device_schema_on_disconnect(device_id);
     device_state_forget(device_id);
+    device_command_service_on_disconnect(device_id);
 }
 
 typedef struct {
@@ -61,31 +66,30 @@ typedef struct {
     void *context;
 } capability_submit_bridge_t;
 
-static void capability_executor_completion(const dispatch_result_t *result,
-                                           void *context)
+static void capability_service_completion(const device_command_result_t *result,
+                                          void *context)
 {
     capability_submit_bridge_t *bridge = context;
     device_schema_submit_result_t outcome = DEVICE_SCHEMA_SUBMIT_INTERNAL_ERROR;
     if (result != NULL) {
         switch (result->status) {
-        case DISPATCH_STATUS_OK:
+        case DEVICE_CMD_STATUS_OK:
             outcome = DEVICE_SCHEMA_SUBMIT_OK;
             break;
-        case DISPATCH_STATUS_DEVICE_ERROR:
-        case DISPATCH_STATUS_UNSUPPORTED_COMMAND:
+        case DEVICE_CMD_STATUS_DEVICE_REJECTED:
+        case DEVICE_CMD_STATUS_UNSUPPORTED_COMMAND:
             outcome = DEVICE_SCHEMA_SUBMIT_REJECTED;
             break;
-        case DISPATCH_STATUS_BUSY:
-        case DISPATCH_STATUS_CONFLICT:
+        case DEVICE_CMD_STATUS_BUSY:
             outcome = DEVICE_SCHEMA_SUBMIT_BUSY;
             break;
-        case DISPATCH_STATUS_TIMEOUT:
+        case DEVICE_CMD_STATUS_TIMEOUT:
             outcome = DEVICE_SCHEMA_SUBMIT_TIMEOUT;
             break;
-        case DISPATCH_STATUS_NOT_CONNECTED:
+        case DEVICE_CMD_STATUS_NOT_CONNECTED:
             outcome = DEVICE_SCHEMA_SUBMIT_NOT_CONNECTED;
             break;
-        case DISPATCH_STATUS_TRANSPORT_ERROR:
+        case DEVICE_CMD_STATUS_TRANSPORT_ERROR:
             outcome = DEVICE_SCHEMA_SUBMIT_TRANSPORT_ERROR;
             break;
         default:
@@ -105,8 +109,15 @@ static esp_err_t capability_submit(const gw_message_t *message,
     if (bridge == NULL) return ESP_ERR_NO_MEM;
     bridge->done = done;
     bridge->context = context;
-    esp_err_t error = command_executor_submit(
-        message, capability_executor_completion, bridge);
+
+    /* Build typed service request */
+    device_command_request_t request = {0};
+    request.origin = DEVICE_CMD_ORIGIN_SCHEMA_DISCOVERY;
+    strlcpy(request.device_id, message->device_id, sizeof(request.device_id));
+    strlcpy(request.command, message->command, sizeof(request.command));
+
+    esp_err_t error = device_command_service_submit(
+        &request, capability_service_completion, bridge);
     if (error != ESP_OK) free(bridge);
     return error;
 }
@@ -279,6 +290,11 @@ void app_main(void)
         return;
     }
     gw_memory_log_checkpoint("executor_ready");
+    if (device_command_service_init() != ESP_OK) {
+        ESP_LOGE(TAG, "Device command service initialization failed");
+        return;
+    }
+    gw_memory_log_checkpoint("dev_cmd_svc_ready");
     device_schema_set_submitter(capability_submit);
     if (ble_central_init(on_device_notify) != 0) {
         ESP_LOGE(TAG, "BLE central initialization failed");
