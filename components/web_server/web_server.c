@@ -29,6 +29,7 @@ static httpd_handle_t start_server(const route_registrar_t *registrars,
                                    const char *mode_name)
 {
     httpd_config_t config = HTTPD_DEFAULT_CONFIG();
+    config.max_open_sockets = 7;
     config.max_uri_handlers = max_handlers;
     config.stack_size = stack_size;
     config.task_priority = tskIDLE_PRIORITY + 6;

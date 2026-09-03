@@ -77,6 +77,14 @@ reconciled on boot. Capabilities are protected by a 128-bit semantic digest
 
 ## 2. Authentication & Security
 
+## 2.0 Gateway memory telemetry
+
+`GET /api/status` retains all existing fields and adds additive observability
+objects: `internal` (`free`, `min_free`, `largest_free_block`), `psram`,
+`memory_policy`, `tasks`, `queues`, and `executor`. These fields expose the
+allocation, stack and queue metrics used by the RAM qualification plans; they
+do not change MCP request/response semantics.
+
 ### 2.1 Bearer Token (MCP)
 
 ```text

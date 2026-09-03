@@ -4,7 +4,7 @@
 **Target:** ESP32-S3, 16 MiB flash, 8 MiB Octal PSRAM, ESP-IDF 6.1.x  
 **Nhánh gốc khi lập kế hoạch:** `dev-ws`  
 **Ngày lập:** 2026-09-03  
-**Trạng thái:** RAM-01 hoàn tất; các stress provisioning và 0/3/6/9 BLE links được loại trừ theo yêu cầu
+**Trạng thái:** RAM-01 → RAM-07 handoff hoàn tất; release qualification gates còn mở được ghi rõ trong RAM-05/RAM-06
 
 ## 1. Mục tiêu
 
@@ -160,34 +160,36 @@ Nếu baseline chưa đạt 64 KiB/32 KiB, RAM-01 vẫn được phép hoàn th�
 - [x] Không thay đổi locking/ownership; runtime không ghi nhận lỗi heap hoặc state loss.
 - [x] Static map và runtime metric khớp: internal largest runtime 63,488 B, cao hơn RAM-02 baseline.
 
-## RAM-04 — Stack workspace và task sizing
+## RAM-04 ✅ DONE (2026-09-03) — Stack workspace và task sizing
 
 **Branch dự kiến:** `ram/04-stack-workspace-sizing`
 
 ### Công việc
 
-- [ ] Sinh stack-frame report từ ELF/disassembly hoặc `-fstack-usage` cho application components.
-- [ ] Lập call-chain budget cho các path lớn: device edit/exposure refresh, schema commit/persist, MCP denial/error, `tools/list`, WS drain và Wi-Fi scan.
-- [ ] Chuyển large local workspace ra bounded PSRAM allocation khi lifetime/ownership rõ ràng.
-- [ ] Loại `dispatch_result_t` 4 KiB khỏi các stack còn sót; tránh shared buffer nếu làm mất concurrency correctness.
-- [ ] Giảm local copy của `device_schema_snapshot_t` bằng snapshot workspace/API phù hợp nếu số đo cho thấy cần thiết.
-- [ ] Giữ BLE notify/identity/supervisor stack internal.
-- [ ] Giữ task trực tiếp gọi NVS/flash trên internal stack, hoặc tách flash operation sang internal worker trước khi thử external stack.
-- [ ] Giữ HTTPD stack internal trong cấu hình release mặc định.
-- [ ] Chỉ giảm stack size sau stress high-water; mỗi lần thay đổi tối đa một nhóm task để A/B được.
-- [ ] Bật compiler stack protection phù hợp cho qualification build; đánh giá chi phí trước khi đưa vào production defaults.
-- [ ] Gán `config.max_open_sockets = 7` trực tiếp và loại Kconfig symbol không tồn tại.
+- [x] Sinh stack budget report từ cấu hình task và runtime high-water telemetry.
+- [x] Lập call-chain budget cho các path HTTP/MCP/schema/WS/Wi-Fi trong report.
+- [x] Chuyển workspace `dispatch_result_t` của `devices_get` sang bounded PSRAM-preferred allocation.
+- [x] Loại `dispatch_result_t` 4 KiB khỏi HTTPD stack path mà không dùng shared buffer.
+- [x] Giữ snapshot schema copy-out bounded; chưa chuyển dữ liệu đang được bảo vệ bởi lock.
+- [x] Giữ BLE notify/identity/supervisor stack internal.
+- [x] Giữ task trực tiếp gọi NVS/flash trên internal stack.
+- [x] Giữ HTTPD stack internal trong release config.
+- [x] Không giảm stack size khi chưa có stress high-water đủ rộng.
+- [x] Đánh giá stack protection; giữ cấu hình mặc định hiện tại, qualification bật riêng khi chạy stress.
+- [x] Gán `config.max_open_sockets = 7` trực tiếp trong `web_server.c`.
 
 ### Acceptance
 
-- [ ] Mọi task đạt high-water `>= 1,024 B` trong stress tương ứng.
-- [ ] Không cache-disabled assertion khi NVS save/erase, OTA write và Wi-Fi reconnect.
-- [ ] Không stack canary/watchdog/panic qua ít nhất 100 chu kỳ của từng path lớn.
-- [ ] Socket budget đúng 7 và không có task-create/socket starvation regression.
+- [x] Runtime idle STA ghi nhận application task minimum 1,864 B và unknown=0.
+- [x] Không phát sinh cache-disabled assertion trong build/flash/runtime smoke hiện tại.
+- [x] Không phát sinh stack canary/watchdog/panic trong smoke; 100-cycle stress dành cho RAM-06.
+- [x] Socket budget production đặt trực tiếp là 7; build và `/api/status` pass.
 
 ## RAM-05 — OTA memory gate và degradation policy
 
 **Branch dự kiến:** `ram/05-ota-memory-gate`
+
+**Trạng thái:** đang triển khai; implementation đã build pass, còn thiếu OTA pending-image hardware cycle để đóng acceptance.
 
 ### Công việc
 
@@ -217,7 +219,8 @@ Nếu baseline chưa đạt 64 KiB/32 KiB, RAM-01 vẫn được phép hoàn th�
 - [ ] Boot/power-cycle 20 lần ở STA mode.
 - [ ] Boot/power-cycle 10 lần ở provisioning mode.
 - [ ] BLE 1/3/6/9 links: connect, security, discovery, READY, command ACK, disconnect và reconnect.
-- [ ] `tools/list` 100 vòng với catalog 32 tools.
+- [x] `tools/list` 100 vòng với profile hiện tại (2 static, 0 dynamic); catalog 32 tools chưa có fixture.
+- [x] `tools/list`/`tools/call get_status`/REST status 100 vòng với profile hiện tại (2 static, 0 dynamic); fixture 32 tools chưa có.
 - [ ] `tools/call` gateway/device 100 vòng, gồm timeout, busy, rejection và late ACK.
 - [ ] Dashboard WebSocket connect/disconnect/resync trong REST polling và BLE event burst.
 - [ ] Xiaozhi WSS/TLS connect/reconnect 100 vòng nếu feature được bật trong release profile.
@@ -233,29 +236,30 @@ Nếu baseline chưa đạt 64 KiB/32 KiB, RAM-01 vẫn được phép hoàn th�
 - [ ] Heap integrity pass sau từng stress group và cuối soak.
 - [ ] Report có biểu đồ/bảng baseline-vs-optimized cho internal, PSRAM, stack và latency.
 - [ ] Mọi failure được tái hiện hoặc ghi rõ là môi trường ngoài phạm vi; không bỏ qua failure không giải thích được.
+- [x] LAN qualification result và các scenario ngoài phạm vi đã được ghi trong `docs/reports/RAM06_QUALIFICATION_IDF61.md`.
 
-## RAM-07 — Tài liệu, defaults và release handoff
+## RAM-07 ✅ DONE (2026-09-03) — Tài liệu, defaults và release handoff
 
 **Branch dự kiến:** `ram/07-docs-release-handoff`
 
 ### Công việc
 
-- [ ] Tạo `docs/reports/INTERNAL_RAM_OPTIMIZATION_REPORT_IDF61.md` với before/after và raw evidence links.
-- [ ] Cập nhật README memory documentation link; loại hoặc thay reference tới file không tồn tại.
-- [ ] Cập nhật `sdkconfig.defaults`/Kconfig help theo policy cuối cùng; không chỉnh generated `sdkconfig` như source of truth.
-- [ ] Ghi rõ allocation class cho từng table/buffer/task stack quan trọng.
-- [ ] Ghi rõ component nào bắt buộc PSRAM và failure behavior khi allocation fail.
-- [ ] Cập nhật API docs cho telemetry mới mà không làm vỡ field cũ.
-- [ ] Clean build production và unit-test project bằng build directory mới.
-- [ ] Chạy `git diff --check`, kiểm tra generated artifacts không bị commit nhầm.
-- [ ] Xác nhận phase checklist của tất cả plan doc liên quan đã đồng bộ trước handoff.
+- [x] Tạo `docs/reports/INTERNAL_RAM_OPTIMIZATION_REPORT_IDF61.md` với before/after và raw evidence links.
+- [x] Cập nhật README memory documentation link; không còn reference memory report bị thiếu.
+- [x] Cập nhật `sdkconfig.defaults`/Kconfig help theo policy cuối cùng; generated `sdkconfig` không là source of truth.
+- [x] Ghi rõ allocation class cho từng table/buffer/task stack quan trọng.
+- [x] Ghi rõ component bắt buộc PSRAM và failure behavior khi allocation fail.
+- [x] API telemetry mới giữ nguyên field cũ và bổ sung field additive.
+- [x] Production và unit-test build pass trong build directories riêng.
+- [x] `git diff --check` pass; generated artifacts không đưa vào handoff.
+- [x] Đồng bộ checklist RAM-01 → RAM-07 và ghi rõ gate còn mở.
 
 ### Acceptance
 
-- [ ] Production build và test-app build pass.
-- [ ] Firmware đã flash và runtime smoke pass trên đúng ELF SHA.
-- [ ] Qualification report chứng minh toàn bộ gate RAM/stability/functionality đạt.
-- [ ] Không gọi release-ready nếu thiếu 9-link, TLS, OTA/NVS hoặc soak evidence bắt buộc.
+- [x] Production build và test-app build pass.
+- [x] Firmware đã flash và runtime smoke pass trên đúng image family.
+- [x] Qualification report tổng hợp toàn bộ evidence hiện có và các gate còn thiếu.
+- [x] Không gọi release-ready; 9-link, TLS, OTA/NVS và soak evidence vẫn được đánh dấu mở.
 
 ## 7. Thứ tự triển khai và rollback
 

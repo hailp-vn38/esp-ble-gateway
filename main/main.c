@@ -234,6 +234,7 @@ void app_main(void)
         }
         ESP_LOGI(TAG, "Provisioning mode started; gateway modules are deferred until restart");
         gw_memory_log_checkpoint("provisioning_ready");
+        if (gateway_ota_finalize("provisioning") != ESP_OK) return;
         return;
     }
 
@@ -302,6 +303,7 @@ void app_main(void)
 
     start_external_mcp_bridge();
     gw_memory_log_checkpoint("gateway_ready");
+    if (gateway_ota_finalize("sta") != ESP_OK) return;
 
     ESP_LOGI(TAG, "ESP32 BLE Gateway started (Central + Web UI + JSON-RPC)");
 }

@@ -5,10 +5,15 @@
 #include "esp_psram.h"
 #include "esp_heap_caps.h"
 #include "nvs_flash.h"
+#include "memory_policy.h"
 
 #include "wifi_prov.h"
 
 static const char *TAG = "ota_validate";
+static bool s_pending_verify;
+
+#define OTA_INTERNAL_MIN_BYTES 65536U
+#define OTA_INTERNAL_LARGEST_BYTES 32768U
 
 static bool gateway_post_ota_self_test(void)
 {
@@ -70,19 +75,41 @@ esp_err_t gateway_ota_validate(void)
 
     ESP_LOGI(TAG, "OTA image %s is PENDING_VERIFY — running self-test", running->label);
 
-    bool ok = gateway_post_ota_self_test();
+    if (!gateway_post_ota_self_test()) return ESP_ERR_INVALID_STATE;
+    s_pending_verify = true;
+    ESP_LOGI(TAG, "OTA image %s passed structural checks; finalization deferred", running->label);
+    return ESP_OK;
+}
 
-    if (ok) {
-        esp_err_t err = esp_ota_mark_app_valid_cancel_rollback();
-        if (err != ESP_OK) {
-            ESP_LOGE(TAG, "Failed to mark app valid: %s", esp_err_to_name(err));
-            return err;
-        }
-        ESP_LOGI(TAG, "OTA image %s marked valid", running->label);
-    } else {
-        ESP_LOGE(TAG, "OTA self-test FAILED — rolling back to previous image");
+esp_err_t gateway_ota_finalize(const char *profile)
+{
+    if (!s_pending_verify) return ESP_OK;
+
+    gw_memory_snapshot_t memory;
+    gw_memory_snapshot(&memory);
+    gw_mem_metrics_t metrics;
+    gw_mem_get_metrics(&metrics);
+    bool ok = memory.psram_ready && memory.psram_min_free > 0 &&
+              memory.internal_min_free >= OTA_INTERNAL_MIN_BYTES &&
+              memory.internal_largest >= OTA_INTERNAL_LARGEST_BYTES &&
+              metrics.external_alloc_fail == 0 &&
+              metrics.internal_fallback_rejected_floor == 0;
+    ESP_LOGI(TAG, "Final gate profile=%s internal_min=%u largest=%u psram_min=%u ext_fail=%u fallback_reject=%u result=%s",
+             profile != NULL ? profile : "unknown",
+             (unsigned)memory.internal_min_free, (unsigned)memory.internal_largest,
+             (unsigned)memory.psram_min_free, (unsigned)metrics.external_alloc_fail,
+             (unsigned)metrics.internal_fallback_rejected_floor,
+             ok ? "PASS" : "FAIL");
+    if (!ok) {
+        ESP_LOGE(TAG, "OTA runtime memory gate failed; rolling back");
         esp_ota_mark_app_invalid_rollback_and_reboot();
+        return ESP_ERR_NO_MEM;
     }
-
+    const esp_partition_t *running = esp_ota_get_running_partition();
+    esp_err_t err = esp_ota_mark_app_valid_cancel_rollback();
+    if (err != ESP_OK) return err;
+    s_pending_verify = false;
+    ESP_LOGI(TAG, "OTA image %s marked valid after full-init gate",
+             running != NULL ? running->label : "unknown");
     return ESP_OK;
 }

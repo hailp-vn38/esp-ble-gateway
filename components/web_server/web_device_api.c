@@ -13,6 +13,7 @@
 #include "command_dispatcher.h"
 #include "command_executor.h"
 #include "gateway_events.h"
+#include "memory_policy.h"
 #include "web_http.h"
 
 static const char *TAG = "web_device_api";
@@ -108,15 +109,24 @@ static esp_err_t devices_get_handler(httpd_req_t *request)
     strlcpy(message.type, "gateway_command", sizeof(message.type));
     strlcpy(message.command, "list_devices", sizeof(message.command));
 
-    dispatch_result_t result;
-    command_dispatcher_handle(&message, &result);
-    if (!dispatch_result_is_ok(&result) ||
-        result.format != DISPATCH_RESULT_JSON) {
-        return web_send_api_error(request, "500 Internal Server Error",
-                                  result.payload);
+    dispatch_result_t *result = gw_mem_calloc(1, sizeof(*result),
+                                               GW_MEM_EXTERNAL_PREFERRED);
+    if (result == NULL) {
+        return web_send_api_error(request, "503 Service Unavailable",
+                                  "Could not allocate response workspace");
+    }
+    command_dispatcher_handle(&message, result);
+    if (!dispatch_result_is_ok(result) ||
+        result->format != DISPATCH_RESULT_JSON) {
+        const char *error = result->payload;
+        esp_err_t response = web_send_api_error(request, "500 Internal Server Error",
+                                                error);
+        gw_mem_free(result);
+        return response;
     }
 
-    cJSON *array = cJSON_Parse(result.payload);
+    cJSON *array = cJSON_Parse(result->payload);
+    gw_mem_free(result);
     if (!cJSON_IsArray(array)) {
         cJSON_Delete(array);
         return web_send_api_error(request, "500 Internal Server Error",

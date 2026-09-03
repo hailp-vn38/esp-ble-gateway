@@ -328,5 +328,7 @@ docs/                            Thiết kế, spec và API documentation
 - [`docs/MCP_MINIMAL_TOOLS_SERVER_REFACTOR_SPEC_V3_1.md`](docs/MCP_MINIMAL_TOOLS_SERVER_REFACTOR_SPEC_V3_1.md) — Spec refactor minimal tools server
 - [`docs/ESP_BLE_GATEWAY_XIAOZHI_DIRECT_MCP_BRIDGE_DEVELOPMENT_SPEC_v1.1.md`](docs/ESP_BLE_GATEWAY_XIAOZHI_DIRECT_MCP_BRIDGE_DEVELOPMENT_SPEC_v1.1.md) — Spec WebSocket bridge tới Xiaozhi MCP broker
 - [`docs/ESP32_S3_Gateway_Memory_Resource_Implementation_Guide_IDF_6_1_rc1_v2_1.md`](docs/ESP32_S3_Gateway_Memory_Resource_Implementation_Guide_IDF_6_1_rc1_v2_1.md) — Hướng dẫn quản lý PSRAM/internal memory
+- [`docs/PLAN_INTERNAL_RAM_OPTIMIZATION_IDF61.md`](docs/PLAN_INTERNAL_RAM_OPTIMIZATION_IDF61.md) — Kế hoạch và trạng thái các phase tối ưu RAM
+- [`docs/reports/INTERNAL_RAM_OPTIMIZATION_REPORT_IDF61.md`](docs/reports/INTERNAL_RAM_OPTIMIZATION_REPORT_IDF61.md) — Báo cáo tổng hợp before/after và qualification evidence
 - [`docs/Board_IO_Development_Spec_v2.0.md`](docs/Board_IO_Development_Spec_v2.0.md) — Spec button FSM, LED, display
 - [`docs/WEB_DASHBOARD_SETTINGS_DEVELOPMENT_SPEC_v1.1.md`](docs/WEB_DASHBOARD_SETTINGS_DEVELOPMENT_SPEC_v1.1.md) — Spec tab Settings trên dashboard
