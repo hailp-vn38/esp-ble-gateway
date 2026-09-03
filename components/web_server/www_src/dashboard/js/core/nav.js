@@ -35,6 +35,14 @@ const nav = {
         if (route.tab === 'device-detail') {
             const device = state.connectedDevices.find(dev => dev.id === route.deviceId);
             if (device) {
+                // openDetailView() already selected and rendered the device
+                // before updating location.hash.  Do not let the resulting
+                // hashchange open it again and duplicate schema/exposure GETs.
+                if (state.activeTab === 'device-detail' &&
+                    state.selectedDeviceDetail?.id === device.id) {
+                    this.switchTab('device-detail', false);
+                    return;
+                }
                 devices.openDetailView(device, false);
                 return;
             }

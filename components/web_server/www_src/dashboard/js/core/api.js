@@ -1,7 +1,8 @@
 // --- ESP32 API Interface ---
 const api = {
-    async requestWithMeta(path, options = {}) {
-        options.credentials = 'same-origin';
+    _pendingGetRequests: new Map(),
+
+    async _performRequestWithMeta(path, options) {
         const response = await fetch(path, options);
         let data;
         try {
@@ -15,6 +16,30 @@ const api = {
         const rawSeq = response.headers.get('X-Gateway-Event-Seq');
         const eventSeq = rawSeq ? Number(rawSeq) : 0;
         return { data, eventSeq };
+    },
+    requestWithMeta(path, options = {}) {
+        const requestOptions = {...options, credentials: 'same-origin'};
+        const method = (requestOptions.method || 'GET').toUpperCase();
+
+        // Several dashboard lifecycles can ask for the same snapshot at once
+        // (route restoration, WebSocket startup, and the initial view load).
+        // Share only concurrent GETs; mutations and later refreshes must always
+        // reach the gateway.
+        if (method !== 'GET') {
+            return this._performRequestWithMeta(path, requestOptions);
+        }
+
+        const pending = this._pendingGetRequests.get(path);
+        if (pending) return pending;
+
+        const request = this._performRequestWithMeta(path, requestOptions)
+            .finally(() => {
+                if (this._pendingGetRequests.get(path) === request) {
+                    this._pendingGetRequests.delete(path);
+                }
+            });
+        this._pendingGetRequests.set(path, request);
+        return request;
     },
     async request(path, options = {}) {
         const { data } = await this.requestWithMeta(path, options);

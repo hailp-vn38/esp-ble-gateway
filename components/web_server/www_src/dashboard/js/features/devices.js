@@ -45,6 +45,18 @@ const devices = {
     },
 
     async _syncFromSnapshot(reason) {
+        // events.init() runs immediately before the initial REST snapshot.
+        // A fast WebSocket open must reuse that load instead of issuing a
+        // second /api/devices request. If the initial load failed, continue
+        // below so the connected socket still gets one recovery attempt.
+        if (reason === 'ws:connected' && this.loadPromise) {
+            const loaded = await this.loadPromise;
+            if (loaded) {
+                ui.setRealtimeBanner('hide');
+                return;
+            }
+        }
+
         if (this._syncPromise) {
             this._syncRequested = true;
             return;
