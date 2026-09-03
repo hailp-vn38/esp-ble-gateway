@@ -919,7 +919,7 @@ Do not delete the executor yet because gateway delete/edit flows may include NVS
 
 ---
 
-## Phase 4 - Add compact/dynamic MCP surface mode
+## Phase 4 - Add compact/dynamic MCP surface mode ✅ DONE (2026-09-03)
 
 ### Files
 
@@ -978,11 +978,11 @@ DYNAMIC:
 
 ### Checklist / Exit criteria
 
-- [ ] Compact is default.
-- [ ] Dynamic compatibility builds.
-- [ ] `device_control` is not accidentally added to dynamic mode.
-- [ ] Stale controls removed/deprecated consistently.
-- [ ] No BLE/device-service behavior changes in this phase.
+- [x] Compact is default.
+- [x] Dynamic compatibility builds.
+- [x] `device_control` is not accidentally added to dynamic mode.
+- [x] Stale controls removed/deprecated consistently.
+- [x] No BLE/device-service behavior changes in this phase.
 
 ---
 
