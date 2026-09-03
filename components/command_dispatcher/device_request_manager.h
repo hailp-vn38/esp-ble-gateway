@@ -9,6 +9,7 @@
 #include "freertos/semphr.h"
 
 #include "cbor_codec.h"
+#include "sdkconfig.h"
 
 // Internal module owning pending device-command correlation.
 // One pending request per device (Phase 1 invariant).
@@ -24,6 +25,8 @@ typedef struct {
     gw_message_t response;
     SemaphoreHandle_t semaphore;
 } pending_request_t;
+
+#define DEVICE_REQUEST_MAX_PENDING CONFIG_DEVICE_REQUEST_MAX_PENDING
 
 int device_request_manager_init(void);
 

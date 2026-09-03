@@ -5,8 +5,23 @@
 #include <string.h>
 
 #include "esp_heap_caps.h"
+#include "esp_log.h"
 #include "esp_psram.h"
+#include "freertos/FreeRTOS.h"
+#include "freertos/task.h"
 #include "sdkconfig.h"
+
+static const char *TAG = "memory_policy";
+
+static bool is_system_task(const char *name)
+{
+    return name != NULL &&
+           (strncmp(name, "ipc", 3) == 0 ||
+            strncmp(name, "IDLE", 4) == 0 ||
+            strcmp(name, "Tmr Svc") == 0 ||
+            strcmp(name, "esp_timer") == 0 ||
+            strcmp(name, "sys_evt") == 0);
+}
 
 #ifdef CONFIG_SPIRAM
 static gw_mem_metrics_t s_metrics;
@@ -181,6 +196,18 @@ void gw_memory_snapshot(gw_memory_snapshot_t *out)
 #endif
 }
 
+void gw_memory_log_checkpoint(const char *label)
+{
+    gw_memory_snapshot_t snapshot;
+    gw_memory_snapshot(&snapshot);
+    ESP_LOGI(TAG, "checkpoint=%s internal_free=%u internal_min=%u internal_largest=%u psram_free=%u psram_min=%u psram_largest=%u psram_ready=%d",
+             label != NULL ? label : "unknown",
+             (unsigned)snapshot.internal_free, (unsigned)snapshot.internal_min_free,
+             (unsigned)snapshot.internal_largest, (unsigned)snapshot.psram_free,
+             (unsigned)snapshot.psram_min_free, (unsigned)snapshot.psram_largest,
+             snapshot.psram_ready);
+}
+
 void gw_mem_get_metrics(gw_mem_metrics_t *out)
 {
     if (out == NULL) {
@@ -200,5 +227,67 @@ void gw_mem_get_metrics(gw_mem_metrics_t *out)
                         __ATOMIC_RELAXED);
 #else
     memset(out, 0, sizeof(*out));
+#endif
+}
+
+void gw_memory_task_snapshot(gw_task_memory_metrics_t *out)
+{
+    if (out == NULL) {
+        return;
+    }
+    memset(out, 0, sizeof(*out));
+
+#if configUSE_TRACE_FACILITY
+    UBaseType_t capacity = uxTaskGetNumberOfTasks();
+    if (capacity == 0) {
+        return;
+    }
+    size_t bytes = (size_t)capacity * sizeof(TaskStatus_t);
+    TaskStatus_t *tasks = NULL;
+#ifdef CONFIG_SPIRAM
+    if (esp_psram_is_initialized()) {
+        tasks = heap_caps_malloc(bytes, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+    }
+#endif
+    if (tasks == NULL) {
+        tasks = heap_caps_malloc(bytes, MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
+    }
+    if (tasks == NULL) {
+        return;
+    }
+    UBaseType_t count = uxTaskGetSystemState(tasks, capacity, NULL);
+    out->task_count = (uint32_t)count;
+    out->task_stack_min_bytes = UINT32_MAX;
+    out->system_stack_min_bytes = UINT32_MAX;
+    for (UBaseType_t i = 0; i < count; i++) {
+        bool system = is_system_task(tasks[i].pcTaskName);
+        if (system) {
+            out->system_task_count++;
+        }
+        if (tasks[i].usStackHighWaterMark == 0) {
+            if (!system) {
+                out->task_stack_unknown_count++;
+            }
+            continue;
+        }
+        uint32_t free_bytes = (uint32_t)tasks[i].usStackHighWaterMark *
+                              sizeof(StackType_t);
+        uint32_t *min_bytes = system ? &out->system_stack_min_bytes :
+                                       &out->task_stack_min_bytes;
+        if (free_bytes < *min_bytes) {
+            *min_bytes = free_bytes;
+            if (!system) {
+                strlcpy(out->task_stack_min_name, tasks[i].pcTaskName,
+                        sizeof(out->task_stack_min_name));
+            }
+        }
+    }
+    if (out->task_stack_min_bytes == UINT32_MAX) {
+        out->task_stack_min_bytes = 0;
+    }
+    if (out->system_stack_min_bytes == UINT32_MAX) {
+        out->system_stack_min_bytes = 0;
+    }
+    free(tasks);
 #endif
 }

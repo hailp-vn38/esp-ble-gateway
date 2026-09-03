@@ -155,7 +155,7 @@ void device_command_handle(const gw_message_t *msg, dispatch_result_t *result)
             if (printed != NULL) {
                 command_dispatcher_set_json_result(result, DISPATCH_STATUS_OK,
                                                    printed);
-                free(printed);
+                cJSON_free(printed);
                 return;
             }
         }
@@ -185,7 +185,7 @@ void device_command_handle(const gw_message_t *msg, dispatch_result_t *result)
             if (printed != NULL) {
                 command_dispatcher_set_json_result(
                     result, DISPATCH_STATUS_DEVICE_ERROR, printed);
-                free(printed);
+                cJSON_free(printed);
                 return;
             }
         }

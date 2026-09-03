@@ -4,10 +4,14 @@
 
 #include "device_request_manager.h"
 #include "device_store.h"
+#include "sdkconfig.h"
 
 static const char *TAG = "dispatcher";
 
-#define DEVICE_REQUEST_MAX_PENDING DEVICE_STORE_MAX_DEVICES
+#ifndef CONFIG_DEVICE_REQUEST_MAX_PENDING
+#define CONFIG_DEVICE_REQUEST_MAX_PENDING 4
+#endif
+#define DEVICE_REQUEST_MAX_PENDING CONFIG_DEVICE_REQUEST_MAX_PENDING
 
 static SemaphoreHandle_t s_request_mutex;
 static pending_request_t s_requests[DEVICE_REQUEST_MAX_PENDING];

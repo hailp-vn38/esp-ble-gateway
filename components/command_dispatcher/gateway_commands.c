@@ -302,14 +302,22 @@ static void cmd_get_status(const gw_message_t *msg, dispatch_result_t *result)
              "\"internal\":{\"free\":%" PRIu32 ",\"min_free\":%" PRIu32 ","
              "\"largest_free_block\":%" PRIu32 "},"
              "\"psram\":{\"ready\":%s,\"free\":%" PRIu32 ",\"min_free\":%" PRIu32 ","
-             "\"largest_free_block\":%" PRIu32 "}}",
+             "\"largest_free_block\":%" PRIu32 "},"
+             "\"memory_policy\":{\"external_alloc_success\":%" PRIu32 ","
+             "\"external_alloc_fail\":%" PRIu32 ",\"internal_fallback_attempt\":%" PRIu32 ","
+             "\"internal_fallback_success\":%" PRIu32 ",\"internal_fallback_rejected_floor\":%" PRIu32 "}}",
              status.device_count, status.connected_count,
              status.ble_link_count,
              status.internal_free, status.internal_min_free,
              status.internal_largest_free_block,
              status.psram_ready ? "true" : "false",
              status.psram_free, status.psram_min_free,
-             status.psram_largest_free_block);
+             status.psram_largest_free_block,
+             status.memory_metrics.external_alloc_success,
+             status.memory_metrics.external_alloc_fail,
+             status.memory_metrics.internal_fallback_attempt,
+             status.memory_metrics.internal_fallback_success,
+             status.memory_metrics.internal_fallback_rejected_floor);
     command_dispatcher_set_json_result(result, DISPATCH_STATUS_OK, payload);
 }
 

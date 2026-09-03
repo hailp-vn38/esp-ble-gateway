@@ -19,6 +19,12 @@ typedef struct {
 static QueueHandle_t s_notify_queue;
 static TaskHandle_t s_notify_task;
 static ble_central_notify_cb_t s_notify_cb;
+static volatile uint32_t s_notify_queue_high_watermark;
+
+uint32_t ble_central_notify_queue_high_watermark(void)
+{
+    return __atomic_load_n(&s_notify_queue_high_watermark, __ATOMIC_RELAXED);
+}
 
 int ble_central_notify_init(ble_central_notify_cb_t notify_cb)
 {
@@ -84,4 +90,12 @@ void ble_central_notify_enqueue(const char *device_id, const uint8_t *data,
     }
 
     ble_central_metrics_notify_enqueued();
+    uint32_t depth = (uint32_t)uxQueueMessagesWaiting(s_notify_queue);
+    uint32_t previous = __atomic_load_n(&s_notify_queue_high_watermark,
+                                        __ATOMIC_RELAXED);
+    while (depth > previous &&
+           !__atomic_compare_exchange_n(&s_notify_queue_high_watermark,
+                                        &previous, depth, false,
+                                        __ATOMIC_RELAXED, __ATOMIC_RELAXED)) {
+    }
 }

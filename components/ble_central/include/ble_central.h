@@ -68,6 +68,7 @@ int ble_central_forget_peer(const char *device_id, const uint8_t ble_addr[6],
 int ble_central_send_command(const char *device_id, const gw_message_t *msg);
 int ble_central_is_connected(const char *device_id);
 int ble_central_active_count(void);
+uint32_t ble_central_notify_queue_high_watermark(void);
 // Copy-out runtime status query. This (not device_store) is the source of
 // truth for connection state; merge with device_store_snapshot() at the
 // presentation layer.

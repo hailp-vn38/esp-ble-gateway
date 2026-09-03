@@ -5,6 +5,8 @@
 #include <stdint.h>
 
 #include "esp_err.h"
+#include "memory_policy.h"
+#include "device_schema.h"
 
 // Aggregated gateway snapshot. Single source of truth for
 // REST /api/status, the dispatcher get_status command, and MCP.
@@ -39,6 +41,12 @@ typedef struct {
     uint32_t psram_free;
     uint32_t psram_min_free;
     uint32_t psram_largest_free_block;
+
+    // Allocation-policy counters since boot.
+    gw_mem_metrics_t memory_metrics;
+    gw_task_memory_metrics_t task_memory_metrics;
+    uint32_t ble_notify_queue_high_watermark;
+    device_schema_queue_stats_t schema_queue_metrics;
 } gateway_status_t;
 
 // Fills status with a consistent point-in-time snapshot. Never blocks on

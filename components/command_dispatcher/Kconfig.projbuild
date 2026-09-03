@@ -1,0 +1,11 @@
+menu "Command dispatcher"
+
+    config DEVICE_REQUEST_MAX_PENDING
+        int "Maximum pending device ACK requests"
+        range 2 16
+        default 2
+        help
+            Bounded pending ACK slots. Size for the command executor's
+            workers plus queue, independently from the device registry size.
+
+endmenu

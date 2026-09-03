@@ -40,6 +40,8 @@ typedef struct {
 } gw_memory_snapshot_t;
 
 void gw_memory_snapshot(gw_memory_snapshot_t *out);
+void gw_memory_log_checkpoint(const char *label);
+void gw_cjson_init_hooks(void);
 
 /* ── Allocation policy metrics (Plan v1.1 §15.4) ───────────────────── */
 typedef struct {
@@ -51,6 +53,17 @@ typedef struct {
 } gw_mem_metrics_t;
 
 void gw_mem_get_metrics(gw_mem_metrics_t *out);
+
+typedef struct {
+    uint32_t task_count;
+    uint32_t task_stack_min_bytes;
+    uint32_t task_stack_unknown_count;
+    uint32_t system_task_count;
+    uint32_t system_stack_min_bytes;
+    char task_stack_min_name[16];
+} gw_task_memory_metrics_t;
+
+void gw_memory_task_snapshot(gw_task_memory_metrics_t *out);
 
 #ifdef __cplusplus
 }

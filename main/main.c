@@ -16,6 +16,7 @@
 #include "mcp_endpoint.h"
 #include "mcp_tool_exposure.h"
 #include "mcp_ws_bridge.h"
+#include "memory_policy.h"
 #include "web_server.h"
 #include "wifi_prov.h"
 
@@ -189,6 +190,7 @@ static void start_external_mcp_bridge(void)
 
 void app_main(void)
 {
+    gw_memory_log_checkpoint("boot");
     esp_err_t io_rc = board_io_init();
     if (io_rc == ESP_OK) {
         if (board_io_register_event_handler(on_board_io_event, NULL) != ESP_OK) {
@@ -205,6 +207,8 @@ void app_main(void)
         ret = nvs_flash_init();
     }
     ESP_ERROR_CHECK(ret);
+    gw_cjson_init_hooks();
+    gw_memory_log_checkpoint("nvs_ready");
 
     // OTA rollback validation — must run before any gateway services start.
     if (gateway_ota_validate() != ESP_OK) {
@@ -216,6 +220,7 @@ void app_main(void)
         ESP_LOGE(TAG, "Wi-Fi initialization failed; gateway services were not started");
         return;
     }
+    gw_memory_log_checkpoint("wifi_ready");
 
     /* Register event-driven board status observer (Plan v1.1 §16). */
     wifi_prov_register_state_observer(on_wifi_prov_state_change, NULL);
@@ -228,6 +233,7 @@ void app_main(void)
             return;
         }
         ESP_LOGI(TAG, "Provisioning mode started; gateway modules are deferred until restart");
+        gw_memory_log_checkpoint("provisioning_ready");
         return;
     }
 
@@ -240,10 +246,12 @@ void app_main(void)
         ESP_LOGE(TAG, "Device store initialization failed");
         return;
     }
+    gw_memory_log_checkpoint("device_store_ready");
     if (device_schema_init() != ESP_OK) {
         ESP_LOGE(TAG, "Device schema manager initialization failed");
         return;
     }
+    gw_memory_log_checkpoint("schema_ready");
     if (device_state_init() != ESP_OK) {
         ESP_LOGE(TAG, "Device state initialization failed");
         return;
@@ -252,6 +260,7 @@ void app_main(void)
         ESP_LOGE(TAG, "MCP tool exposure initialization failed");
         return;
     }
+    gw_memory_log_checkpoint("mcp_exposure_ready");
     if (gateway_events_init() != ESP_OK) {
         ESP_LOGE(TAG, "Gateway events initialization failed");
         return;
@@ -268,11 +277,13 @@ void app_main(void)
         ESP_LOGE(TAG, "Command executor initialization failed");
         return;
     }
+    gw_memory_log_checkpoint("executor_ready");
     device_schema_set_submitter(capability_submit);
     if (ble_central_init(on_device_notify) != 0) {
         ESP_LOGE(TAG, "BLE central initialization failed");
         return;
     }
+    gw_memory_log_checkpoint("ble_ready");
     ble_central_set_lifecycle_callbacks(on_device_ready,
                                         on_device_disconnect);
     if (ble_central_start_reconnect_supervisor() != 0) {
@@ -290,6 +301,7 @@ void app_main(void)
     }
 
     start_external_mcp_bridge();
+    gw_memory_log_checkpoint("gateway_ready");
 
     ESP_LOGI(TAG, "ESP32 BLE Gateway started (Central + Web UI + JSON-RPC)");
 }

@@ -80,6 +80,11 @@ esp_err_t gateway_status_get(gateway_status_t *status)
         status->psram_min_free = (uint32_t)mem.psram_min_free;
         status->psram_largest_free_block = (uint32_t)mem.psram_largest;
     }
+    gw_mem_get_metrics(&status->memory_metrics);
+    gw_memory_task_snapshot(&status->task_memory_metrics);
+    status->ble_notify_queue_high_watermark =
+        ble_central_notify_queue_high_watermark();
+    device_schema_get_queue_stats(&status->schema_queue_metrics);
 
     return ESP_OK;
 }

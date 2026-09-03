@@ -5,6 +5,7 @@
 #include "esp_memory_utils.h"
 #include "esp_psram.h"
 #include "sdkconfig.h"
+#include "cJSON.h"
 
 TEST_CASE("gw_mem_alloc INTERNAL_REQUIRED returns internal memory", "[memory_policy]")
 {
@@ -37,6 +38,17 @@ TEST_CASE("gw_mem_calloc overflow returns NULL", "[memory_policy]")
 }
 
 #ifdef CONFIG_SPIRAM
+TEST_CASE("cJSON hooks prefer PSRAM and free through cJSON_free", "[memory_policy]")
+{
+    gw_cjson_init_hooks();
+    cJSON *object = cJSON_CreateObject();
+    TEST_ASSERT_NOT_NULL(object);
+    if (esp_psram_is_initialized()) {
+        TEST_ASSERT_TRUE(esp_ptr_external(object));
+    }
+    cJSON_Delete(object);
+}
+
 TEST_CASE("gw_memory_verify_psram succeeds when PSRAM initialized", "[memory_policy]")
 {
     esp_err_t ret = gw_memory_verify_psram();
