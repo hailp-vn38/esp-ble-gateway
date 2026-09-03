@@ -1443,7 +1443,7 @@ Compact semantic control must not be accidentally blocked by a stale global raw-
 
 ---
 
-## Phase 11 - Update Web Admin exposure API/UI
+## Phase 11 - Update Web Admin exposure API/UI ✅ DONE (2026-09-03)
 
 ### Files
 
@@ -1493,12 +1493,12 @@ UI:
 
 ### Checklist / Exit criteria
 
-- [ ] Compact Web management is feature-oriented.
-- [ ] Policy revision independent from catalog.
-- [ ] Disable is visibly durable.
-- [ ] Terminology correctly describes write control.
-- [ ] Dynamic compatibility retained.
-- [ ] Web API/UI tests pass.
+- [x] Compact Web management is feature-oriented.
+- [x] Policy revision independent from catalog.
+- [x] Disable is visibly durable.
+- [x] Terminology correctly describes write control.
+- [x] Dynamic compatibility retained.
+- [x] Web API/UI tests pass.
 
 ---
 

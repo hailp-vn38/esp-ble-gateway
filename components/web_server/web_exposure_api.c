@@ -46,9 +46,13 @@ static esp_err_t exposure_get_handler(httpd_req_t *request)
 
     cJSON *root = cJSON_CreateObject();
     cJSON *commands = cJSON_CreateArray();
-    if (root == NULL || commands == NULL) {
+    cJSON *features = cJSON_CreateArray();
+    cJSON *cap_obj = cJSON_CreateObject();
+    if (root == NULL || commands == NULL || features == NULL || cap_obj == NULL) {
         cJSON_Delete(root);
         cJSON_Delete(commands);
+        cJSON_Delete(features);
+        cJSON_Delete(cap_obj);
         return web_send_api_error(request, "500 Internal Server Error",
                                   "Out of memory");
     }
@@ -56,16 +60,68 @@ static esp_err_t exposure_get_handler(httpd_req_t *request)
     cJSON_AddStringToObject(root, "device_id", device_id);
     cJSON_AddNumberToObject(root, "catalog_revision", revision);
 
-    cJSON *cap_obj = cJSON_CreateObject();
-    if (cap_obj != NULL) {
-        cJSON_AddNumberToObject(cap_obj, "enabled", capacity.enabled);
-        cJSON_AddNumberToObject(cap_obj, "max_enabled", capacity.max_enabled);
-        cJSON_AddNumberToObject(cap_obj, "records", capacity.records);
-        cJSON_AddNumberToObject(cap_obj, "max_records", capacity.max_records);
-        cJSON_AddItemToObject(root, "capacity", cap_obj);
-    }
+    cJSON_AddNumberToObject(cap_obj, "enabled", capacity.enabled);
+    cJSON_AddNumberToObject(cap_obj, "max_enabled", capacity.max_enabled);
+    cJSON_AddNumberToObject(cap_obj, "records", capacity.records);
+    cJSON_AddNumberToObject(cap_obj, "max_records", capacity.max_enabled);
+    cJSON_AddItemToObject(root, "capacity", cap_obj);
 
-    if (cap_err == ESP_OK && cap.has_committed && cap.tool_count > 0) {
+    if (cap_err == ESP_OK && cap.has_committed) {
+        /* Feature-oriented response (compact-friendly) */
+        for (size_t f = 0; f < cap.feature_count; f++) {
+            const device_schema_feature_t *feat = &cap.features[f];
+            cJSON *fitem = cJSON_CreateObject();
+            if (fitem == NULL) continue;
+
+            cJSON_AddStringToObject(fitem, "feature_id", feat->feature_id);
+
+            const device_template_t *tpl = device_template_resolve(
+                feat->feature_type, feat->feature_schema_version);
+            if (tpl != NULL) {
+                cJSON_AddStringToObject(fitem, "type",
+                                        device_template_feature_name(feat->feature_type));
+                cJSON_AddStringToObject(fitem, "semantic_name", tpl->semantic_name);
+            }
+
+            const char *prop_name = device_template_property_name(feat->property_id);
+            cJSON_AddStringToObject(fitem, "property", prop_name);
+
+            device_template_value_type_t vtype =
+                device_template_property_value_type(feat->property_id);
+            cJSON_AddStringToObject(fitem, "value_type",
+                                    vtype == DEVICE_TEMPLATE_VALUE_BOOL ? "bool" :
+                                    vtype == DEVICE_TEMPLATE_VALUE_INT ? "int" : "none");
+
+            /* Writable command info */
+            if (feat->writable_tool_index >= 0 &&
+                (size_t)feat->writable_tool_index < cap.tool_count) {
+                const device_schema_tool_t *tool =
+                    &cap.tools[feat->writable_tool_index];
+                cJSON_AddStringToObject(fitem, "command", tool->command);
+                cJSON_AddBoolToObject(fitem, "destructive",
+                                      (tool->flags & DEVICE_SCHEMA_FLAG_DESTRUCTIVE) != 0);
+            }
+
+            /* Exposure status per feature */
+            mcp_tool_exposure_t exposure;
+            if (mcp_tool_exposure_get_feature(device_id, feat->feature_id,
+                                               &exposure) == ESP_OK) {
+                cJSON_AddBoolToObject(fitem, "control_enabled",
+                                      exposure.control_enabled);
+                const char *state_str =
+                    exposure.state == MCP_EXPOSURE_ENABLED ? "enabled" :
+                    exposure.state == MCP_EXPOSURE_NEEDS_REVIEW ? "needs_review" :
+                    "orphaned";
+                cJSON_AddStringToObject(fitem, "health", state_str);
+            } else {
+                cJSON_AddBoolToObject(fitem, "control_enabled", true);
+                cJSON_AddStringToObject(fitem, "health", "enabled");
+            }
+
+            cJSON_AddItemToArray(features, fitem);
+        }
+
+        /* Legacy command-oriented response (for dynamic mode compatibility) */
         for (size_t i = 0; i < cap.tool_count; i++) {
             const device_schema_tool_t *c = &cap.tools[i];
             cJSON *item = cJSON_CreateObject();
@@ -76,7 +132,7 @@ static esp_err_t exposure_get_handler(httpd_req_t *request)
 
             const char *vt_str = c->value_type == 1 ? "boolean"
                                      : c->value_type == 2 ? "integer"
-                                           : "none";
+                                       : "none";
             cJSON_AddStringToObject(item, "value_type", vt_str);
             cJSON_AddBoolToObject(item, "destructive",
                                   (c->flags & DEVICE_SCHEMA_FLAG_DESTRUCTIVE) != 0);
@@ -139,6 +195,7 @@ static esp_err_t exposure_get_handler(httpd_req_t *request)
         }
     }
 
+    cJSON_AddItemToObject(root, "features", features);
     cJSON_AddItemToObject(root, "commands", commands);
 
     httpd_resp_set_hdr(request, "Cache-Control", "no-store");
@@ -169,6 +226,104 @@ static esp_err_t exposure_put_handler(httpd_req_t *request)
 
     // Single command mode.
     const cJSON *command_item = cJSON_GetObjectItemCaseSensitive(json, "command");
+    const cJSON *feature_item = cJSON_GetObjectItemCaseSensitive(json, "feature_id");
+
+    /* Compact mode: accept feature_id + enabled */
+    if (feature_item != NULL && cJSON_IsString(feature_item)) {
+        const char *feature_id = cJSON_GetStringValue(feature_item);
+        if (feature_id == NULL || feature_id[0] == '\0') {
+            cJSON_Delete(json);
+            return web_send_api_error_code(request, "400 Bad Request",
+                                           "Invalid feature_id",
+                                           "invalid_request");
+        }
+
+        const cJSON *enabled_item =
+            cJSON_GetObjectItemCaseSensitive(json, "enabled");
+        if (!cJSON_IsBool(enabled_item)) {
+            cJSON_Delete(json);
+            return web_send_api_error_code(request, "400 Bad Request",
+                                           "enabled must be boolean",
+                                           "invalid_request");
+        }
+
+        bool enabled = cJSON_IsTrue(enabled_item);
+
+        /* Resolve feature to command */
+        device_schema_snapshot_t cap;
+        if (device_schema_get(device_id, &cap) != ESP_OK || !cap.has_committed) {
+            cJSON_Delete(json);
+            return web_send_api_error_code(request, "404 Not Found",
+                                           "No committed capabilities",
+                                           "capabilities_not_ready");
+        }
+
+        const char *command = NULL;
+        bool is_destructive = false;
+        for (size_t f = 0; f < cap.feature_count; f++) {
+            if (strcmp(cap.features[f].feature_id, feature_id) == 0) {
+                int8_t idx = cap.features[f].writable_tool_index;
+                if (idx >= 0 && (size_t)idx < cap.tool_count) {
+                    command = cap.tools[idx].command;
+                    is_destructive =
+                        (cap.tools[idx].flags & DEVICE_SCHEMA_FLAG_DESTRUCTIVE) != 0;
+                }
+                break;
+            }
+        }
+
+        if (command == NULL) {
+            cJSON_Delete(json);
+            return web_send_api_error_code(request, "404 Not Found",
+                                           "Feature not found or read-only",
+                                           "not_found");
+        }
+
+        esp_err_t err;
+        if (enabled) {
+            mcp_exposure_enable_options_t opts = {0};
+            const cJSON *confirm =
+                cJSON_GetObjectItemCaseSensitive(json, "confirm_destructive");
+            opts.confirm_destructive =
+                cJSON_IsBool(confirm) && cJSON_IsTrue(confirm);
+            err = mcp_tool_exposure_enable(device_id, command, &opts);
+        } else {
+            err = mcp_tool_exposure_disable(device_id, command);
+        }
+
+        cJSON_Delete(json);
+
+        if (err == ESP_ERR_NOT_FOUND) {
+            return web_send_api_error_code(request, "404 Not Found",
+                                           "Device or command not found",
+                                           "not_found");
+        }
+        if (err == ESP_ERR_INVALID_STATE) {
+            return web_send_api_error_code(request, "409 Conflict",
+                                           "No committed capabilities",
+                                           "capabilities_not_ready");
+        }
+        if (err == ESP_ERR_NO_MEM) {
+            return web_send_api_error_code(request, "409 Conflict",
+                                           "Capacity exceeded",
+                                           "mcp_tool_capacity_exceeded");
+        }
+        if (err == ESP_ERR_NOT_SUPPORTED) {
+            return web_send_api_error_code(request, "403 Forbidden",
+                                           "Destructive command blocked by policy",
+                                           "destructive_blocked");
+        }
+        if (err != ESP_OK) {
+            return web_send_api_error(request, "500 Internal Server Error",
+                                      "Enable/disable failed");
+        }
+
+        cJSON *response = cJSON_CreateObject();
+        cJSON_AddBoolToObject(response, "success", true);
+        return web_send_json(request, response);
+    }
+
+    /* Legacy command mode */
     if (command_item != NULL) {
         const char *command = cJSON_IsString(command_item)
                                   ? command_item->valuestring
