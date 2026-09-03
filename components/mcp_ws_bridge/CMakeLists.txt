@@ -1,5 +1,7 @@
 idf_component_register(
     SRCS "mcp_ws_bridge.c"
+         "mcp_ws_bridge_ws.c"
+         "mcp_ws_bridge_config.c"
     INCLUDE_DIRS "include"
     REQUIRES mcp_endpoint wifi_provisioning memory_policy
              esp_websocket_client esp_event
