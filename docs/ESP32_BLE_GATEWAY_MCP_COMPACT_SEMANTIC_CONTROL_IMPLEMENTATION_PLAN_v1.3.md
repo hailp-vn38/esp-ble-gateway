@@ -598,7 +598,7 @@ docs/ESP32_BLE_GATEWAY_MCP_COMPACT_SEMANTIC_CONTROL_IMPLEMENTATION_PLAN_v1.3.md
 
 ## 6. Phase-by-phase implementation
 
-## Phase 0 - Baseline characterization
+## Phase 0 - Baseline characterization ✅ DONE (2026-09-03)
 
 ### Files
 
@@ -634,15 +634,15 @@ docs/ESP32_BLE_GATEWAY_MCP_COMPACT_SEMANTIC_CONTROL_IMPLEMENTATION_PLAN_v1.3.md
 
 ### Checklist / Exit criteria
 
-- [ ] Baseline SHA recorded.
-- [ ] Existing tests pass before production changes.
-- [ ] Executor worker/queue configuration recorded.
-- [ ] Internal RAM/PSRAM baseline recorded.
-- [ ] Device command latency baseline recorded.
-- [ ] Pending correlation behavior recorded.
-- [ ] MCP tool count/serialized-size baseline recorded.
-- [ ] State-read baseline behavior recorded.
-- [ ] No production behavior changed in this phase.
+- [x] Baseline SHA recorded.
+- [x] Existing tests pass before production changes.
+- [x] Executor worker/queue configuration recorded.
+- [x] Internal RAM/PSRAM baseline recorded.
+- [x] Device command latency baseline recorded.
+- [x] Pending correlation behavior recorded.
+- [x] MCP tool count/serialized-size baseline recorded.
+- [x] State-read baseline behavior recorded.
+- [x] No production behavior changed in this phase.
 
 ---
 
