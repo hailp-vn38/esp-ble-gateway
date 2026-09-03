@@ -1,7 +1,7 @@
 
   Component                  PASS  FAIL  Total  Status
   ───────────────────────────────────────────────────────
-  ble_central                  33     0     33  [32mALL PASS[0m
+  ble_central                  34     0     34  [32mALL PASS[0m
   board_io                     64     0     64  [32mALL PASS[0m
   cbor_codec                    9     0      9  [32mALL PASS[0m
   command_dispatcher           31     0     31  [32mALL PASS[0m
@@ -16,10 +16,11 @@
   mcp_tool_exposure             1     0      1  [32mALL PASS[0m
   mcp_ws_bridge                18     0     18  [32mALL PASS[0m
   memory_policy                 4     0      4  [32mALL PASS[0m
+  other                         1     0      1  [32mALL PASS[0m
   web_server                   16    10     26  [31m10 FAILED[0m
   wifi_provisioning            28     0     28  [32mALL PASS[0m
   ───────────────────────────────────────────────────────
-  [31mTOTAL                       344    10    354[0m
+  [31mTOTAL                       346    10    356[0m
 
   Unity summary: 344 Tests 10 Failures 0 Ignored
   [31mFailed tests:[0m

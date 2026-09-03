@@ -986,7 +986,7 @@ DYNAMIC:
 
 ---
 
-## Phase 5 - Expand trusted semantic vocabulary
+## Phase 5 - Expand trusted semantic vocabulary ✅ DONE (2026-09-03)
 
 ### Files
 
@@ -1043,12 +1043,12 @@ Unknown mappings fail closed. Never treat peripheral label text as semantic iden
 
 ### Checklist / Exit criteria
 
-- [ ] Known Protocol v4 features mapped or explicitly unsupported.
-- [ ] Known properties mapped or explicitly unsupported.
-- [ ] Unknown values fail closed.
-- [ ] No label-based semantic trust.
-- [ ] Existing template APIs remain source-compatible.
-- [ ] Template tests pass.
+- [x] Known Protocol v4 features mapped or explicitly unsupported.
+- [x] Known properties mapped or explicitly unsupported.
+- [x] Unknown values fail closed.
+- [x] No label-based semantic trust.
+- [x] Existing template APIs remain source-compatible.
+- [x] Template tests pass.
 
 ---
 
