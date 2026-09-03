@@ -1351,3 +1351,84 @@ bool mcp_tool_is_feature_bound(const char *device_id, const char *command)
     xSemaphoreGive(s_mutex);
     return false;
 }
+
+/* ── Feature-level control enable/disable (compact MCP) ──────────────── */
+
+static uint32_t s_policy_revision = 0;
+
+uint32_t mcp_tool_exposure_get_policy_revision(void)
+{
+    return s_policy_revision;
+}
+
+esp_err_t mcp_tool_exposure_get_feature(const char *device_id,
+                                         const char *feature_id,
+                                         mcp_tool_exposure_t *out)
+{
+    if (!s_initialized || device_id == NULL || feature_id == NULL || out == NULL) {
+        return ESP_ERR_INVALID_ARG;
+    }
+
+    xSemaphoreTake(s_mutex, portMAX_DELAY);
+
+    for (size_t i = 0; i < s_persisted_count; i++) {
+        if (strcmp(s_persisted[i].device_id, device_id) == 0 &&
+            strcmp(s_persisted[i].feature_id, feature_id) == 0 &&
+            (s_persisted[i].flags & MCP_EXP_FLAG_FEATURE_BOUND) != 0) {
+            memset(out, 0, sizeof(*out));
+            strlcpy(out->device_id, s_persisted[i].device_id,
+                    sizeof(out->device_id));
+            strlcpy(out->command, s_persisted[i].command,
+                    sizeof(out->command));
+            strlcpy(out->feature_id, s_persisted[i].feature_id,
+                    sizeof(out->feature_id));
+            out->feature_bound = true;
+            out->control_enabled =
+                (s_persisted[i].flags & MCP_EXP_FLAG_USER_DISABLED) == 0;
+            out->state = s_persisted[i].state;
+            out->reason = s_persisted[i].reason;
+            memcpy(out->capability_digest, s_persisted[i].capability_digest,
+                   sizeof(out->capability_digest));
+            xSemaphoreGive(s_mutex);
+            return ESP_OK;
+        }
+    }
+
+    xSemaphoreGive(s_mutex);
+    return ESP_ERR_NOT_FOUND;
+}
+
+esp_err_t mcp_tool_exposure_set_feature_enabled(const char *device_id,
+                                                 const char *feature_id,
+                                                 bool enabled)
+{
+    if (!s_initialized || device_id == NULL || feature_id == NULL) {
+        return ESP_ERR_INVALID_ARG;
+    }
+
+    xSemaphoreTake(s_mutex, portMAX_DELAY);
+
+    for (size_t i = 0; i < s_persisted_count; i++) {
+        if (strcmp(s_persisted[i].device_id, device_id) == 0 &&
+            strcmp(s_persisted[i].feature_id, feature_id) == 0 &&
+            (s_persisted[i].flags & MCP_EXP_FLAG_FEATURE_BOUND) != 0) {
+            if (enabled) {
+                s_persisted[i].flags &= ~MCP_EXP_FLAG_USER_DISABLED;
+            } else {
+                s_persisted[i].flags |= MCP_EXP_FLAG_USER_DISABLED;
+            }
+            s_policy_revision++;
+            persist_save_locked();
+            xSemaphoreGive(s_mutex);
+
+            ESP_LOGI(TAG, "Feature %s.%s control %s (policy rev=%lu)",
+                     device_id, feature_id,
+                     enabled ? "enabled" : "disabled",
+                     (unsigned long)s_policy_revision);
+            return ESP_OK;
+        }
+    }
+
+    xSemaphoreGive(s_mutex);
+    return ESP_ERR_NOT_FOUND;
+}

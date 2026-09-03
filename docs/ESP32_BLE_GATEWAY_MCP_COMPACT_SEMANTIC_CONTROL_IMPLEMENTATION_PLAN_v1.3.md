@@ -1052,7 +1052,7 @@ Unknown mappings fail closed. Never treat peripheral label text as semantic iden
 
 ---
 
-## Phase 6 - Separate exposure user intent, capability health and dynamic catalog
+## Phase 6 - Separate exposure user intent, capability health and dynamic catalog ✅ DONE (2026-09-03)
 
 ### Files
 
@@ -1132,13 +1132,13 @@ Reconcile rules:
 
 ### Checklist / Exit criteria
 
-- [ ] User intent independent from capability health.
-- [ ] Disable durable on new firmware.
-- [ ] `NEEDS_REVIEW` not silently cleared.
-- [ ] Compact has zero executable-catalog dependency.
-- [ ] Dynamic compatibility preserved.
-- [ ] Persistence failures observable.
-- [ ] Exposure tests pass in both profiles.
+- [x] User intent independent from capability health.
+- [x] Disable durable on new firmware.
+- [x] `NEEDS_REVIEW` not silently cleared.
+- [x] Compact has zero executable-catalog dependency.
+- [x] Dynamic compatibility preserved.
+- [x] Persistence failures observable.
+- [x] Exposure tests pass in both profiles.
 
 ---
 

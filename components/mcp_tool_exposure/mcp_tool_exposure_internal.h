@@ -16,7 +16,8 @@
 #define MCP_EXP_NAMING_VERSION 3
 
 /* Persisted record flags (bitfield in flags byte). */
-#define MCP_EXP_FLAG_FEATURE_BOUND (1u << 0)
+#define MCP_EXP_FLAG_FEATURE_BOUND  (1u << 0)
+#define MCP_EXP_FLAG_USER_DISABLED  (1u << 1)
 
 typedef struct {
     char device_id[GW_MSG_DEVICE_ID_LEN];

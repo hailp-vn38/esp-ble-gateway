@@ -36,6 +36,7 @@ typedef struct {
     char tool_name[MCP_DYNAMIC_TOOL_NAME_MAX + 1];
     char feature_id[GW_FEATURE_ID_LEN];
     bool feature_bound;
+    bool control_enabled;
     mcp_exposure_state_t state;
     mcp_exposure_reason_t reason;
     uint8_t capability_digest[MCP_CAPABILITY_DIGEST_LEN];
@@ -122,6 +123,18 @@ esp_err_t mcp_tool_unbind_feature(const char *device_id,
 
 bool mcp_tool_is_feature_bound(const char *device_id,
                                 const char *command);
+
+// Feature-level control enable/disable (compact MCP mode).
+esp_err_t mcp_tool_exposure_get_feature(const char *device_id,
+                                         const char *feature_id,
+                                         mcp_tool_exposure_t *out);
+
+esp_err_t mcp_tool_exposure_set_feature_enabled(const char *device_id,
+                                                 const char *feature_id,
+                                                 bool enabled);
+
+// Policy revision tracking (independent of catalog revision).
+uint32_t mcp_tool_exposure_get_policy_revision(void);
 
 #ifdef __cplusplus
 }
