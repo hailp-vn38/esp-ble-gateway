@@ -1,14 +1,36 @@
 
   Component                  PASS  FAIL  Total  Status
   ───────────────────────────────────────────────────────
-  ble_central                 138     0    138  [32mALL PASS[0m
-  board_io                    384     0    384  [32mALL PASS[0m
-  cbor_codec                   54     0     54  [32mALL PASS[0m
-  command_dispatcher          186     0    186  [32mALL PASS[0m
-  command_executor             24     0     24  [32mALL PASS[0m
-  device_schema               128     0    128  [32mALL PASS[0m
-  device_state                 35     0     35  [32mALL PASS[0m
+  ble_central                  34     0     34  [32mALL PASS[0m
+  board_io                     64     0     64  [32mALL PASS[0m
+  cbor_codec                    9     0      9  [32mALL PASS[0m
+  command_dispatcher           31     0     31  [32mALL PASS[0m
+  command_executor              4     0      4  [32mALL PASS[0m
+  device_command_service       13     0     13  [32mALL PASS[0m
+  device_schema                22     0     22  [32mALL PASS[0m
+  device_state                 19     0     19  [32mALL PASS[0m
+  device_store                 10     0     10  [32mALL PASS[0m
+  device_template               7     0      7  [32mALL PASS[0m
+  gateway_events               10     0     10  [32mALL PASS[0m
+  mcp_endpoint                 55     0     55  [32mALL PASS[0m
+  mcp_tool_exposure             1     0      1  [32mALL PASS[0m
+  mcp_ws_bridge                18     0     18  [32mALL PASS[0m
+  memory_policy                 4     0      4  [32mALL PASS[0m
+  web_server                   16    10     26  [31m10 FAILED[0m
+  wifi_provisioning            28     0     28  [32mALL PASS[0m
   ───────────────────────────────────────────────────────
-  [31mTOTAL                       949     0    949[0m
+  [31mTOTAL                       345    10    355[0m
 
-  [31mUnity summary missing: test suite did not finish.[0m
+  Unity summary: 344 Tests 10 Failures 0 Ignored
+  [31mFailed tests:[0m
+    line 72: P02-T03: Ring overflow triggers resync.required: Expected 40 Was 80. Function [ws][p02]
+    line 98: P02-T05: Drain sends to all registered clients (unit): Expected 5 Was 15. Function [ws][p02]
+    line 116: P03-T01: snapshot race \xE2\x80\x94 event before snapshot cursor: Expected 1 Was 47. Function [ws][p03]
+    line 128: P03-T02: snapshot race \xE2\x80\x94 event during snapshot build: Expected 0 Was 47. Function [ws][p03]
+    line 162: P03-T04: gap detection \xE2\x80\x94 skip seq triggers resync: Expected 1 Was 48. Function [ws][p03]
+    line 328: P05-T06: publish burst doesn't block: Expected 200 Was 800. Function [ws][p05]
+    line 347: P09-T07: serializer output parses as valid JSON: Expected 42 Was 254. Function [ws][p09]
+    line 408: P09-T05: ring overflow \xE2\x80\x94 resync.required emitted: Expected 0 Was 257. Function [ws][p09]
+    line 455: P09-T06: queue_work \xE2\x80\x94 work_pending not stuck: Expected 10 Was 40. Function [ws][p09]
+    line 466: P09-T04: 2 listeners \xE2\x80\x94 same event to both: Expected 0 Was 257. Function [ws][p09]
+

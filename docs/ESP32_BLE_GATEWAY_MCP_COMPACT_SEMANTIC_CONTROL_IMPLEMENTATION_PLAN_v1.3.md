@@ -646,7 +646,7 @@ docs/ESP32_BLE_GATEWAY_MCP_COMPACT_SEMANTIC_CONTROL_IMPLEMENTATION_PLAN_v1.3.md
 
 ---
 
-## Phase 1 - Introduce event-driven `device_command_service`
+## Phase 1 - Introduce event-driven `device_command_service` ✅ DONE (2026-09-03)
 
 ### New files
 
@@ -712,16 +712,16 @@ typedef struct {
 
 ### Checklist / Exit criteria
 
-- [ ] New service builds independently of MCP/Web layers.
-- [ ] No cJSON/HTTP/MCP dependency exists in the component.
-- [ ] No per-pending semaphore exists.
-- [ ] No worker blocks waiting for BLE ACK.
-- [ ] Pending table is bounded.
-- [ ] One-pending-per-device invariant preserved.
-- [ ] ACK correlation is at least as strict as current implementation.
-- [ ] Timeout and disconnect complete exactly once.
-- [ ] Unit tests pass with mock transport.
-- [ ] Existing old production path still passes regression tests.
+- [x] New service builds independently of MCP/Web layers.
+- [x] No cJSON/HTTP/MCP dependency exists in the component.
+- [x] No per-pending semaphore exists.
+- [x] No worker blocks waiting for BLE ACK.
+- [x] Pending table is bounded.
+- [x] One-pending-per-device invariant preserved.
+- [x] ACK correlation is at least as strict as current implementation.
+- [x] Timeout and disconnect complete exactly once.
+- [x] Unit tests pass with mock transport.
+- [x] Existing old production path still passes regression tests.
 
 ---
 
