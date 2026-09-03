@@ -1384,7 +1384,7 @@ Compact `mcp_tools_list()` must not:
 
 ---
 
-## Phase 10 - Centralize semantic MCP write policy
+## Phase 10 - Centralize semantic MCP write policy ✅ DONE (2026-09-03)
 
 ### Files
 
@@ -1435,11 +1435,11 @@ Compact semantic control must not be accidentally blocked by a stale global raw-
 
 ### Checklist / Exit criteria
 
-- [ ] One semantic write-policy entry point.
-- [ ] Final schema validation remains mandatory.
-- [ ] Destructive controls fail closed.
-- [ ] Stale raw allowlist is not the compact authority.
-- [ ] Policy tests pass.
+- [x] One semantic write-policy entry point.
+- [x] Final schema validation remains mandatory.
+- [x] Destructive controls fail closed.
+- [x] Stale raw allowlist is not the compact authority.
+- [x] Policy tests pass.
 
 ---
 

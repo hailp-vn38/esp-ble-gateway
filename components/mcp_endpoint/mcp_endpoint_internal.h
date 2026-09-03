@@ -293,6 +293,11 @@ cJSON *mcp_dynamic_tool_build_json(const mcp_tool_binding_t *binding);
 mcp_policy_result_t mcp_policy_check_device_command(const char *device_id,
                                                      const char *command);
 
+mcp_policy_result_t mcp_policy_check_feature_control(
+    const char *device_id,
+    const char *feature_id,
+    const device_schema_tool_t *resolved_tool);
+
 // ---------------------------------------------------------------------------
 // Auth / request gating (mcp_auth.c)
 // ---------------------------------------------------------------------------
