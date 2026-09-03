@@ -1142,7 +1142,7 @@ Reconcile rules:
 
 ---
 
-## Phase 7 - Add `mcp_device_control`
+## Phase 7 - Add `mcp_device_control` ✅ DONE (2026-09-03)
 
 ### New file
 
@@ -1235,14 +1235,14 @@ The MCP formatter consumes `device_command_result_t`; it never parses dispatcher
 
 ### Checklist / Exit criteria
 
-- [ ] Semantic resolver isolated from transport code.
-- [ ] Raw command accepted only from committed schema mapping.
-- [ ] Describe/read bounded and local.
-- [ ] Set submits typed service request.
-- [ ] No `command_executor_submit()` in compact control module.
-- [ ] No `dispatch_result_t` in compact set formatter.
-- [ ] No raw command/untrusted label leakage.
-- [ ] Unit tests pass without HTTP/WS.
+- [x] Semantic resolver isolated from transport code.
+- [x] Raw command accepted only from committed schema mapping.
+- [x] Describe/read bounded and local.
+- [x] Set submits typed service request.
+- [x] No `command_executor_submit()` in compact control module.
+- [x] No `dispatch_result_t` in compact set formatter.
+- [x] No raw command/untrusted label leakage.
+- [x] Unit tests pass without HTTP/WS.
 
 ---
 

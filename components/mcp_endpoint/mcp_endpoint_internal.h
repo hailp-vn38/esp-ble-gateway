@@ -218,6 +218,20 @@ cJSON *mcp_tools_format_device_result(const device_command_result_t *result,
                                       const mcp_request_context_t *ctx,
                                       mcp_rpc_error_t *err);
 
+// ---------------------------------------------------------------------------
+// Device control (mcp_device_control.c)
+// ---------------------------------------------------------------------------
+
+cJSON *mcp_device_control_execute(const cJSON *params,
+                                   const mcp_request_context_t *ctx,
+                                   mcp_rpc_error_t *error);
+
+esp_err_t mcp_device_control_dispatch_async(
+    const cJSON *params,
+    const mcp_responder_t *responder,
+    cJSON *id,
+    const mcp_request_context_t *protocol);
+
 typedef enum {
     MCP_RESOLVE_OK = 0,
     MCP_RESOLVE_ALLOWLIST_DENIED,

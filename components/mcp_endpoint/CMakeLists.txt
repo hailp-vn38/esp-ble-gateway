@@ -7,9 +7,11 @@ idf_component_register(
          "mcp_auth.c"
          "mcp_codec.c"
          "mcp_policy.c"
+         "mcp_device_control.c"
     INCLUDE_DIRS "include"
     REQUIRES esp_http_server cbor_codec command_dispatcher command_executor
-             device_command_service device_schema device_template device_store
-             mcp_tool_exposure espressif__cjson nvs_flash esp_timer freertos
+             device_command_service device_schema device_state device_template
+             device_store mcp_tool_exposure espressif__cjson nvs_flash
+             esp_timer freertos
     PRIV_REQUIRES memory_policy
 )
