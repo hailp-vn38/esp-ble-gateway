@@ -1330,7 +1330,7 @@ Async MCP context stores:
 
 ---
 
-## Phase 9 - Register fixed compact MCP surface
+## Phase 9 - Register fixed compact MCP surface ✅ DONE (2026-09-03)
 
 ### Files
 
@@ -1376,11 +1376,11 @@ Compact `mcp_tools_list()` must not:
 
 ### Checklist / Exit criteria
 
-- [ ] Exactly three compact tools.
-- [ ] Compact list O(1) versus device count.
-- [ ] No dynamic catalog access from compact list.
-- [ ] Dynamic discovery compatibility preserved.
-- [ ] Xiaozhi can parse compact schema.
+- [x] Exactly three compact tools.
+- [x] Compact list O(1) versus device count.
+- [x] No dynamic catalog access from compact list.
+- [x] Dynamic discovery compatibility preserved.
+- [x] Xiaozhi can parse compact schema.
 
 ---
 

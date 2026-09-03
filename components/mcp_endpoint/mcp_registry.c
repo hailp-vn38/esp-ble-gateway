@@ -46,16 +46,81 @@ static cJSON *schema_empty(void)
     return new_object_schema();
 }
 
+static cJSON *schema_device_control(void)
+{
+    cJSON *schema = new_object_schema();
+    if (schema == NULL) return NULL;
+    cJSON *properties = cJSON_GetObjectItemCaseSensitive(schema, "properties");
+    if (properties == NULL) {
+        cJSON_Delete(schema);
+        return NULL;
+    }
+
+    /* operation: enum [describe, read, set] */
+    cJSON *op = cJSON_CreateObject();
+    if (op == NULL) { cJSON_Delete(schema); return NULL; }
+    cJSON_AddStringToObject(op, "type", "string");
+    cJSON *enum_arr = cJSON_CreateArray();
+    cJSON_AddItemToArray(enum_arr, cJSON_CreateString("describe"));
+    cJSON_AddItemToArray(enum_arr, cJSON_CreateString("read"));
+    cJSON_AddItemToArray(enum_arr, cJSON_CreateString("set"));
+    cJSON_AddItemToObject(op, "enum", enum_arr);
+    cJSON_AddItemToObject(properties, "operation", op);
+
+    /* device: string (device_id or name) */
+    cJSON *dev = cJSON_CreateObject();
+    if (dev == NULL) { cJSON_Delete(schema); return NULL; }
+    cJSON_AddStringToObject(dev, "type", "string");
+    cJSON_AddStringToObject(dev, "description", "Device id or configured name");
+    cJSON_AddItemToObject(properties, "device", dev);
+
+    /* feature: string (feature_id or semantic name) */
+    cJSON *feat = cJSON_CreateObject();
+    if (feat == NULL) { cJSON_Delete(schema); return NULL; }
+    cJSON_AddStringToObject(feat, "type", "string");
+    cJSON_AddStringToObject(feat, "description", "Feature id or semantic name");
+    cJSON_AddItemToObject(properties, "feature", feat);
+
+    /* bool_value: optional boolean for set */
+    cJSON *bool_val = cJSON_CreateObject();
+    if (bool_val == NULL) { cJSON_Delete(schema); return NULL; }
+    cJSON_AddStringToObject(bool_val, "type", "boolean");
+    cJSON_AddStringToObject(bool_val, "description", "Boolean value for set (when type is bool)");
+    cJSON_AddItemToObject(properties, "bool_value", bool_val);
+
+    /* int_value: optional integer for set */
+    cJSON *int_val = cJSON_CreateObject();
+    if (int_val == NULL) { cJSON_Delete(schema); return NULL; }
+    cJSON_AddStringToObject(int_val, "type", "integer");
+    cJSON_AddStringToObject(int_val, "description", "Integer value for set (when type is int)");
+    cJSON_AddItemToObject(properties, "int_value", int_val);
+
+    return schema;
+}
+
 #undef SCHEMA_FAIL
 
 // Production static tools: get_status + list_devices always present.
+// device_control is added in compact mode.
 static const mcp_tool_desc_t MCP_STATIC_TOOLS[] = {
     {"get_status", "Get gateway and BLE status", schema_empty, true, false},
     {"list_devices", "List devices known by the gateway", schema_empty, true, false},
 };
 
+static const mcp_tool_desc_t MCP_COMPACT_TOOLS[] = {
+    {"get_status", "Get gateway and BLE status", schema_empty, true, false},
+    {"list_devices", "List devices known by the gateway", schema_empty, true, false},
+    {"device_control", "Control a device feature (describe/read/set)",
+     schema_device_control, false, false},
+};
+
 const mcp_tool_desc_t *mcp_registry_find(const char *name)
 {
+    /* Check compact tools first (device_control) */
+    for (size_t i = 0; i < sizeof(MCP_COMPACT_TOOLS) / sizeof(MCP_COMPACT_TOOLS[0]); i++) {
+        if (strcmp(MCP_COMPACT_TOOLS[i].name, name) == 0) return &MCP_COMPACT_TOOLS[i];
+    }
+    /* Then static tools */
     for (size_t i = 0; i < sizeof(MCP_STATIC_TOOLS) / sizeof(MCP_STATIC_TOOLS[0]); i++) {
         if (strcmp(MCP_STATIC_TOOLS[i].name, name) == 0) return &MCP_STATIC_TOOLS[i];
     }

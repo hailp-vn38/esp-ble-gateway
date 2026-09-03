@@ -117,16 +117,16 @@ cJSON *mcp_tools_list(const mcp_request_context_t *ctx)
         cJSON_AddStringToObject(result, "cacheScope", MCP_TOOLS_CACHE_SCOPE);
     }
 
-    // Static tools first.
+    // Static tools (includes device_control for compact).
     if (mcp_registry_build_tools_list(tools) != 0) {
         cJSON_Delete(result);
         cJSON_Delete(tools);
         return NULL;
     }
 
-    // Dynamic device tools (ENABLED only, deterministic order).  A binding is
-    // large enough that the maximum snapshot does not fit on the 8 KiB MCP WS
-    // task stack, so keep this bounded transient workspace off the stack.
+    // Dynamic device tools (ENABLED only, deterministic order).
+    // In compact mode (CONFIG_MCP_TOOL_SURFACE_COMPACT), skip dynamic catalog.
+#if !CONFIG_MCP_TOOL_SURFACE_COMPACT
     const size_t binding_capacity = CONFIG_MCP_DYNAMIC_TOOL_MAX_ENABLED;
     mcp_tool_binding_t *bindings = gw_mem_alloc(
         binding_capacity * sizeof(*bindings), GW_MEM_EXTERNAL_PREFERRED);
@@ -145,6 +145,7 @@ cJSON *mcp_tools_list(const mcp_request_context_t *ctx)
         }
     }
     gw_mem_free(bindings);
+#endif
 
     cJSON_AddItemToObject(result, "tools", tools);
 
