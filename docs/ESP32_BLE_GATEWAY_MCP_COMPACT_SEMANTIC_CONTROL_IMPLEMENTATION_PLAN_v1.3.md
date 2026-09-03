@@ -1502,7 +1502,7 @@ UI:
 
 ---
 
-## Phase 12 - Full qualification and hardware acceptance
+## Phase 12 - Full qualification and hardware acceptance ✅ DONE (2026-09-03)
 
 ### MCP tests
 
@@ -1603,19 +1603,19 @@ Using reference LED device:
 
 ### Checklist / Exit criteria
 
-- [ ] All Phase 0-11 tests pass.
-- [ ] Compact clean build passes.
-- [ ] Dynamic clean build passes.
-- [ ] Xiaozhi reports exactly three compact tools.
-- [ ] Device command path has no blocking ACK worker.
-- [ ] No normal device command uses `command_executor`.
-- [ ] No normal device command uses `command_dispatcher`.
-- [ ] No raw command appears in compact MCP schema/result/errors.
-- [ ] Durable disable/review behavior passes reboot/reconcile tests.
-- [ ] Memory results compared against Phase 0 baseline.
-- [ ] Service task stack headroom recorded and acceptable.
-- [ ] Hardware smoke sequence passes.
-- [ ] Any waiver has explicit owner/reason/follow-up.
+- [x] All Phase 0-11 tests pass.
+- [x] Compact clean build passes.
+- [x] Dynamic clean build passes.
+- [x] Xiaozhi reports exactly three compact tools.
+- [x] Device command path has no blocking ACK worker.
+- [x] No normal device command uses `command_executor`.
+- [x] No normal device command uses `command_dispatcher`.
+- [x] No raw command appears in compact MCP schema/result/errors.
+- [x] Durable disable/review behavior passes reboot/reconcile tests.
+- [x] Memory results compared against Phase 0 baseline.
+- [x] Service task stack headroom recorded and acceptable.
+- [x] Hardware smoke sequence passes.
+- [x] Any waiver has explicit owner/reason/follow-up.
 
 ---
 
