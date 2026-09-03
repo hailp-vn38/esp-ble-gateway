@@ -1246,7 +1246,7 @@ The MCP formatter consumes `device_command_result_t`; it never parses dispatcher
 
 ---
 
-## Phase 8 - Refactor MCP execution plan around local vs device service
+## Phase 8 - Refactor MCP execution plan around local vs device service ✅ DONE (2026-09-03)
 
 ### Files
 
@@ -1321,12 +1321,12 @@ Async MCP context stores:
 
 ### Checklist / Exit criteria
 
-- [ ] Routing is explicit.
-- [ ] No cJSON ownership crosses async service boundary.
-- [ ] Compact set uses device service.
-- [ ] Dynamic mode uses legacy-compatible formatter over typed result.
-- [ ] Notification semantics preserved.
-- [ ] Routing/error tests pass.
+- [x] Routing is explicit.
+- [x] No cJSON ownership crosses async service boundary.
+- [x] Compact set uses device service.
+- [x] Dynamic mode uses legacy-compatible formatter over typed result.
+- [x] Notification semantics preserved.
+- [x] Routing/error tests pass.
 
 ---
 

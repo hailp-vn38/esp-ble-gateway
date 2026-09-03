@@ -97,6 +97,16 @@ typedef struct {
 } mcp_request_context_t;
 
 // ---------------------------------------------------------------------------
+// Tool execution kind — explicit routing, no bool flags
+// ---------------------------------------------------------------------------
+
+typedef enum {
+    MCP_TOOL_EXEC_GATEWAY_SYNC = 0,   // gateway dispatcher (legacy sync)
+    MCP_TOOL_EXEC_LOCAL,              // describe/read (compact, local cache)
+    MCP_TOOL_EXEC_DEVICE_SERVICE,     // set commands (async via service)
+} mcp_tool_exec_kind_t;
+
+// ---------------------------------------------------------------------------
 // Error detail with owned data
 // ---------------------------------------------------------------------------
 
@@ -248,7 +258,7 @@ typedef enum {
 
 mcp_resolve_status_t mcp_tools_resolve(const cJSON *params,
                                        gw_message_t *msg,
-                                       bool *is_device_command,
+                                       mcp_tool_exec_kind_t *exec_kind,
                                        char *denial_text, size_t denial_len,
                                        mcp_rpc_error_t *error);
 

@@ -226,12 +226,12 @@ static mcp_resolve_status_t normalize_arguments(const cJSON *arguments,
 }
 
 mcp_resolve_status_t mcp_tools_resolve(const cJSON *params, gw_message_t *msg,
-                                       bool *is_device_command,
+                                       mcp_tool_exec_kind_t *exec_kind,
                                        char *denial_text, size_t denial_len,
                                        mcp_rpc_error_t *error)
 {
     memset(msg, 0, sizeof(*msg));
-    *is_device_command = false;
+    *exec_kind = MCP_TOOL_EXEC_GATEWAY_SYNC;
     denial_text[0] = '\0';
 
     if (!cJSON_IsObject(params)) {
@@ -262,7 +262,7 @@ mcp_resolve_status_t mcp_tools_resolve(const cJSON *params, gw_message_t *msg,
     // 1. Try static registry first (gateway commands only).
     const mcp_tool_desc_t *desc = mcp_registry_find(tool_name);
     if (desc != NULL) {
-        *is_device_command = false;
+        *exec_kind = MCP_TOOL_EXEC_GATEWAY_SYNC;
         return normalize_arguments(source, "gateway_command", tool_name, msg,
                                    error);
     }
@@ -329,7 +329,7 @@ mcp_resolve_status_t mcp_tools_resolve(const cJSON *params, gw_message_t *msg,
         }
 
         // Build gw_message_t directly from binding (§33 — no normalize_arguments).
-        *is_device_command = true;
+        *exec_kind = MCP_TOOL_EXEC_DEVICE_SERVICE;
         msg->protocol_version = GW_PROTOCOL_VERSION;
         strlcpy(msg->type, "device_command", sizeof(msg->type));
         strlcpy(msg->device_id, binding.device_id, sizeof(msg->device_id));

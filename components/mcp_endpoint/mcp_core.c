@@ -181,17 +181,17 @@ static esp_err_t handle_tools_call(const mcp_responder_t *responder,
 {
     const cJSON *params = cJSON_GetObjectItemCaseSensitive(root, "params");
     gw_message_t message = {0};
-    bool is_device_command = false;
+    mcp_tool_exec_kind_t exec_kind = MCP_TOOL_EXEC_GATEWAY_SYNC;
     char denial[96] = {0};
     mcp_rpc_error_t error = {0};
     mcp_resolve_status_t resolution =
-        mcp_tools_resolve(params, &message, &is_device_command, denial,
+        mcp_tools_resolve(params, &message, &exec_kind, denial,
                           sizeof(denial), &error);
     if (resolution == MCP_RESOLVE_INVALID) {
         return send_error(responder, error.code, error.message, id, NULL);
     }
 
-    if (is_device_command && resolution != MCP_RESOLVE_ALLOWLIST_DENIED) {
+    if (exec_kind == MCP_TOOL_EXEC_DEVICE_SERVICE && resolution != MCP_RESOLVE_ALLOWLIST_DENIED) {
         if (responder->clone == NULL) {
             return notification ? ESP_ERR_INVALID_STATE
                                 : send_error(responder, -32603,
