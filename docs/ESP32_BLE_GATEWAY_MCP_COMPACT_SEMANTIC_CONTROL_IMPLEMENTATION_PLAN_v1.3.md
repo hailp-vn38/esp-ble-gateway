@@ -824,7 +824,7 @@ device_command_service_on_disconnect(device_id);
 
 ---
 
-## Phase 3 - Migrate Web/MCP legacy device control and detach dispatcher
+## Phase 3 - Migrate Web/MCP legacy device control and detach dispatcher ✅ DONE (2026-09-03)
 
 ### Files
 
@@ -908,14 +908,14 @@ Do not delete the executor yet because gateway delete/edit flows may include NVS
 
 ### Checklist / Exit criteria
 
-- [ ] Web device control uses `device_command_service`.
-- [ ] Existing dynamic MCP device tools use `device_command_service`.
-- [ ] `command_dispatcher` is gateway-admin only.
-- [ ] `device_request_manager` has been removed or is no longer linked.
-- [ ] Device command path does not allocate `dispatch_result_t`.
-- [ ] Default executor worker count reduced to 1.
-- [ ] Gateway-admin behavior remains regression-tested.
-- [ ] Foundation branch is independently mergeable before MCP compact changes.
+- [x] Web device control uses `device_command_service`.
+- [x] Existing dynamic MCP device tools use `device_command_service`.
+- [x] `command_dispatcher` is gateway-admin only (device path removed).
+- [x] `device_request_manager` has been removed or is no longer linked.
+- [x] Device command path does not allocate `dispatch_result_t`.
+- [x] Default executor worker count reduced to 1.
+- [x] Gateway-admin behavior remains regression-tested.
+- [x] Foundation branch is independently mergeable before MCP compact changes.
 
 ---
 

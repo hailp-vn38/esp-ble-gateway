@@ -476,6 +476,62 @@ cJSON *mcp_tools_tool_error(const char *text, const mcp_request_context_t *ctx,
     return mcp_tools_format_dispatch(&synthetic, ctx, err);
 }
 
+cJSON *mcp_tools_format_device_result(const device_command_result_t *result,
+                                      const mcp_request_context_t *ctx,
+                                      mcp_rpc_error_t *err)
+{
+    bool ok = (result->status == DEVICE_CMD_STATUS_OK);
+
+    cJSON *out = cJSON_CreateObject();
+    if (out == NULL) {
+        *err = (mcp_rpc_error_t){-32603, "out of memory"};
+        return NULL;
+    }
+
+    cJSON *content = cJSON_CreateArray();
+    cJSON *item = cJSON_CreateObject();
+    if (content == NULL || item == NULL) {
+        cJSON_Delete(content);
+        cJSON_Delete(item);
+        cJSON_Delete(out);
+        *err = (mcp_rpc_error_t){-32603, "out of memory"};
+        return NULL;
+    }
+    cJSON_AddStringToObject(item, "type", "text");
+
+    /* Format result as JSON text */
+    cJSON *result_json = cJSON_CreateObject();
+    if (result_json != NULL) {
+        cJSON_AddBoolToObject(result_json, "success", ok);
+        cJSON_AddNumberToObject(result_json, "status", (int)result->status);
+        char *printed = cJSON_PrintUnformatted(result_json);
+        cJSON_Delete(result_json);
+        if (printed != NULL) {
+            cJSON_AddStringToObject(item, "text", printed);
+            cJSON_free(printed);
+        } else {
+            cJSON_AddStringToObject(item, "text", ok ? "{}" : "{\"error\":true}");
+        }
+    } else {
+        cJSON_AddStringToObject(item, "text", ok ? "{}" : "{\"error\":true}");
+    }
+
+    cJSON_AddItemToArray(content, item);
+    cJSON_AddItemToObject(out, "content", content);
+    cJSON_AddBoolToObject(out, "isError", !ok);
+
+    if (ctx->era == MCP_ERA_2026_07_28) {
+        cJSON_AddStringToObject(out, "resultType", "complete");
+        if (!mcp_result_add_server_info(out)) {
+            cJSON_Delete(out);
+            *err = (mcp_rpc_error_t){-32603, "out of memory"};
+            return NULL;
+        }
+    }
+
+    return out;
+}
+
 cJSON *mcp_tools_execute(const gw_message_t *msg,
                          const mcp_request_context_t *ctx,
                          mcp_rpc_error_t *error)

@@ -70,7 +70,7 @@ idf_component_register(
          "web_event_ws.c"
     INCLUDE_DIRS "include"
     REQUIRES esp_http_server cbor_codec command_dispatcher command_executor
-             device_store gateway_status wifi_provisioning
+             device_command_service device_store gateway_status wifi_provisioning
              ble_central device_schema device_template device_state
              mcp_tool_exposure mcp_ws_bridge gateway_events
              espressif__cjson esp_system esp_timer freertos

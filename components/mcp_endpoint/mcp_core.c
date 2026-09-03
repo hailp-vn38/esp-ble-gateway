@@ -5,6 +5,7 @@
 
 #include "cJSON.h"
 #include "command_executor.h"
+#include "device_command_service.h"
 #include "esp_log.h"
 
 #include "mcp_endpoint_internal.h"
@@ -151,14 +152,14 @@ static esp_err_t send_none(const mcp_responder_t *responder)
                : ESP_ERR_INVALID_STATE;
 }
 
-static void device_command_completion(const dispatch_result_t *result,
+static void device_command_completion(const device_command_result_t *result,
                                       void *arg)
 {
     mcp_async_context_t *context = arg;
     if (!context->notification && responder_alive(&context->responder)) {
         mcp_rpc_error_t error = {0};
         cJSON *payload =
-            mcp_tools_format_dispatch(result, &context->protocol, &error);
+            mcp_tools_format_device_result(result, &context->protocol, &error);
         if (payload != NULL) {
             send_result(&context->responder, payload, context->id);
         } else {
@@ -221,8 +222,31 @@ static esp_err_t handle_tools_call(const mcp_responder_t *responder,
                                              "Async unavailable", id,
                                              "503 Service Unavailable");
         }
-        esp_err_t submitted = command_executor_submit(
-            &message, device_command_completion, async);
+
+        /* Build typed service request from resolved message */
+        device_command_request_t svc_req = {0};
+        svc_req.origin = DEVICE_CMD_ORIGIN_CONTROL;
+        strlcpy(svc_req.device_id, message.device_id, sizeof(svc_req.device_id));
+        strlcpy(svc_req.command, message.command, sizeof(svc_req.command));
+        if (message.has_bool_value) {
+            svc_req.bool_value = message.bool_value != 0;
+            svc_req.has_bool_value = true;
+        }
+        if (message.has_int_value) {
+            svc_req.int_value = message.int_value;
+            svc_req.has_int_value = true;
+        }
+        if (message.has_feature_id) {
+            strlcpy(svc_req.feature_id, message.feature_id, sizeof(svc_req.feature_id));
+            svc_req.has_feature_id = true;
+        }
+        if (message.has_property_id) {
+            svc_req.property_id = message.property_id;
+            svc_req.has_property_id = true;
+        }
+
+        esp_err_t submitted = device_command_service_submit(
+            &svc_req, device_command_completion, async);
         if (submitted == ESP_OK) return ESP_OK;
 
         responder_release(&async->responder);
@@ -234,7 +258,7 @@ static esp_err_t handle_tools_call(const mcp_responder_t *responder,
                                                       : -32603,
                           submitted == ESP_ERR_NO_MEM
                               ? "Busy: command queue full"
-                              : "Executor unavailable",
+                              : "Service unavailable",
                           id, "503 Service Unavailable");
     }
 

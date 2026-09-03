@@ -12,6 +12,7 @@
 
 #include "cbor_codec.h"
 #include "command_dispatcher.h"
+#include "device_command_service.h"
 #include "device_store.h"
 #include "device_schema.h"
 #include "mcp_tool_exposure.h"
@@ -213,6 +214,9 @@ cJSON *mcp_tools_format_dispatch(const dispatch_result_t *result,
                                  mcp_rpc_error_t *err);
 cJSON *mcp_tools_tool_error(const char *text, const mcp_request_context_t *ctx,
                             mcp_rpc_error_t *err);
+cJSON *mcp_tools_format_device_result(const device_command_result_t *result,
+                                      const mcp_request_context_t *ctx,
+                                      mcp_rpc_error_t *err);
 
 typedef enum {
     MCP_RESOLVE_OK = 0,

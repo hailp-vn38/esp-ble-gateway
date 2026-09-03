@@ -6,12 +6,12 @@
 #include <string.h>
 
 #include "cJSON.h"
+#include "command_dispatcher.h"
+#include "command_executor.h"
+#include "device_command_service.h"
 #include "esp_log.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
-
-#include "command_dispatcher.h"
-#include "command_executor.h"
 #include "web_http.h"
 
 static const char *TAG = "web_command_api";
@@ -19,6 +19,96 @@ static const char *TAG = "web_command_api";
 typedef struct {
     httpd_req_t *request;
 } command_async_context_t;
+
+/* ── Device command path (new service) ───────────────────────────────── */
+
+static const char *device_status_http(const device_command_status_t status)
+{
+    switch (status) {
+    case DEVICE_CMD_STATUS_OK:               return "200 OK";
+    case DEVICE_CMD_STATUS_INVALID_ARGUMENT: return "400 Bad Request";
+    case DEVICE_CMD_STATUS_UNSUPPORTED_COMMAND: return "400 Bad Request";
+    case DEVICE_CMD_STATUS_BUSY:             return "409 Conflict";
+    case DEVICE_CMD_STATUS_NOT_CONNECTED:    return "502 Bad Gateway";
+    case DEVICE_CMD_STATUS_TRANSPORT_ERROR:  return "502 Bad Gateway";
+    case DEVICE_CMD_STATUS_TIMEOUT:          return "504 Gateway Timeout";
+    case DEVICE_CMD_STATUS_DEVICE_REJECTED:  return "502 Bad Gateway";
+    default:                                 return "500 Internal Server Error";
+    }
+}
+
+static const char *device_error_code(const device_command_status_t status)
+{
+    switch (status) {
+    case DEVICE_CMD_STATUS_INVALID_ARGUMENT: return "invalid_request";
+    case DEVICE_CMD_STATUS_UNSUPPORTED_COMMAND: return "unsupported_command";
+    case DEVICE_CMD_STATUS_BUSY:             return "device_busy";
+    case DEVICE_CMD_STATUS_NOT_CONNECTED:    return "device_not_connected";
+    case DEVICE_CMD_STATUS_TRANSPORT_ERROR:  return "transport_error";
+    case DEVICE_CMD_STATUS_TIMEOUT:          return "command_timeout";
+    case DEVICE_CMD_STATUS_DEVICE_REJECTED:  return "device_error";
+    default:                                 return "internal_error";
+    }
+}
+
+static void device_command_completion(const device_command_result_t *result,
+                                      void *arg)
+{
+    command_async_context_t *context = arg;
+
+    bool ok = (result->status == DEVICE_CMD_STATUS_OK);
+    if (!ok) {
+        httpd_resp_set_status(context->request,
+                              device_status_http(result->status));
+    }
+
+    cJSON *json = cJSON_CreateObject();
+    if (json != NULL) {
+        cJSON_AddBoolToObject(json, "success", ok);
+        cJSON_AddNumberToObject(json, "status", (int)result->status);
+        if (!ok) {
+            cJSON *error = cJSON_AddObjectToObject(json, "error");
+            if (error != NULL) {
+                cJSON_AddStringToObject(error, "code",
+                                        device_error_code(result->status));
+            }
+        }
+    }
+    web_send_json(context->request, json);
+
+    if (httpd_req_async_handler_complete(context->request) != ESP_OK) {
+        ESP_LOGW(TAG, "Could not complete asynchronous device command");
+    }
+    free(context);
+}
+
+static esp_err_t dispatch_device_command_async(httpd_req_t *request,
+                                               const device_command_request_t *req)
+{
+    command_async_context_t *context = malloc(sizeof(*context));
+    if (context == NULL) {
+        return web_send_api_error(request, "503 Service Unavailable",
+                                  "Could not allocate command context");
+    }
+
+    esp_err_t error = httpd_req_async_handler_begin(request, &context->request);
+    if (error != ESP_OK) {
+        free(context);
+        return web_send_api_error(request, "503 Service Unavailable",
+                                  "Could not start asynchronous dispatch");
+    }
+
+    if (device_command_service_submit(req, device_command_completion, context) !=
+        ESP_OK) {
+        web_send_api_error(context->request, "503 Service Unavailable",
+                           "Command service is full");
+        httpd_req_async_handler_complete(context->request);
+        free(context);
+    }
+    return ESP_OK;
+}
+
+/* ── Legacy gateway command path (executor) ──────────────────────────── */
 
 static const char *http_status_for(const dispatch_result_t *result)
 {
@@ -94,7 +184,8 @@ void web_send_dispatch_result(httpd_req_t *request,
     web_send_json(request, json);
 }
 
-static void command_completion(const dispatch_result_t *result, void *arg)
+static void gateway_command_completion(const dispatch_result_t *result,
+                                       void *arg)
 {
     command_async_context_t *context = arg;
     web_send_dispatch_result(context->request, result);
@@ -104,8 +195,8 @@ static void command_completion(const dispatch_result_t *result, void *arg)
     free(context);
 }
 
-static esp_err_t dispatch_message_async(httpd_req_t *request,
-                                        const gw_message_t *message)
+static esp_err_t dispatch_gateway_command_async(httpd_req_t *request,
+                                                const gw_message_t *message)
 {
     command_async_context_t *context = malloc(sizeof(*context));
     if (context == NULL) {
@@ -120,7 +211,7 @@ static esp_err_t dispatch_message_async(httpd_req_t *request,
                                   "Could not start asynchronous dispatch");
     }
 
-    if (command_executor_submit(message, command_completion, context) !=
+    if (command_executor_submit(message, gateway_command_completion, context) !=
         ESP_OK) {
         web_send_api_error(context->request, "503 Service Unavailable",
                            "Command executor is full");
@@ -151,13 +242,11 @@ static esp_err_t command_post_handler(httpd_req_t *request)
                                   "invalid_request");
     }
 
-    gw_message_t message = {
-        .protocol_version = GW_PROTOCOL_VERSION,
-        .has_device_id = true,
-    };
-    strlcpy(message.type, "device_command", sizeof(message.type));
-    strlcpy(message.device_id, device_id, sizeof(message.device_id));
-    strlcpy(message.command, command, sizeof(message.command));
+    /* Build typed service request */
+    device_command_request_t request_ctx = {0};
+    request_ctx.origin = DEVICE_CMD_ORIGIN_CONTROL;
+    strlcpy(request_ctx.device_id, device_id, sizeof(request_ctx.device_id));
+    strlcpy(request_ctx.command, command, sizeof(request_ctx.command));
 
     const cJSON *int_value = cJSON_GetObjectItemCaseSensitive(json, "int_value");
     if (int_value != NULL) {
@@ -168,8 +257,8 @@ static esp_err_t command_post_handler(httpd_req_t *request)
                                       "int_value must be an integer",
                                       "invalid_request");
         }
-        message.int_value = int_value->valueint;
-        message.has_int_value = true;
+        request_ctx.int_value = int_value->valueint;
+        request_ctx.has_int_value = true;
     }
 
     const cJSON *bool_value = cJSON_GetObjectItemCaseSensitive(json, "bool_value");
@@ -180,12 +269,12 @@ static esp_err_t command_post_handler(httpd_req_t *request)
                                       "bool_value must be boolean",
                                       "invalid_request");
         }
-        message.bool_value = cJSON_IsTrue(bool_value);
-        message.has_bool_value = true;
+        request_ctx.bool_value = cJSON_IsTrue(bool_value);
+        request_ctx.has_bool_value = true;
     }
     cJSON_Delete(json);
 
-    return dispatch_message_async(request, &message);
+    return dispatch_device_command_async(request, &request_ctx);
 }
 
 esp_err_t web_command_api_register(httpd_handle_t server)
