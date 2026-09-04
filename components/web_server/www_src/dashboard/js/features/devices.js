@@ -606,7 +606,7 @@ const devices = {
         container.replaceChildren();
         this.renderSchemaState('loading');
         this.renderFeaturesLoading(container);
-        if (!syncMcpAfterLoad) void mcpTools.loadDevice(device.id);
+        if (!syncMcpAfterLoad) void mcpControls.loadDevice(device.id);
         try {
             const result = await api.getDeviceSchemaSnapshot(device.id);
             const snapshot = result.schema;
@@ -620,7 +620,7 @@ const devices = {
             this.renderFeatures(features, tools, device);
             // Reconcile cached feature events newer than schema snapshot cursor
             this._reconcileFeatureCacheAfterSnapshot(device.id, result.eventSeq);
-            if (syncMcpAfterLoad) await mcpTools.loadDevice(device.id);
+            if (syncMcpAfterLoad) await mcpControls.loadDevice(device.id);
             return true;
         } catch (error) {
             if (loadId !== this.schemaLoadId ||
@@ -849,7 +849,7 @@ const devices = {
         const device = state.connectedDevices.find(dev => dev.id === deviceId);
         const name = device?.customName || deviceId;
         let message = i18n.t('device_detail.remove_confirm').replace('{name}', name);
-        if ((mcpTools.enabledByDevice.get(deviceId) || 0) > 0) {
+        if (mcpControls.enabledByDevice?.get(deviceId) > 0) {
             message += `\n\n${i18n.t('device_detail.remove_mcp_warning')}`;
         }
         if(!confirm(message)) return;

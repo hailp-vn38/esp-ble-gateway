@@ -1,5 +1,5 @@
-// --- MCP Tools Logic ---
-const mcpTools = {
+// --- MCP feature permission controls ---
+const mcpControls = {
     loadId: 0,
     enabledByDevice: new Map(),
 
@@ -7,9 +7,8 @@ const mcpTools = {
         return api.request(`/api/mcp/exposures?device_id=${encodeURIComponent(deviceId)}`);
     },
 
-    async toggleExposure(deviceId, command, enable) {
-        const payload = {device_id: deviceId, command, enabled: enable};
-        if (enable) payload.confirm_destructive = true;
+    async toggleExposure(deviceId, featureId, enable) {
+        const payload = {device_id: deviceId, feature_id: featureId, enabled: enable};
         return api.request('/api/mcp/exposures', {
             method: 'PUT',
             headers: {'Content-Type': 'application/json'},
@@ -17,8 +16,8 @@ const mcpTools = {
         });
     },
 
-    renderExposureRow(deviceId, command) {
-        const enabled = command.state === 'enabled';
+    renderExposureRow(deviceId, feature) {
+        const enabled = feature.control_enabled === true && feature.health === 'enabled';
         const row = document.createElement('div');
         row.className = 'flex flex-col sm:flex-row sm:items-center justify-between gap-4 p-5';
 
@@ -28,35 +27,21 @@ const mcpTools = {
         heading.className = 'flex flex-wrap items-center gap-2';
         const label = document.createElement('h4');
         label.className = 'text-sm font-semibold text-gray-800 break-words';
-        label.textContent = command.label || command.command;
+        label.textContent = feature.semantic_name || feature.feature_id;
         heading.appendChild(label);
-        if (command.semantic_name) {
+        if (feature.semantic_name) {
             const badge = document.createElement('span');
             badge.className = 'inline-flex rounded-full bg-blue-100 px-2 py-0.5 text-xs font-semibold text-blue-700';
-            badge.textContent = command.semantic_name;
+            badge.textContent = feature.property || feature.value_type || 'feature';
             heading.appendChild(badge);
         }
-        if (command.feature_bound) {
-            const fb = document.createElement('span');
-            fb.className = 'inline-flex rounded-full bg-green-100 px-2 py-0.5 text-xs font-semibold text-green-700';
-            fb.textContent = i18n.t('device_detail.mcp_feature_bound');
-            heading.appendChild(fb);
-        }
-        if (command.destructive) {
-            const badge = document.createElement('span');
-            badge.className = 'inline-flex rounded-full bg-red-100 px-2 py-0.5 text-xs font-semibold text-red-700';
-            badge.textContent = `⚠ ${i18n.t('device_detail.destructive')}`;
-            heading.appendChild(badge);
-        }
-        const toolName = document.createElement('p');
-        toolName.className = 'mt-1 text-xs font-mono text-gray-600 break-all';
-        toolName.textContent = command.tool_name || command.command;
+        const featureId = document.createElement('p');
+        featureId.className = 'mt-1 text-xs font-mono text-gray-600 break-all';
+        featureId.textContent = feature.feature_id;
         const description = document.createElement('p');
         description.className = 'mt-1 text-xs text-gray-500';
-        description.textContent = command.semantic_name
-            ? i18n.t('device_detail.mcp_row_semantic_desc')
-            : i18n.t('device_detail.mcp_row_desc');
-        identity.append(heading, toolName, description);
+        description.textContent = i18n.t('device_detail.mcp_row_desc');
+        identity.append(heading, featureId, description);
 
         const control = document.createElement('div');
         control.className = 'flex items-center justify-between sm:justify-end gap-3 flex-shrink-0';
@@ -70,48 +55,34 @@ const mcpTools = {
         input.checked = enabled;
         input.setAttribute('role', 'switch');
         input.setAttribute('aria-checked', String(enabled));
-        input.setAttribute('aria-label', `${command.label || command.command}: ${stateLabel.textContent}`);
+        input.setAttribute('aria-label', `${feature.semantic_name || feature.feature_id}: ${stateLabel.textContent}`);
         const track = document.createElement('span');
         track.className = 'settings-switch-track';
-        input.onchange = () => this.onToggle(deviceId, command, input, stateLabel);
+        input.onchange = () => this.onToggle(deviceId, feature, input, stateLabel);
         switchLabel.append(input, track);
         control.append(stateLabel, switchLabel);
         row.append(identity, control);
         return row;
     },
 
-    renderCapacity(deviceId, capacity) {
-        const used = capacity.enabled || 0;
-        const max = capacity.max_enabled || 32;
-        this.enabledByDevice.set(deviceId, used);
-        const element = document.getElementById('mcp-capacity-text');
-        element.textContent = i18n.t('device_detail.mcp_capacity')
-            .replace('{used}', used).replace('{max}', max);
-        const ratio = max > 0 ? used / max : 1;
-        element.className = `mcp-capacity text-xs font-mono ${ratio >= 1 ? 'text-red-600 font-semibold' : (ratio >= 0.8 ? 'text-amber-600 font-semibold' : 'text-gray-500')}`;
-    },
-
     async loadDevice(deviceId) {
         const requestId = ++this.loadId;
-        const rows = document.getElementById('mcp-tool-rows');
-        const capacityText = document.getElementById('mcp-capacity-text');
+        const rows = document.getElementById('mcp-feature-controls');
         rows.innerHTML = `<div class="p-5 text-sm text-gray-400"><i class="ph ph-spinner animate-spin mr-2"></i>${i18n.t('device_detail.mcp_loading')}</div>`;
-        capacityText.textContent = '';
 
         try {
             const data = await this.loadExposures(deviceId);
             if (requestId !== this.loadId || state.selectedDeviceDetail?.id !== deviceId) return;
-            this.renderCapacity(deviceId, data.capacity || {});
             rows.replaceChildren();
-            const commands = Array.isArray(data.commands) ? data.commands : [];
-            if (!commands.length) {
+            const features = Array.isArray(data.features) ? data.features : [];
+            if (!features.length) {
                 const empty = document.createElement('div');
                 empty.className = 'p-5 text-sm text-gray-500';
                 empty.textContent = i18n.t('device_detail.mcp_empty');
                 rows.appendChild(empty);
                 return;
             }
-            commands.forEach(command => rows.appendChild(this.renderExposureRow(deviceId, command)));
+            features.forEach(feature => rows.appendChild(this.renderExposureRow(deviceId, feature)));
         } catch (error) {
             if (requestId !== this.loadId || state.selectedDeviceDetail?.id !== deviceId) return;
             rows.replaceChildren();
@@ -131,20 +102,13 @@ const mcpTools = {
         }
     },
 
-    async onToggle(deviceId, command, input, stateLabel) {
-        const enabled = command.state === 'enabled';
-        if (!enabled && command.destructive &&
-            !confirm(i18n.t('device_detail.mcp_destructive_confirm')
-                .replace('{name}', command.label || command.command))) {
-            input.checked = false;
-            input.setAttribute('aria-checked', 'false');
-            return;
-        }
-
+    async onToggle(deviceId, feature, input, stateLabel) {
+        const enabled = feature.control_enabled === true && feature.health === 'enabled';
         input.disabled = true;
         try {
-            await this.toggleExposure(deviceId, command.command, !enabled);
-            command.state = enabled ? 'disabled' : 'enabled';
+            await this.toggleExposure(deviceId, feature.feature_id, !enabled);
+            feature.control_enabled = !enabled;
+            feature.health = !enabled ? 'enabled' : 'orphaned';
             input.checked = !enabled;
             input.setAttribute('aria-checked', String(!enabled));
             stateLabel.textContent = i18n.t(!enabled ? 'device_detail.mcp_enabled' : 'device_detail.mcp_disabled');
@@ -156,7 +120,6 @@ const mcpTools = {
             ui.showToast(error.message, 'error');
         } finally {
             input.disabled = false;
-            if (state.selectedDeviceDetail?.id === deviceId) void this.loadDevice(deviceId);
         }
     }
 };

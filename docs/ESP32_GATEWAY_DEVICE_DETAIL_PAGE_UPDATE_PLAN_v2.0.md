@@ -753,7 +753,7 @@ success == true
 
 ---
 
-# 10. Phase 1 — Fix MCP UI contract immediately
+# 10. Phase 1 — Fix MCP UI contract immediately ✅ DONE (2026-09-04)
 
 This phase fixes the broken UI using the backend that already exists.
 
@@ -954,12 +954,12 @@ tool_name
 
 ## Checklist
 
-- [ ] `data.commands` removed.
-- [ ] Toggle sends `feature_id`.
-- [ ] MCP rows display semantic features.
-- [ ] Capacity UI removed.
-- [ ] Raw commands are not shown in MCP UI.
-- [ ] Page MCP section works before the single-snapshot migration.
+- [x] `data.commands` removed.
+- [x] Toggle sends `feature_id`.
+- [x] MCP rows display semantic features.
+- [x] Capacity UI removed.
+- [x] Raw commands are not shown in MCP UI.
+- [x] Page MCP section works before the single-snapshot migration. (Static assemble/syntax validation passed; live browser validation unavailable.)
 
 ---
 
