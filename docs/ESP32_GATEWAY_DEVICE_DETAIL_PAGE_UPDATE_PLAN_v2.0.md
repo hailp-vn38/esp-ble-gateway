@@ -1748,7 +1748,7 @@ if no longer used elsewhere.
 
 ---
 
-# 18. Phase 9 — Fix WebSocket / resync ownership
+# 18. Phase 9 — Fix WebSocket / resync ownership ✅ DONE (2026-09-04)
 
 ## File
 
@@ -1862,11 +1862,14 @@ Do not additionally request:
 
 ## Checklist
 
-- [ ] Feature delta = zero REST.
-- [ ] Connection delta = zero REST.
-- [ ] Schema structural event = one coalesced detail GET.
-- [ ] Global resync = inventory + optional one detail GET.
-- [ ] No independent MCP reload owner.
+- [x] Feature delta = zero REST.
+- [x] Connection delta = zero REST.
+- [x] Schema structural event = one coalesced detail GET.
+- [x] Global resync = inventory + optional one detail GET.
+- [x] No independent MCP reload owner.
+
+> Validation: dashboard assemble and JavaScript syntax validation passed. Live
+> event/request-count verification is unverified without a browser session.
 
 ---
 

@@ -9,6 +9,8 @@ const devices = {
     _syncPromise: null,
     _syncRequested: false,
     _pendingSchemaRefresh: null,
+    detailLoadPromise: null,
+    detailReloadRequested: false,
 
     _initEvents() {
         if (this._eventsInitialized) return;
@@ -67,29 +69,11 @@ const devices = {
                 const selectedId = state.selectedDeviceDetail?.id ?? null;
 
                 const snapshot = await api.getDevicesSnapshot();
-                let schemaSnapshot = null;
-                if (selectedId) {
-                    try {
-                        schemaSnapshot = await api.getDeviceSchemaSnapshot(selectedId);
-                    } catch (_) {
-                        schemaSnapshot = null;
-                    }
-                }
-
                 this._applyDeviceSnapshot(snapshot.devices);
-
-                if (schemaSnapshot &&
-                    state.selectedDeviceDetail?.id === selectedId) {
-                    this._applySchemaSnapshot(schemaSnapshot.schema);
+                events.goLive(snapshot.eventSeq);
+                if (selectedId && state.selectedDeviceDetail?.id === selectedId) {
+                    await this._reloadDetailCoalesced(reason);
                 }
-
-                const schemaSeq = schemaSnapshot?.eventSeq ?? 0;
-                const baseSeq = snapshot.eventSeq > schemaSeq
-                    ? snapshot.eventSeq : schemaSeq;
-                events.goLive(baseSeq);
-
-                this._reconcileFeatureCacheAfterSnapshot(
-                    selectedId, schemaSnapshot?.eventSeq ?? 0);
 
                 ui.setRealtimeBanner('hide');
             } catch (e) {
@@ -259,7 +243,7 @@ const devices = {
         if (state.selectedDeviceDetail.id !== ev.deviceId) return;
 
         // Schema changed for selected device — reload schema once
-        this.loadDetail(state.selectedDeviceDetail);
+        void this._reloadDetailCoalesced('schema');
     },
 
     _scheduleDeviceResync() {
@@ -294,23 +278,11 @@ const devices = {
         try {
             const selectedId = state.selectedDeviceDetail?.id ?? null;
             const snapshot = await api.getDevicesSnapshot();
-            let schemaSnapshot = null;
-            if (selectedId) {
-                try {
-                    schemaSnapshot = await api.getDeviceSchemaSnapshot(selectedId);
-                } catch (_) {
-                    schemaSnapshot = null;
-                }
-            }
             this._applyDeviceSnapshot(snapshot.devices);
-            if (schemaSnapshot &&
-                state.selectedDeviceDetail?.id === selectedId) {
-                this._applySchemaSnapshot(schemaSnapshot.schema);
+            events.goLive(snapshot.eventSeq);
+            if (selectedId && state.selectedDeviceDetail?.id === selectedId) {
+                await this._reloadDetailCoalesced('initial');
             }
-            const schemaSeq = schemaSnapshot?.eventSeq ?? 0;
-            const baseSeq = snapshot.eventSeq > schemaSeq
-                ? snapshot.eventSeq : schemaSeq;
-            events.goLive(baseSeq);
             return true;
         } catch(e) {
             // REST snapshot failed — will retry on ws:connected
@@ -409,7 +381,28 @@ const devices = {
 
         i18n.applyTranslations();
         nav.switchTab('device-detail', updateRoute);
-        this.loadDetail(dev);
+        void this._reloadDetailCoalesced('open');
+    },
+
+    async _reloadDetailCoalesced(reason) {
+        const device = state.selectedDeviceDetail;
+        if (!device) return false;
+        if (this.detailLoadPromise) {
+            this.detailReloadRequested = true;
+            return this.detailLoadPromise;
+        }
+        this.detailReloadRequested = false;
+        const promise = this.loadDetail(device);
+        this.detailLoadPromise = promise;
+        try {
+            return await promise;
+        } finally {
+            this.detailLoadPromise = null;
+            if (this.detailReloadRequested && state.selectedDeviceDetail) {
+                this.detailReloadRequested = false;
+                void this._reloadDetailCoalesced(`${reason}:queued`);
+            }
+        }
     },
 
     renderConnectionState(device) {
