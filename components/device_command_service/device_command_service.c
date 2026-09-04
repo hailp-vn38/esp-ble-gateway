@@ -49,6 +49,7 @@ esp_err_t device_command_service_init(void)
         return ESP_ERR_NO_MEM;
     }
     g_dcs.running = true;
+    g_dcs.task_stopped = false;
     BaseType_t created = xTaskCreate(dcs_service_task, "dev_cmd_svc",
                                      DCS_TASK_STACK, NULL,
                                      DCS_TASK_PRIORITY, &g_dcs.task);
@@ -70,7 +71,7 @@ void device_command_service_deinit(void)
     dcs_event_t shutdown = { .type = DCS_EVENT_SHUTDOWN };
     xQueueSend(g_dcs.queue, &shutdown, pdMS_TO_TICKS(100));
     for (int wait_ms = 0;
-         wait_ms < DCS_DEINIT_WAIT_BUDGET_MS && g_dcs.running;
+         wait_ms < DCS_DEINIT_WAIT_BUDGET_MS && !g_dcs.task_stopped;
          wait_ms += 10) {
         vTaskDelay(pdMS_TO_TICKS(10));
     }
@@ -108,7 +109,8 @@ bool device_command_service_on_notify(const char *device_id,
 {
     if (device_id == NULL || message == NULL ||
         strcmp(message->type, "device_ack") != 0 ||
-        !message->has_request_id || message->request_id == 0) {
+        !message->has_request_id || message->request_id == 0 ||
+        g_dcs.queue == NULL || !g_dcs.running) {
         return false;
     }
     dcs_event_t event = { .type = DCS_EVENT_ACK };
@@ -123,13 +125,28 @@ bool device_command_service_on_notify(const char *device_id,
 
 void device_command_service_on_disconnect(const char *device_id)
 {
-    if (device_id == NULL) {
+    if (device_id == NULL || device_id[0] == '\0' ||
+        g_dcs.queue == NULL || !g_dcs.running) {
         return;
     }
     dcs_event_t event = { .type = DCS_EVENT_DISCONNECT };
     strlcpy(event.disconnect_device_id, device_id,
             sizeof(event.disconnect_device_id));
     xQueueSend(g_dcs.queue, &event, pdMS_TO_TICKS(100));
+}
+
+esp_err_t device_command_service_cancel_device(const char *device_id)
+{
+    if (device_id == NULL || device_id[0] == '\0') {
+        return ESP_ERR_INVALID_ARG;
+    }
+    if (g_dcs.queue == NULL || !g_dcs.running) {
+        return ESP_ERR_INVALID_STATE;
+    }
+    dcs_event_t event = { .type = DCS_EVENT_CANCEL };
+    strlcpy(event.cancel_device_id, device_id, sizeof(event.cancel_device_id));
+    return xQueueSend(g_dcs.queue, &event, 0) == pdTRUE
+               ? ESP_OK : ESP_ERR_NO_MEM;
 }
 
 void device_command_service_get_stats(device_command_service_stats_t *out)

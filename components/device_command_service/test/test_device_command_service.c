@@ -1,4 +1,5 @@
 #include "device_command_service.h"
+#include "device_command_service_internal.h"
 
 #include <string.h>
 
@@ -16,10 +17,12 @@ static int mock_send_rc = 0;
 static int mock_connected = 1;
 static gw_message_t last_sent_message;
 static bool send_called = false;
+static uint32_t send_count = 0;
 
 static int mock_send_command(const char *device_id, const gw_message_t *msg)
 {
     send_called = true;
+    send_count++;
     strlcpy(last_sent_message.device_id, device_id,
             sizeof(last_sent_message.device_id));
     last_sent_message = *msg;
@@ -50,8 +53,11 @@ static esp_err_t schema_submitter(const gw_message_t *message,
     return ESP_OK;
 }
 
-static void seed_schema(const char *device_id, const char *command,
-                        uint32_t snapshot_id)
+static void seed_typed_schema(const char *device_id, const char *command,
+                              uint32_t snapshot_id, uint8_t value_type,
+                              int32_t min_value, int32_t max_value,
+                              uint32_t step, const char *feature_id,
+                              uint8_t property_id)
 {
     device_store_add(device_id, device_id);
     schema_done = NULL;
@@ -67,7 +73,7 @@ static void seed_schema(const char *device_id, const char *command,
     begin.has_feature_total = begin.has_capability_revision = 1;
     begin.snapshot_id = snapshot_id;
     begin.total = 1;
-    begin.feature_total = 0;
+    begin.feature_total = feature_id != NULL ? 1 : 0;
     begin.capability_revision = 1;
     TEST_ASSERT_TRUE(device_schema_on_notify(device_id, &begin));
 
@@ -81,8 +87,32 @@ static void seed_schema(const char *device_id, const char *command,
     item.has_value_type = item.has_capability_flags = 1;
     item.snapshot_id = snapshot_id;
     item.sequence = 0;
-    item.value_type = 1; /* BOOL */
+    item.value_type = value_type;
+    if (value_type == 2) {
+        item.has_min_value = item.has_max_value = item.has_step = 1;
+        item.min_value = min_value;
+        item.max_value = max_value;
+        item.step = step;
+    }
     TEST_ASSERT_TRUE(device_schema_on_notify(device_id, &item));
+
+    if (feature_id != NULL) {
+        gw_message_t feature = {0};
+        feature.protocol_version = GW_PROTOCOL_VERSION;
+        strlcpy(feature.type, "feature_item", sizeof(feature.type));
+        strlcpy(feature.device_id, device_id, sizeof(feature.device_id));
+        strlcpy(feature.feature_id, feature_id, sizeof(feature.feature_id));
+        strlcpy(feature.feature_tool, command, sizeof(feature.feature_tool));
+        feature.has_device_id = feature.has_snapshot_id = 1;
+        feature.has_sequence = feature.has_feature_id = 1;
+        feature.has_feature_type = feature.has_property_id = 1;
+        feature.has_feature_tool = 1;
+        feature.snapshot_id = snapshot_id;
+        feature.sequence = 1;
+        feature.feature_type = GW_FEATURE_GENERIC_RELAY;
+        feature.property_id = property_id;
+        TEST_ASSERT_TRUE(device_schema_on_notify(device_id, &feature));
+    }
 
     gw_message_t end = {0};
     end.protocol_version = GW_PROTOCOL_VERSION;
@@ -98,16 +128,25 @@ static void seed_schema(const char *device_id, const char *command,
     vTaskDelay(pdMS_TO_TICKS(50));
 }
 
+static void seed_schema(const char *device_id, const char *command,
+                        uint32_t snapshot_id)
+{
+    seed_typed_schema(device_id, command, snapshot_id, 1, 0, 0, 0,
+                      NULL, 0);
+}
+
 /* ── Completion tracking ─────────────────────────────────────────────── */
 
 static device_command_result_t last_result;
 static bool completion_called = false;
+static uint32_t completion_count = 0;
 static void *last_completion_context = NULL;
 
 static void test_completion(const device_command_result_t *result, void *ctx)
 {
     last_result = *result;
     completion_called = true;
+    completion_count++;
     last_completion_context = ctx;
 }
 
@@ -118,7 +157,9 @@ static void reset_test_state(void)
     mock_send_rc = 0;
     mock_connected = 1;
     send_called = false;
+    send_count = 0;
     completion_called = false;
+    completion_count = 0;
     last_completion_context = NULL;
     memset(&last_result, 0, sizeof(last_result));
     memset(&last_sent_message, 0, sizeof(last_sent_message));
@@ -137,6 +178,27 @@ static device_command_request_t make_control_request(const char *device_id,
     strlcpy(req.device_id, device_id, sizeof(req.device_id));
     strlcpy(req.command, command, sizeof(req.command));
     return req;
+}
+
+static void wait_for_completion(void)
+{
+    for (int i = 0; i < 20 && !completion_called; i++) {
+        vTaskDelay(pdMS_TO_TICKS(10));
+    }
+}
+
+static gw_message_t make_ack(const char *device_id, const char *command,
+                             uint32_t request_id, bool accepted)
+{
+    gw_message_t ack = {0};
+    strlcpy(ack.type, "device_ack", sizeof(ack.type));
+    strlcpy(ack.device_id, device_id, sizeof(ack.device_id));
+    strlcpy(ack.command, command, sizeof(ack.command));
+    ack.request_id = request_id;
+    ack.has_request_id = 1;
+    ack.bool_value = accepted ? 1 : 0;
+    ack.has_device_id = 1;
+    return ack;
 }
 
 /* ── Tests ───────────────────────────────────────────────────────────── */
@@ -174,6 +236,132 @@ TEST_CASE("null completion rejected", "[device_command_service]")
     esp_err_t err = device_command_service_submit(&req, NULL, NULL);
     TEST_ASSERT_EQUAL(ESP_ERR_INVALID_ARG, err);
 
+    device_command_service_deinit();
+}
+
+TEST_CASE("control rejects unadvertised command without BLE send",
+          "[device_command_service][phase2]")
+{
+    reset_test_state();
+    device_command_service_set_hooks(&mock_hooks);
+    TEST_ASSERT_EQUAL(ESP_OK, device_command_service_init());
+    device_command_request_t req = make_control_request("dev1", "raw_command");
+    req.has_bool_value = true;
+    TEST_ASSERT_EQUAL(ESP_OK, device_command_service_submit(
+                                  &req, test_completion, NULL));
+    wait_for_completion();
+    TEST_ASSERT_EQUAL(DEVICE_CMD_STATUS_UNSUPPORTED_COMMAND,
+                      last_result.status);
+    TEST_ASSERT_EQUAL_UINT32(0, send_count);
+    device_command_service_deinit();
+}
+
+TEST_CASE("control distinguishes schema not ready",
+          "[device_command_service][phase2]")
+{
+    reset_test_state();
+    device_command_service_set_hooks(&mock_hooks);
+    TEST_ASSERT_EQUAL(ESP_OK, device_command_service_init());
+    device_command_request_t req = make_control_request("unknown", "set_led");
+    req.has_bool_value = true;
+    TEST_ASSERT_EQUAL(ESP_OK, device_command_service_submit(
+                                  &req, test_completion, NULL));
+    wait_for_completion();
+    TEST_ASSERT_EQUAL(DEVICE_CMD_STATUS_SCHEMA_NOT_READY, last_result.status);
+    TEST_ASSERT_EQUAL_UINT32(0, send_count);
+    device_command_service_deinit();
+}
+
+TEST_CASE("control rejects wrong value type without BLE send",
+          "[device_command_service][phase2]")
+{
+    reset_test_state();
+    device_command_service_set_hooks(&mock_hooks);
+    TEST_ASSERT_EQUAL(ESP_OK, device_command_service_init());
+    device_command_request_t req = make_control_request("dev1", "set_led");
+    req.has_int_value = true;
+    req.int_value = 1;
+    TEST_ASSERT_EQUAL(ESP_OK, device_command_service_submit(
+                                  &req, test_completion, NULL));
+    wait_for_completion();
+    TEST_ASSERT_EQUAL(DEVICE_CMD_STATUS_TYPE_MISMATCH, last_result.status);
+    TEST_ASSERT_EQUAL_UINT32(0, send_count);
+    device_command_service_deinit();
+}
+
+static void assert_int_validation(int32_t value,
+                                  device_command_status_t expected_status,
+                                  uint32_t expected_sends)
+{
+    device_command_service_set_hooks(&mock_hooks);
+    TEST_ASSERT_EQUAL(ESP_OK, device_command_service_init());
+    device_command_request_t req = make_control_request("dev-int", "set_level");
+    req.has_int_value = true;
+    req.int_value = value;
+    TEST_ASSERT_EQUAL(ESP_OK, device_command_service_submit(
+                                  &req, test_completion, NULL));
+    if (expected_status == DEVICE_CMD_STATUS_OK) {
+        for (int i = 0; i < 20 && send_count == 0; i++) {
+            vTaskDelay(pdMS_TO_TICKS(10));
+        }
+        TEST_ASSERT_EQUAL_UINT32(expected_sends, send_count);
+    } else {
+        wait_for_completion();
+        TEST_ASSERT_EQUAL(expected_status, last_result.status);
+        TEST_ASSERT_EQUAL_UINT32(expected_sends, send_count);
+    }
+    device_command_service_deinit();
+}
+
+TEST_CASE("control enforces integer range and step",
+          "[device_command_service][phase2]")
+{
+    reset_test_state();
+    seed_typed_schema("dev-int", "set_level", 103, 2, 10, 100, 5,
+                      NULL, 0);
+    assert_int_validation(5, DEVICE_CMD_STATUS_RANGE_ERROR, 0);
+
+    completion_called = false; completion_count = 0; send_count = 0;
+    assert_int_validation(105, DEVICE_CMD_STATUS_RANGE_ERROR, 0);
+
+    completion_called = false; completion_count = 0; send_count = 0;
+    assert_int_validation(12, DEVICE_CMD_STATUS_RANGE_ERROR, 0);
+
+    completion_called = false; completion_count = 0; send_count = 0;
+    assert_int_validation(55, DEVICE_CMD_STATUS_OK, 1);
+}
+
+TEST_CASE("control validates semantic feature and property mapping",
+          "[device_command_service][phase2]")
+{
+    reset_test_state();
+    seed_typed_schema("dev-feature", "set_relay", 104, 1, 0, 0, 0,
+                      "relay_1", GW_PROP_ON_OFF);
+    device_command_service_set_hooks(&mock_hooks);
+    TEST_ASSERT_EQUAL(ESP_OK, device_command_service_init());
+
+    device_command_request_t invalid =
+        make_control_request("dev-feature", "set_relay");
+    invalid.has_bool_value = true;
+    invalid.has_feature_id = true;
+    strlcpy(invalid.feature_id, "relay_1", sizeof(invalid.feature_id));
+    invalid.has_property_id = true;
+    invalid.property_id = GW_PROP_LEVEL;
+    TEST_ASSERT_EQUAL(ESP_OK, device_command_service_submit(
+                                  &invalid, test_completion, NULL));
+    wait_for_completion();
+    TEST_ASSERT_EQUAL(DEVICE_CMD_STATUS_INVALID_ARGUMENT, last_result.status);
+    TEST_ASSERT_EQUAL_UINT32(0, send_count);
+    device_command_service_deinit();
+
+    completion_called = false; completion_count = 0; send_count = 0;
+    device_command_service_set_hooks(&mock_hooks);
+    TEST_ASSERT_EQUAL(ESP_OK, device_command_service_init());
+    invalid.property_id = GW_PROP_ON_OFF;
+    TEST_ASSERT_EQUAL(ESP_OK, device_command_service_submit(
+                                  &invalid, test_completion, NULL));
+    vTaskDelay(pdMS_TO_TICKS(30));
+    TEST_ASSERT_EQUAL_UINT32(1, send_count);
     device_command_service_deinit();
 }
 
@@ -217,6 +405,47 @@ TEST_CASE("origin state read requires feature_id", "[device_command_service]")
     TEST_ASSERT_TRUE(completion_called);
     TEST_ASSERT_EQUAL(DEVICE_CMD_STATUS_INVALID_ARGUMENT, last_result.status);
 
+    device_command_service_deinit();
+}
+
+TEST_CASE("origin state read requires property_id",
+          "[device_command_service][phase2]")
+{
+    reset_test_state();
+    device_command_service_set_hooks(&mock_hooks);
+    TEST_ASSERT_EQUAL(ESP_OK, device_command_service_init());
+    device_command_request_t req = {0};
+    req.origin = DEVICE_CMD_ORIGIN_STATE_READ;
+    strlcpy(req.device_id, "dev1", sizeof(req.device_id));
+    strlcpy(req.command, "read_feature_state", sizeof(req.command));
+    req.has_feature_id = true;
+    strlcpy(req.feature_id, "relay_1", sizeof(req.feature_id));
+    TEST_ASSERT_EQUAL(ESP_OK, device_command_service_submit(
+                                  &req, test_completion, NULL));
+    wait_for_completion();
+    TEST_ASSERT_EQUAL(DEVICE_CMD_STATUS_INVALID_ARGUMENT, last_result.status);
+    TEST_ASSERT_EQUAL_UINT32(0, send_count);
+    device_command_service_deinit();
+}
+
+TEST_CASE("valid state read reaches BLE transport",
+          "[device_command_service][phase2]")
+{
+    reset_test_state();
+    device_command_service_set_hooks(&mock_hooks);
+    TEST_ASSERT_EQUAL(ESP_OK, device_command_service_init());
+    device_command_request_t req = {0};
+    req.origin = DEVICE_CMD_ORIGIN_STATE_READ;
+    strlcpy(req.device_id, "dev1", sizeof(req.device_id));
+    strlcpy(req.command, "read_feature_state", sizeof(req.command));
+    req.has_feature_id = true;
+    strlcpy(req.feature_id, "relay_1", sizeof(req.feature_id));
+    req.has_property_id = true;
+    req.property_id = GW_PROP_ON_OFF;
+    TEST_ASSERT_EQUAL(ESP_OK, device_command_service_submit(
+                                  &req, test_completion, NULL));
+    vTaskDelay(pdMS_TO_TICKS(30));
+    TEST_ASSERT_EQUAL_UINT32(1, send_count);
     device_command_service_deinit();
 }
 
@@ -276,6 +505,66 @@ TEST_CASE("different devices can be pending concurrently", "[device_command_serv
     device_command_service_deinit();
 }
 
+TEST_CASE("pending table capacity fails with typed queue full status",
+          "[device_command_service][phase2]")
+{
+    reset_test_state();
+    seed_schema("dev3", "set_value", 103);
+    seed_schema("dev4", "set_value", 104);
+    seed_schema("dev5", "set_value", 105);
+    device_command_service_set_hooks(&mock_hooks);
+    TEST_ASSERT_EQUAL(ESP_OK, device_command_service_init());
+
+    const char *ids[] = {"dev1", "dev2", "dev3", "dev4"};
+    const char *commands[] = {"set_led", "set_fan", "set_value", "set_value"};
+    for (size_t i = 0; i < 4; i++) {
+        device_command_request_t req = make_control_request(ids[i], commands[i]);
+        req.has_bool_value = true;
+        TEST_ASSERT_EQUAL(ESP_OK, device_command_service_submit(
+                                      &req, test_completion, NULL));
+    }
+    vTaskDelay(pdMS_TO_TICKS(50));
+    TEST_ASSERT_EQUAL_UINT32(4, device_command_service_get_pending_count());
+
+    completion_called = false;
+    completion_count = 0;
+    device_command_request_t overflow =
+        make_control_request("dev5", "set_value");
+    overflow.has_bool_value = true;
+    TEST_ASSERT_EQUAL(ESP_OK, device_command_service_submit(
+                                  &overflow, test_completion, NULL));
+    wait_for_completion();
+    TEST_ASSERT_EQUAL_UINT32(1, completion_count);
+    TEST_ASSERT_EQUAL(DEVICE_CMD_STATUS_QUEUE_FULL, last_result.status);
+    TEST_ASSERT_EQUAL_UINT32(4, device_command_service_get_pending_count());
+    device_command_service_deinit();
+}
+
+TEST_CASE("event queue full returns bounded submit failure",
+          "[device_command_service][phase2]")
+{
+    reset_test_state();
+    device_command_service_set_hooks(&mock_hooks);
+    TEST_ASSERT_EQUAL(ESP_OK, device_command_service_init());
+    vTaskSuspend(g_dcs.task);
+
+    device_command_request_t req = make_control_request("dev1", "set_led");
+    req.has_bool_value = true;
+    for (size_t i = 0; i < DCS_QUEUE_LEN; i++) {
+        TEST_ASSERT_EQUAL(ESP_OK, device_command_service_submit(
+                                      &req, test_completion, NULL));
+    }
+    TEST_ASSERT_EQUAL(ESP_ERR_NO_MEM, device_command_service_submit(
+                                          &req, test_completion, NULL));
+    device_command_service_stats_t stats = {0};
+    device_command_service_get_stats(&stats);
+    TEST_ASSERT_EQUAL_UINT32(1, stats.queue_full);
+
+    vTaskResume(g_dcs.task);
+    vTaskDelay(pdMS_TO_TICKS(100));
+    device_command_service_deinit();
+}
+
 TEST_CASE("ACK completes pending request", "[device_command_service]")
 {
     reset_test_state();
@@ -312,6 +601,27 @@ TEST_CASE("ACK completes pending request", "[device_command_service]")
     TEST_ASSERT_TRUE(last_result.accepted);
     TEST_ASSERT_EQUAL(0, device_command_service_get_pending_count());
 
+    device_command_service_deinit();
+}
+
+TEST_CASE("duplicate ACK completes exactly once",
+          "[device_command_service][phase2]")
+{
+    reset_test_state();
+    device_command_service_set_hooks(&mock_hooks);
+    TEST_ASSERT_EQUAL(ESP_OK, device_command_service_init());
+    device_command_request_t req = make_control_request("dev1", "set_led");
+    req.has_bool_value = true;
+    TEST_ASSERT_EQUAL(ESP_OK, device_command_service_submit(
+                                  &req, test_completion, NULL));
+    vTaskDelay(pdMS_TO_TICKS(30));
+    gw_message_t ack = make_ack("dev1", "set_led",
+                                last_sent_message.request_id, true);
+    TEST_ASSERT_TRUE(device_command_service_on_notify("dev1", &ack));
+    TEST_ASSERT_TRUE(device_command_service_on_notify("dev1", &ack));
+    vTaskDelay(pdMS_TO_TICKS(50));
+    TEST_ASSERT_EQUAL_UINT32(1, completion_count);
+    TEST_ASSERT_EQUAL_UINT32(0, device_command_service_get_pending_count());
     device_command_service_deinit();
 }
 
@@ -370,6 +680,28 @@ TEST_CASE("missing ACK completes pending with TIMEOUT",
     device_command_service_deinit();
 }
 
+TEST_CASE("late ACK after timeout is ignored",
+          "[device_command_service][phase2]")
+{
+    reset_test_state();
+    device_command_service_set_hooks(&mock_hooks);
+    TEST_ASSERT_EQUAL(ESP_OK, device_command_service_init());
+    device_command_request_t req = make_control_request("dev1", "set_led");
+    req.has_bool_value = true;
+    TEST_ASSERT_EQUAL(ESP_OK, device_command_service_submit(
+                                  &req, test_completion, NULL));
+    vTaskDelay(pdMS_TO_TICKS(30));
+    uint32_t request_id = last_sent_message.request_id;
+    vTaskDelay(pdMS_TO_TICKS(2200));
+    TEST_ASSERT_EQUAL_UINT32(1, completion_count);
+    TEST_ASSERT_EQUAL(DEVICE_CMD_STATUS_TIMEOUT, last_result.status);
+    gw_message_t ack = make_ack("dev1", "set_led", request_id, true);
+    TEST_ASSERT_TRUE(device_command_service_on_notify("dev1", &ack));
+    vTaskDelay(pdMS_TO_TICKS(50));
+    TEST_ASSERT_EQUAL_UINT32(1, completion_count);
+    device_command_service_deinit();
+}
+
 TEST_CASE("wrong request_id does not complete", "[device_command_service]")
 {
     reset_test_state();
@@ -424,10 +756,51 @@ TEST_CASE("disconnect completes pending with NOT_CONNECTED", "[device_command_se
 
     vTaskDelay(pdMS_TO_TICKS(50));
     TEST_ASSERT_TRUE(completion_called);
+    TEST_ASSERT_EQUAL_UINT32(1, completion_count);
     TEST_ASSERT_EQUAL(DEVICE_CMD_STATUS_NOT_CONNECTED, last_result.status);
     TEST_ASSERT_EQUAL(0, device_command_service_get_pending_count());
 
     device_command_service_deinit();
+}
+
+TEST_CASE("cancel completes pending exactly once",
+          "[device_command_service][phase2]")
+{
+    reset_test_state();
+    device_command_service_set_hooks(&mock_hooks);
+    TEST_ASSERT_EQUAL(ESP_OK, device_command_service_init());
+    device_command_request_t req = make_control_request("dev1", "set_led");
+    req.has_bool_value = true;
+    TEST_ASSERT_EQUAL(ESP_OK, device_command_service_submit(
+                                  &req, test_completion, NULL));
+    vTaskDelay(pdMS_TO_TICKS(30));
+    uint32_t request_id = last_sent_message.request_id;
+    TEST_ASSERT_EQUAL(ESP_OK, device_command_service_cancel_device("dev1"));
+    wait_for_completion();
+    TEST_ASSERT_EQUAL(DEVICE_CMD_STATUS_CANCELLED, last_result.status);
+    TEST_ASSERT_EQUAL_UINT32(1, completion_count);
+    gw_message_t ack = make_ack("dev1", "set_led", request_id, true);
+    TEST_ASSERT_TRUE(device_command_service_on_notify("dev1", &ack));
+    vTaskDelay(pdMS_TO_TICKS(50));
+    TEST_ASSERT_EQUAL_UINT32(1, completion_count);
+    device_command_service_deinit();
+}
+
+TEST_CASE("shutdown cancels pending exactly once",
+          "[device_command_service][phase2]")
+{
+    reset_test_state();
+    device_command_service_set_hooks(&mock_hooks);
+    TEST_ASSERT_EQUAL(ESP_OK, device_command_service_init());
+    device_command_request_t req = make_control_request("dev1", "set_led");
+    req.has_bool_value = true;
+    TEST_ASSERT_EQUAL(ESP_OK, device_command_service_submit(
+                                  &req, test_completion, NULL));
+    vTaskDelay(pdMS_TO_TICKS(30));
+    device_command_service_deinit();
+    TEST_ASSERT_EQUAL_UINT32(1, completion_count);
+    TEST_ASSERT_EQUAL(DEVICE_CMD_STATUS_CANCELLED, last_result.status);
+    TEST_ASSERT_EQUAL_UINT32(0, device_command_service_get_pending_count());
 }
 
 TEST_CASE("send failure returns TRANSPORT_ERROR", "[device_command_service]")

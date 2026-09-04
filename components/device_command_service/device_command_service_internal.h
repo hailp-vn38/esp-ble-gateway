@@ -21,6 +21,7 @@ typedef enum {
     DCS_EVENT_SUBMIT = 0,
     DCS_EVENT_ACK,
     DCS_EVENT_DISCONNECT,
+    DCS_EVENT_CANCEL,
     DCS_EVENT_SHUTDOWN,
 } dcs_event_type_t;
 
@@ -32,6 +33,7 @@ typedef struct {
     char ack_device_id[GW_MSG_DEVICE_ID_LEN];
     gw_message_t ack_message;
     char disconnect_device_id[GW_MSG_DEVICE_ID_LEN];
+    char cancel_device_id[GW_MSG_DEVICE_ID_LEN];
 } dcs_event_t;
 
 typedef struct {
@@ -57,6 +59,7 @@ typedef struct {
     QueueHandle_t queue;
     TaskHandle_t task;
     volatile bool running;
+    volatile bool task_stopped;
     dcs_pending_slot_t pending[DCS_MAX_PENDING];
     uint32_t next_request_id;
     device_command_service_stats_t stats;

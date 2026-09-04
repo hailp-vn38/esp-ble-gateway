@@ -75,12 +75,14 @@ uint32_t dcs_pending_count(void)
 void dcs_pending_complete(dcs_pending_slot_t *slot,
                           const device_command_result_t *result)
 {
-    if (slot->completion != NULL) {
-        slot->completion(result, slot->context);
-    }
+    device_command_completion_fn completion = slot->completion;
+    void *context = slot->context;
     slot->in_use = false;
     slot->completion = NULL;
     slot->context = NULL;
+    if (completion != NULL) {
+        completion(result, context);
+    }
 }
 
 void dcs_pending_complete_status(dcs_pending_slot_t *slot,

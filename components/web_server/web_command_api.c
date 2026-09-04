@@ -27,8 +27,12 @@ static const char *device_status_http(const device_command_status_t status)
     switch (status) {
     case DEVICE_CMD_STATUS_OK:               return "200 OK";
     case DEVICE_CMD_STATUS_INVALID_ARGUMENT: return "400 Bad Request";
+    case DEVICE_CMD_STATUS_TYPE_MISMATCH:    return "400 Bad Request";
+    case DEVICE_CMD_STATUS_RANGE_ERROR:      return "400 Bad Request";
     case DEVICE_CMD_STATUS_UNSUPPORTED_COMMAND: return "400 Bad Request";
+    case DEVICE_CMD_STATUS_SCHEMA_NOT_READY: return "409 Conflict";
     case DEVICE_CMD_STATUS_BUSY:             return "409 Conflict";
+    case DEVICE_CMD_STATUS_QUEUE_FULL:       return "503 Service Unavailable";
     case DEVICE_CMD_STATUS_NOT_CONNECTED:    return "502 Bad Gateway";
     case DEVICE_CMD_STATUS_TRANSPORT_ERROR:  return "502 Bad Gateway";
     case DEVICE_CMD_STATUS_TIMEOUT:          return "504 Gateway Timeout";
@@ -41,8 +45,13 @@ static const char *device_error_code(const device_command_status_t status)
 {
     switch (status) {
     case DEVICE_CMD_STATUS_INVALID_ARGUMENT: return "invalid_request";
+    case DEVICE_CMD_STATUS_TYPE_MISMATCH:    return "type_mismatch";
+    case DEVICE_CMD_STATUS_RANGE_ERROR:      return "range_error";
     case DEVICE_CMD_STATUS_UNSUPPORTED_COMMAND: return "unsupported_command";
+    case DEVICE_CMD_STATUS_SCHEMA_NOT_READY: return "schema_not_ready";
     case DEVICE_CMD_STATUS_BUSY:             return "device_busy";
+    case DEVICE_CMD_STATUS_QUEUE_FULL:       return "service_full";
+    case DEVICE_CMD_STATUS_CANCELLED:        return "cancelled";
     case DEVICE_CMD_STATUS_NOT_CONNECTED:    return "device_not_connected";
     case DEVICE_CMD_STATUS_TRANSPORT_ERROR:  return "transport_error";
     case DEVICE_CMD_STATUS_TIMEOUT:          return "command_timeout";

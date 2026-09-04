@@ -42,14 +42,23 @@ typedef struct {
 typedef enum {
     DEVICE_CMD_STATUS_OK = 0,
     DEVICE_CMD_STATUS_INVALID_ARGUMENT,
+    DEVICE_CMD_STATUS_SCHEMA_NOT_READY,
     DEVICE_CMD_STATUS_UNSUPPORTED_COMMAND,
-    DEVICE_CMD_STATUS_BUSY,
+    DEVICE_CMD_STATUS_TYPE_MISMATCH,
+    DEVICE_CMD_STATUS_RANGE_ERROR,
     DEVICE_CMD_STATUS_NOT_CONNECTED,
+    DEVICE_CMD_STATUS_BUSY,
+    DEVICE_CMD_STATUS_QUEUE_FULL,
     DEVICE_CMD_STATUS_TRANSPORT_ERROR,
     DEVICE_CMD_STATUS_TIMEOUT,
-    DEVICE_CMD_STATUS_DEVICE_REJECTED,
-    DEVICE_CMD_STATUS_INTERNAL_ERROR,
+    DEVICE_CMD_STATUS_REJECTED,
+    DEVICE_CMD_STATUS_CANCELLED,
+    DEVICE_CMD_STATUS_INTERNAL,
 } device_command_status_t;
+
+/* Compatibility names retained while existing consumers migrate. */
+#define DEVICE_CMD_STATUS_DEVICE_REJECTED DEVICE_CMD_STATUS_REJECTED
+#define DEVICE_CMD_STATUS_INTERNAL_ERROR DEVICE_CMD_STATUS_INTERNAL
 
 /* ── Typed result ────────────────────────────────────────────────────── */
 
@@ -145,6 +154,9 @@ bool device_command_service_on_notify(
  * Fails any pending request for that device with NOT_CONNECTED.
  */
 void device_command_service_on_disconnect(const char *device_id);
+
+/** Cancel a pending request for one device with CANCELLED. */
+esp_err_t device_command_service_cancel_device(const char *device_id);
 
 /**
  * Get service statistics.

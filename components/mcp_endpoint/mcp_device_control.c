@@ -226,12 +226,17 @@ cJSON *mcp_device_control_format_completion(
         const char *name = "internal_error";
         switch (result->status) {
         case DEVICE_CMD_STATUS_INVALID_ARGUMENT: name = "invalid_value"; break;
+        case DEVICE_CMD_STATUS_TYPE_MISMATCH: name = "type_mismatch"; break;
+        case DEVICE_CMD_STATUS_RANGE_ERROR: name = "range_error"; break;
+        case DEVICE_CMD_STATUS_SCHEMA_NOT_READY: name = "schema_not_ready"; break;
         case DEVICE_CMD_STATUS_UNSUPPORTED_COMMAND: name = "unsupported_command"; break;
         case DEVICE_CMD_STATUS_BUSY: name = "busy"; break;
+        case DEVICE_CMD_STATUS_QUEUE_FULL: name = "queue_full"; break;
         case DEVICE_CMD_STATUS_NOT_CONNECTED: name = "not_connected"; break;
         case DEVICE_CMD_STATUS_TRANSPORT_ERROR: name = "transport_error"; break;
         case DEVICE_CMD_STATUS_TIMEOUT: name = "timeout"; break;
         case DEVICE_CMD_STATUS_DEVICE_REJECTED: name = "device_rejected"; break;
+        case DEVICE_CMD_STATUS_CANCELLED: name = "cancelled"; break;
         default: break;
         }
         cJSON_AddStringToObject(payload, "error", name);

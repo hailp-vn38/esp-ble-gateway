@@ -34,7 +34,7 @@ static void handle_submit(const dcs_event_t *event)
     dcs_pending_slot_t *slot = dcs_pending_allocate();
     if (slot == NULL) {
         dcs_stats_inc(&g_dcs.stats.queue_full);
-        complete_event(event, DEVICE_CMD_STATUS_INTERNAL_ERROR);
+        complete_event(event, DEVICE_CMD_STATUS_QUEUE_FULL);
         return;
     }
 
@@ -143,6 +143,16 @@ static void handle_disconnect(const dcs_event_t *event)
     }
 }
 
+static void handle_cancel(const dcs_event_t *event)
+{
+    dcs_pending_slot_t *slot = dcs_pending_find_device(event->cancel_device_id);
+    if (slot != NULL) {
+        ESP_LOGI(DCS_TAG, "[CANCEL] device=%s request_id=%lu",
+                 event->cancel_device_id, (unsigned long)slot->request_id);
+        dcs_pending_complete_status(slot, DEVICE_CMD_STATUS_CANCELLED);
+    }
+}
+
 static void check_timeouts(void)
 {
     int64_t now_us = esp_timer_get_time();
@@ -183,6 +193,9 @@ void dcs_service_task(void *arg)
             case DCS_EVENT_DISCONNECT:
                 handle_disconnect(&event);
                 break;
+            case DCS_EVENT_CANCEL:
+                handle_cancel(&event);
+                break;
             case DCS_EVENT_SHUTDOWN:
                 g_dcs.running = false;
                 break;
@@ -193,9 +206,10 @@ void dcs_service_task(void *arg)
     for (size_t i = 0; i < DCS_MAX_PENDING; i++) {
         if (g_dcs.pending[i].in_use) {
             dcs_pending_complete_status(&g_dcs.pending[i],
-                                        DEVICE_CMD_STATUS_INTERNAL_ERROR);
+                                        DEVICE_CMD_STATUS_CANCELLED);
         }
     }
     ESP_LOGI(DCS_TAG, "Service task stopped");
+    g_dcs.task_stopped = true;
     vTaskDelete(NULL);
 }

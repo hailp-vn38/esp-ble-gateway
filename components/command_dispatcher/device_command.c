@@ -56,7 +56,9 @@ void device_command_handle(const gw_message_t *msg, dispatch_result_t *result)
             msg->command);
         return;
     }
-    if (validation == DEVICE_SCHEMA_VALID_ARGUMENT) {
+    if (validation == DEVICE_SCHEMA_VALID_ARGUMENT ||
+        validation == DEVICE_SCHEMA_VALID_TYPE_MISMATCH ||
+        validation == DEVICE_SCHEMA_VALID_RANGE_ERROR) {
         command_dispatcher_set_text_result(
             result, DISPATCH_STATUS_INVALID_COMMAND_ARGUMENT,
             "Invalid argument for command '%s'", msg->command);

@@ -48,8 +48,17 @@ device_command_status_t dcs_validate_request(const device_command_request_t *req
         message.has_request_id = 0;
         device_schema_validation_t validation =
             device_schema_validate_command(&message, NULL);
+        if (validation == DEVICE_SCHEMA_VALID_UNKNOWN) {
+            return DEVICE_CMD_STATUS_SCHEMA_NOT_READY;
+        }
         if (validation == DEVICE_SCHEMA_VALID_UNSUPPORTED_COMMAND) {
             return DEVICE_CMD_STATUS_UNSUPPORTED_COMMAND;
+        }
+        if (validation == DEVICE_SCHEMA_VALID_TYPE_MISMATCH) {
+            return DEVICE_CMD_STATUS_TYPE_MISMATCH;
+        }
+        if (validation == DEVICE_SCHEMA_VALID_RANGE_ERROR) {
+            return DEVICE_CMD_STATUS_RANGE_ERROR;
         }
         if (validation == DEVICE_SCHEMA_VALID_ARGUMENT) {
             return DEVICE_CMD_STATUS_INVALID_ARGUMENT;
@@ -73,6 +82,8 @@ device_command_status_t dcs_validate_request(const device_command_request_t *req
             return DEVICE_CMD_STATUS_INVALID_ARGUMENT;
         }
         break;
+    default:
+        return DEVICE_CMD_STATUS_INVALID_ARGUMENT;
     }
     return DEVICE_CMD_STATUS_OK;
 }

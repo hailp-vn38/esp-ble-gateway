@@ -382,7 +382,9 @@ mcp_resolve_status_t mcp_tools_resolve(const cJSON *params, gw_message_t *msg,
                                        "command not supported"};
             return MCP_RESOLVE_ALLOWLIST_DENIED;
         }
-        if (val == DEVICE_SCHEMA_VALID_ARGUMENT) {
+        if (val == DEVICE_SCHEMA_VALID_ARGUMENT ||
+            val == DEVICE_SCHEMA_VALID_TYPE_MISMATCH ||
+            val == DEVICE_SCHEMA_VALID_RANGE_ERROR) {
             *error = (mcp_rpc_error_t){-32602, "invalid argument"};
             snprintf(denial_text, denial_len,
                      "Invalid argument for command '%s'", binding.command);

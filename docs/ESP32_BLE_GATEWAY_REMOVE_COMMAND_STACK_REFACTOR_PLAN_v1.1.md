@@ -345,7 +345,7 @@ Không đổi layout/wire behavior trong phase này.
 
 ---
 
-# PHASE 2 - Harden `device_command_service` as Authoritative Command Boundary
+# PHASE 2 - Harden `device_command_service` as Authoritative Command Boundary ✅ DONE (2026-09-04)
 
 ## Tổng quan
 
@@ -493,16 +493,16 @@ shutdown with pending          -> completion exactly once
 
 ## Checklist
 
-- [ ] CONTROL path gọi schema validation bên trong service
-- [ ] Type/range/step validation nằm trong authoritative boundary
-- [ ] Internal origins có strict allowlist
-- [ ] Pending table bounded
-- [ ] One pending/device invariant giữ nguyên
-- [ ] No semaphore wait
-- [ ] Completion exactly once được test
-- [ ] Late/duplicate ACK được test
-- [ ] Disconnect/cancel được test
-- [ ] Phase 2 pass trước khi migrate Web/MCP
+- [x] CONTROL path gọi schema validation bên trong service
+- [x] Type/range/step validation nằm trong authoritative boundary
+- [x] Internal origins có strict allowlist
+- [x] Pending table bounded
+- [x] One pending/device invariant giữ nguyên
+- [x] No semaphore wait
+- [x] Completion exactly once được test
+- [x] Late/duplicate ACK được test
+- [x] Disconnect/cancel được test
+- [x] Phase 2 pass trước khi migrate Web/MCP
 
 ---
 

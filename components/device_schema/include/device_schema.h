@@ -76,6 +76,8 @@ typedef enum {
     DEVICE_SCHEMA_VALID_UNKNOWN,
     DEVICE_SCHEMA_VALID_UNSUPPORTED_COMMAND,
     DEVICE_SCHEMA_VALID_ARGUMENT,
+    DEVICE_SCHEMA_VALID_TYPE_MISMATCH,
+    DEVICE_SCHEMA_VALID_RANGE_ERROR,
 } device_schema_validation_t;
 
 /* ── Submit result ──────────────────────────────────────────────────── */

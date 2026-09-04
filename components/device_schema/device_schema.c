@@ -233,29 +233,58 @@ device_schema_validation_t device_schema_validate_command(
         return DEVICE_SCHEMA_VALID_UNSUPPORTED_COMMAND;
     }
 
-    bool valid_argument = false;
+    device_schema_validation_t validation = DEVICE_SCHEMA_VALID;
     switch (tool->value_type) {
     case 0: /* NONE */
-        valid_argument = !message->has_int_value && !message->has_bool_value;
+        if (message->has_int_value || message->has_bool_value) {
+            validation = DEVICE_SCHEMA_VALID_TYPE_MISMATCH;
+        }
         break;
     case 1: /* BOOL */
-        valid_argument = message->has_bool_value && !message->has_int_value;
+        if (!message->has_bool_value || message->has_int_value) {
+            validation = DEVICE_SCHEMA_VALID_TYPE_MISMATCH;
+        }
         break;
     case 2: { /* INT */
+        if (!message->has_int_value || message->has_bool_value) {
+            validation = DEVICE_SCHEMA_VALID_TYPE_MISMATCH;
+            break;
+        }
         int64_t delta = (int64_t)message->int_value -
                         (int64_t)tool->min_value;
-        valid_argument = message->has_int_value && !message->has_bool_value &&
-                         message->int_value >= tool->min_value &&
-                         message->int_value <= tool->max_value &&
-                         ((uint64_t)delta % tool->step == 0);
+        if (message->int_value < tool->min_value ||
+            message->int_value > tool->max_value ||
+            ((uint64_t)delta % tool->step != 0)) {
+            validation = DEVICE_SCHEMA_VALID_RANGE_ERROR;
+        }
         break;
     }
     }
-    if (valid_argument && out_tool != NULL) {
+
+    if (validation == DEVICE_SCHEMA_VALID &&
+        (message->has_feature_id != message->has_property_id)) {
+        validation = DEVICE_SCHEMA_VALID_ARGUMENT;
+    }
+    if (validation == DEVICE_SCHEMA_VALID && message->has_feature_id) {
+        bool feature_matches = false;
+        int8_t tool_index = (int8_t)(tool - record->committed.tools);
+        for (size_t i = 0; i < record->committed.feature_count; i++) {
+            const device_schema_feature_t *feature =
+                &record->committed.features[i];
+            if (strcmp(feature->feature_id, message->feature_id) == 0 &&
+                feature->property_id == message->property_id &&
+                feature->writable_tool_index == tool_index) {
+                feature_matches = true;
+                break;
+            }
+        }
+        if (!feature_matches) validation = DEVICE_SCHEMA_VALID_ARGUMENT;
+    }
+    if (validation == DEVICE_SCHEMA_VALID && out_tool != NULL) {
         *out_tool = *tool;
     }
     schema_runtime_unlock();
-    return valid_argument ? DEVICE_SCHEMA_VALID : DEVICE_SCHEMA_VALID_ARGUMENT;
+    return validation;
 }
 
 esp_err_t device_schema_forget(const char *device_id)
