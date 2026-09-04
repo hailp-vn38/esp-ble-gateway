@@ -240,7 +240,7 @@ TEST_CASE("sem_serialize_feature: writable INT feature with range", "[mcp_semant
     strlcpy(feat.feature_id, "feat-dimmer", sizeof(feat.feature_id));
     feat.feature_type = GW_FEATURE_DIMMABLE_LIGHT;
     feat.feature_schema_version = 1;
-    feat.property_id = GW_PROP_ON_OFF;
+    feat.property_id = GW_PROP_LEVEL;
     feat.writable_tool_index = 0; /* points to tool[0] */
 
     device_schema_snapshot_t snap = make_snapshot(&feat, 1, &tool, 1);

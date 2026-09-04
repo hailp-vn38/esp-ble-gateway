@@ -281,6 +281,7 @@ static void setup_feature_exposure(const char *device_id,
                                    const char *feature_id,
                                    const char *command)
 {
+    TEST_ASSERT_EQUAL_INT(ESP_OK, mcp_tool_exposure_init());
     device_schema_snapshot_t snap = {0};
     TEST_ASSERT_EQUAL_INT(ESP_OK, device_schema_get(device_id, &snap));
     TEST_ASSERT_TRUE(snap.has_committed);

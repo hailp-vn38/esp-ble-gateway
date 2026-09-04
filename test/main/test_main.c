@@ -3,6 +3,9 @@
 #include "unity.h"
 
 #include "device_store.h"
+#include "device_schema.h"
+#include "device_state.h"
+#include "mcp_tool_exposure.h"
 
 void setUp(void)
 {
@@ -11,6 +14,9 @@ void setUp(void)
     if (device_store_snapshot(entries, DEVICE_STORE_MAX_DEVICES, &count) ==
         DEVICE_STORE_OK) {
         for (size_t i = 0; i < count; i++) {
+            mcp_tool_exposure_forget_device(entries[i].device_id);
+            device_schema_forget(entries[i].device_id);
+            device_state_forget(entries[i].device_id);
             device_store_delete(entries[i].device_id);
         }
     }

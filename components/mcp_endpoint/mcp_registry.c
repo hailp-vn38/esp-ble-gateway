@@ -103,8 +103,8 @@ static cJSON *schema_device_control(void)
 // Compact MCP surface: exactly 3 tools.
 static const mcp_tool_desc_t MCP_TOOLS[] = {
     {"get_status", "Get gateway and BLE status", schema_empty, true, false},
-    {"list_devices", "List devices known by the gateway, including semantic control hints. Use returned device_id and controls[].feature_id with device_control set. Call describe only when more feature details are required.", schema_empty, true, false},
-    {"device_control", "Describe, read, or set semantic device features. For set, use device_id and feature_id from list_devices. Call describe with only device to discover all semantic features.",
+    {"list_devices", "List devices known by the gateway, including semantic control hints. Use controls[].feature_id and the returned device_id with device_control set. Call describe only when more feature details are required.", schema_empty, true, false},
+    {"device_control", "Describe, read, or set semantic device features. For set, prefer device_id and feature_id returned by list_devices. Call describe with only device to discover all semantic features.",
      schema_device_control, false, false},
 };
 
@@ -146,4 +146,3 @@ int mcp_registry_build_tools_list(cJSON *tools_array)
     }
     return 0;
 }
-

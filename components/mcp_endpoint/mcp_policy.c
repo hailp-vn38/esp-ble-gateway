@@ -62,7 +62,8 @@ mcp_policy_result_t mcp_policy_check_feature_control(
                                       &exposure) != ESP_OK) {
         return MCP_POLICY_DENY_COMMAND;
     }
-    if (!exposure.control_enabled) return MCP_POLICY_DENY_COMMAND;
+    if (!exposure.control_enabled || !exposure.feature_bound)
+        return MCP_POLICY_DENY_COMMAND;
 
     /* 6. Capability health must have been explicitly accepted. */
     if (exposure.state != MCP_EXPOSURE_ENABLED) {

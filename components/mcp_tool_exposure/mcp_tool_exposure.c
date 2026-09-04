@@ -835,8 +835,16 @@ esp_err_t mcp_tool_expose_feature(const char *device_id,
     size_t idx = find_persisted_by_feature(device_id, feature_id);
     if (idx < s_persisted_count &&
         s_persisted[idx].state == MCP_EXPOSURE_ENABLED) {
+        /* Reconcile-created records may already be enabled but still lack
+         * the explicit feature binding and current capability digest. */
+        uint8_t digest[MCP_CAPABILITY_DIGEST_LEN];
+        mcp_tool_digest_compute(cap, digest);
+        s_persisted[idx].flags |= MCP_EXP_FLAG_FEATURE_BOUND;
+        memcpy(s_persisted[idx].capability_digest, digest,
+               MCP_CAPABILITY_DIGEST_LEN);
+        persist_save_locked();
         xSemaphoreGive(s_mutex);
-        return ESP_OK; /* Already enabled. */
+        return ESP_OK;
     }
 
     /* Compute digest. */
@@ -847,6 +855,7 @@ esp_err_t mcp_tool_expose_feature(const char *device_id,
         /* Update existing record. */
         s_persisted[idx].state = MCP_EXPOSURE_ENABLED;
         s_persisted[idx].reason = MCP_EXPOSURE_REASON_NONE;
+        s_persisted[idx].flags |= MCP_EXP_FLAG_FEATURE_BOUND;
         memcpy(s_persisted[idx].capability_digest, digest,
                MCP_CAPABILITY_DIGEST_LEN);
     } else {
@@ -863,7 +872,7 @@ esp_err_t mcp_tool_expose_feature(const char *device_id,
         rec->state = MCP_EXPOSURE_ENABLED;
         rec->reason = MCP_EXPOSURE_REASON_NONE;
         rec->naming_version = MCP_EXP_NAMING_VERSION;
-        rec->flags = 0;
+        rec->flags = MCP_EXP_FLAG_FEATURE_BOUND;
         memcpy(rec->capability_digest, digest, MCP_CAPABILITY_DIGEST_LEN);
         s_persisted_count++;
     }
@@ -1017,7 +1026,8 @@ esp_err_t mcp_semantic_control_serialize_hints(cJSON *array,
                                                const mcp_control_hint_t *hints,
                                                size_t count)
 {
-    if (array == NULL || hints == NULL) return ESP_ERR_INVALID_ARG;
+    if (array == NULL || (hints == NULL && count != 0))
+        return ESP_ERR_INVALID_ARG;
 
     for (size_t i = 0; i < count; ++i) {
         cJSON *control = cJSON_CreateObject();
@@ -1065,7 +1075,8 @@ esp_err_t mcp_tool_exposure_get_feature(const char *device_id,
                     sizeof(out->command));
             strlcpy(out->feature_id, s_persisted[i].feature_id,
                     sizeof(out->feature_id));
-            out->feature_bound = true;
+            out->feature_bound =
+                (s_persisted[i].flags & MCP_EXP_FLAG_FEATURE_BOUND) != 0;
             out->control_enabled =
                 (s_persisted[i].flags & MCP_EXP_FLAG_USER_DISABLED) == 0;
             out->state = s_persisted[i].state;

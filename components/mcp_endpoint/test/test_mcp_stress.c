@@ -137,11 +137,11 @@ TEST_CASE("queue full answers 503 without dropping the socket", "[mcp_stress]")
         snprintf(body, sizeof(body),
                  "{\"jsonrpc\":\"2.0\",\"id\":%d,\"method\":\"tools/call\","
                  "\"params\":{\"name\":\"get_status\"}}", i);
-        TEST_ASSERT_EQUAL_INT(0, run_request(body));
+        TEST_ASSERT_EQUAL_INT(0, run_stress_request(body));
     }
     // No 503 path via static get_status (synchronous) — just verify no crash
     // and socket remains usable for next request.
-    TEST_ASSERT_EQUAL_INT(0, run_request(
+    TEST_ASSERT_EQUAL_INT(0, run_stress_request(
         "{\"jsonrpc\":\"2.0\",\"id\":99,\"method\":\"tools/call\","
         "\"params\":{\"name\":\"get_status\"}}"));
     cJSON *response = cJSON_Parse(g_io.response);
