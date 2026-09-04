@@ -1136,7 +1136,7 @@ truncation case
 
 ---
 
-# PHASE 8 - Finalize `device_control` Describe/Read/Set
+# PHASE 8 - Finalize `device_control` Describe/Read/Set ✅ DONE (2026-09-04)
 
 ## Tổng quan
 
@@ -1256,15 +1256,15 @@ simple relay intent <= 2 MCP tool calls
 
 ## Checklist
 
-- [ ] `describe` feature optional
-- [ ] `read/set` feature required
-- [ ] Shared semantic helper reused
-- [ ] SET direct to `device_command_service`
-- [ ] Policy rechecked on SET
-- [ ] Authoritative schema validation remains in service
-- [ ] No raw command leak
-- [ ] 2-call Xiaozhi control pass
-- [ ] Repeated 1-call SET pass when context retained
+- [x] `describe` feature optional
+- [x] `read/set` feature required
+- [x] Shared semantic helper reused
+- [x] SET direct to `device_command_service`
+- [x] Policy rechecked on SET
+- [x] Authoritative schema validation remains in service
+- [x] No raw command leak
+- [x] 2-call Xiaozhi control pass
+- [x] Repeated 1-call SET pass when context retained
 
 ---
 
