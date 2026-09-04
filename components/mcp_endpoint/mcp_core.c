@@ -278,6 +278,38 @@ static esp_err_t handle_tools_call(const mcp_responder_t *responder,
                                 tool_error.message, id, NULL);
     }
 
+    /* Typed local tools (get_status / list_devices) — direct API, no gw_message_t */
+    if (exec_kind == MCP_TOOL_EXEC_TYPED) {
+        /* Extract tool name from resolved params for dispatch */
+        const cJSON *tool_args = cJSON_GetObjectItemCaseSensitive(params, "arguments");
+        const cJSON *source = cJSON_IsObject(tool_args) ? tool_args : params;
+        const cJSON *name_item = cJSON_GetObjectItemCaseSensitive(params, "name");
+        const char *tool_name = cJSON_IsString(name_item)
+                                    ? name_item->valuestring
+                                    : cJSON_GetStringValue(
+                                          cJSON_GetObjectItemCaseSensitive(
+                                              source, "command"));
+
+        mcp_rpc_error_t typed_error = {0};
+        cJSON *result = NULL;
+        if (tool_name != NULL && strcmp(tool_name, "get_status") == 0) {
+            result = mcp_tools_execute_get_status(protocol, &typed_error);
+        } else if (tool_name != NULL && strcmp(tool_name, "list_devices") == 0) {
+            result = mcp_tools_execute_list_devices(protocol, &typed_error);
+        } else {
+            typed_error = (mcp_rpc_error_t){-32602, "unknown typed tool"};
+        }
+        if (result == NULL) {
+            return send_error(responder, typed_error.code,
+                              typed_error.message, id, NULL);
+        }
+        if (notification) {
+            cJSON_Delete(result);
+            return send_none(responder);
+        }
+        return send_result(responder, result, id);
+    }
+
     /* Local semantic tools (device_control) — no gw_message_t needed */
     if (exec_kind == MCP_TOOL_EXEC_LOCAL) {
         const cJSON *tool_args = cJSON_GetObjectItemCaseSensitive(params, "arguments");

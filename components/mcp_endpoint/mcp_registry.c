@@ -104,13 +104,13 @@ static cJSON *schema_device_control(void)
 // device_control is added in compact mode.
 static const mcp_tool_desc_t MCP_STATIC_TOOLS[] __attribute__((unused)) = {
     {"get_status", "Get gateway and BLE status", schema_empty, true, false},
-    {"list_devices", "List devices and semantic capability status. Use a returned device_id with device_control operation=describe to discover controllable features.", schema_empty, true, false},
+    {"list_devices", "List devices and semantic capability status. Use returned device_id and controls[].feature_id with device_control set. Call describe only when more feature details are required.", schema_empty, true, false},
 };
 
 static const mcp_tool_desc_t MCP_COMPACT_TOOLS[] __attribute__((unused)) = {
     {"get_status", "Get gateway and BLE status", schema_empty, true, false},
-    {"list_devices", "List devices known by the gateway, including semantic control hints. Use a returned device_id and controls[].feature_id with device_control to set a feature directly. Call device_control describe only when more feature details are required.", schema_empty, true, false},
-    {"device_control", "Describe, read, or set semantic device features. For set, prefer device_id and feature_id returned by list_devices. Call describe with only device to discover all semantic features.",
+    {"list_devices", "List devices known by the gateway, including semantic control hints. Use returned device_id and controls[].feature_id with device_control set. Call describe only when more feature details are required.", schema_empty, true, false},
+    {"device_control", "Describe, read, or set semantic device features. For set, use device_id and feature_id from list_devices. Call describe with only device to discover all semantic features.",
      schema_device_control, false, false},
 };
 

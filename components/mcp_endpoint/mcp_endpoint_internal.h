@@ -105,6 +105,7 @@ typedef enum {
     MCP_TOOL_EXEC_GATEWAY_SYNC = 0,   // gateway dispatcher (legacy sync)
     MCP_TOOL_EXEC_LOCAL,              // describe/read (compact, local cache)
     MCP_TOOL_EXEC_DEVICE_SERVICE,     // set commands (async via service)
+    MCP_TOOL_EXEC_TYPED,              // get_status/list_devices (direct API)
 } mcp_tool_exec_kind_t;
 
 // ---------------------------------------------------------------------------
@@ -289,6 +290,12 @@ mcp_resolve_status_t mcp_tools_resolve(const cJSON *params,
 cJSON *mcp_tools_execute(const gw_message_t *msg,
                          const mcp_request_context_t *ctx,
                          mcp_rpc_error_t *error);
+
+cJSON *mcp_tools_execute_get_status(const mcp_request_context_t *ctx,
+                                    mcp_rpc_error_t *error);
+
+cJSON *mcp_tools_execute_list_devices(const mcp_request_context_t *ctx,
+                                      mcp_rpc_error_t *error);
 
 cJSON *mcp_tools_list(const mcp_request_context_t *ctx);
 

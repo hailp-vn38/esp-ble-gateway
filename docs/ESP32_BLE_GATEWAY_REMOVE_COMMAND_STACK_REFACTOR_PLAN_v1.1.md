@@ -1007,7 +1007,7 @@ truncation deterministic
 
 ---
 
-# PHASE 7 - Migrate MCP `get_status` and `list_devices` to Typed Domains
+# PHASE 7 - Migrate MCP `get_status` and `list_devices` to Typed Domains ✅ DONE (2026-09-04)
 
 ## Tổng quan
 
@@ -1125,14 +1125,14 @@ truncation case
 
 ## Checklist
 
-- [ ] `get_status` không dùng dispatcher/executor
-- [ ] `list_devices` không dùng dispatcher/executor
-- [ ] `controls[]` có safe semantic hints
-- [ ] INT hint có min/max/step
-- [ ] `controls_truncated` deterministic
-- [ ] No raw command leak
-- [ ] Tool description hướng dẫn 2-call flow
-- [ ] Payload tests pass
+- [x] `get_status` không dùng dispatcher/executor
+- [x] `list_devices` không dùng dispatcher/executor
+- [x] `controls[]` có safe semantic hints
+- [x] INT hint có min/max/step
+- [x] `controls_truncated` deterministic
+- [x] No raw command leak
+- [x] Tool description hướng dẫn 2-call flow
+- [x] Payload tests pass
 
 ---
 
