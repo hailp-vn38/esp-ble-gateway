@@ -131,7 +131,7 @@ TEST_CASE("queue full answers 503 without dropping the socket", "[mcp_stress]")
     // dropped on a burst of valid requests — the gateway handles them.
     mcp_setup();
     install_transport();
-    const int burst = CONFIG_CMD_EXEC_WORKER_COUNT + CONFIG_CMD_EXEC_QUEUE_LEN + 2;
+    const int burst = 20;
     for (int i = 0; i < burst; i++) {
         char body[128];
         snprintf(body, sizeof(body),

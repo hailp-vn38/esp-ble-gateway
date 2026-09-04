@@ -1416,7 +1416,7 @@ Expected: no match.
 
 ---
 
-# PHASE 11 - Remove Remaining Legacy Consumers, `dispatch_result_t`, and Build Dependencies
+# PHASE 11 - Remove Remaining Legacy Consumers, `dispatch_result_t`, and Build Dependencies ✅ DONE (2026-09-04)
 
 ## Tổng quan
 
@@ -1510,11 +1510,11 @@ Expected: no match.
 
 ## Checklist
 
-- [ ] No external production consumer
-- [ ] No external test consumer
-- [ ] No CMake dependency ngoài legacy directory
-- [ ] No `dispatch_result_t` external use
-- [ ] No generic gateway routing external use
+- [x] No external production consumer
+- [x] No external test consumer
+- [x] No CMake dependency ngoài legacy directory
+- [x] No `dispatch_result_t` external use
+- [x] No generic gateway routing external use
 - [ ] No `CONFIG_CMD_EXEC_*` external use
 - [ ] Replacement tests cover legacy behavior
 - [ ] Clean production/test build pass

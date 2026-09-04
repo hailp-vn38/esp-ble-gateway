@@ -23,13 +23,13 @@ AI Agent / Client
   mcp_endpoint.c ──► mcp_auth.c      (token / Host / Origin / rate limit)
         │        ──► mcp_codec.c     (header 2026-07-28, legacy NVS flag)
         │
-        ├── mcp_tools.c ──► command_dispatcher ──► Gateway/BLE device
+        ├── mcp_tools.c ──► device_command_service ──► Gateway/BLE device
         │         ▲
         │         └── mcp_registry.c (tool table + schema + annotations)
         │
-        ├── mcp_async.c   (device_command chạy trên worker riêng)
+        ├── mcp_device_control.c  (semantic device_control: describe/read/set)
         │
-        └── mcp_rpc.c     (JSON-RPC result/error, legacy + 2026 envelope)
+        └── mcp_rpc.c     (JSON-RPC result/error, 2026 envelope)
 ```
 
 ## 2. Cấu trúc component
@@ -66,8 +66,8 @@ hàm khai báo trong `mcp_endpoint_internal.h` từ component khác.
 - `esp_http_server`: đăng ký và xử lý `POST /mcp`;
 - `espressif__cjson`: parse và tạo JSON;
 - `cbor_codec`: chuyển arguments JSON sang `gw_message_t`;
-- `command_dispatcher`: thực thi command;
-- `nvs_flash`: override runtime cho token và legacy mode;
+- `device_command_service`: thực thi command;
+- `nvs_flash`: override runtime cho token;
 - `esp_timer`, `freertos`: rate limit và async worker.
 
 ## 4. Public API
@@ -79,8 +79,7 @@ int mcp_endpoint_register(httpd_handle_t server);
 ```
 
 Hàm khởi tạo async worker, đăng ký route `POST /mcp`; trả `0` thành công,
-`-1` thất bại (worker/route). Gọi sau khi `command_dispatcher_init()` +
-`freeze_registry()`.
+`-1` thất bại (worker/route). Gọi sau khi `device_command_service_init()`.
 
 ## 5. HTTP contract
 

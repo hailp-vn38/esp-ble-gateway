@@ -12,8 +12,8 @@ CONFIG_BT_NIMBLE_GATT_CLIENT=y
 CONFIG_UNITY_ENABLE_64BIT=y
 CONFIG_FREERTOS_USE_TRACE_FACILITY=y
 CONFIG_ESPTOOLPY_FLASHSIZE_16MB=y
-# Unity tests place dispatch_result_t (~4.1 KB) and other fixtures on the
-# main task stack; the 3584-byte default overflows.
+# Unity tests place large fixtures on the main task stack;
+# the 3584-byte default overflows.
 CONFIG_ESP_MAIN_TASK_STACK_SIZE=12288
 CONFIG_WS_TRANSPORT=y
 CONFIG_HTTPD_WS_SUPPORT=y
@@ -29,10 +29,6 @@ CONFIG_MCP_HOST_ALLOWLIST="gateway.local"
 CONFIG_MCP_DEVICE_COMMAND_ALLOWLIST="toggle,set_power"
 CONFIG_MCP_EXPOSE_FULL_CAPABILITY_TOOL=y
 CONFIG_MCP_KEEP_GENERIC_DEVICE_COMMAND=y
-
-# ==== Command executor under test ====
-# Short deadline so the expiry test finishes quickly on target.
-CONFIG_CMD_EXEC_JOB_TIMEOUT_MS=1000
 
 # ==== Board I/O under test ====
 # Button on a safe input pin exercises debounce/FSM through the module;

@@ -27,7 +27,7 @@ Server config: Gateway = 34 URI slots / stack 12288 · Provisioning = 14 / 8192.
 
 ## Execution model
 
-- Mọi mutation (`POST /api/command`, POST/PUT/DELETE `/api/devices`) và MCP device_command đi qua `command_executor` — HTTPD task không chờ BLE ACK. GET đọc giữ sync.
+- Mọi mutation (`POST /api/command`, POST/PUT/DELETE `/api/devices`) và MCP device_command đi qua `device_command_service` — HTTPD task không chờ BLE ACK. GET đọc giữ sync.
 - Body: deadline tuyệt đối 3s; limits per endpoint (devices 512 / command 1024 / wifi 256). Oversize → **413 + Connection: close**; slow body → **408 + close**; body đã consume hết thì keep-alive được giữ.
 - BLE scan: auto-stop ~6s bằng esp_timer one-shot + deadline guard (stale callback không kill scan mới); POST khi đang scan = idempotent.
 - WebSocket `/ws/events`: max 2 clients, ring buffer 32 events, `httpd_queue_work()` drain, `resync.required` khi overflow. Không gửi từ BLE/domain callback.

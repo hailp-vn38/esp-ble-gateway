@@ -232,8 +232,6 @@ Endpoint này là JSON-RPC/MCP subset cho LAN. Không nên expose trực tiếp 
 | `CONFIG_MCP_EXPOSURE_RECORD_MAX` | `96` | Số record exposure NVS tối đa |
 | `CONFIG_MCP_DYNAMIC_ALLOW_DESTRUCTIVE` | `n` | Cho phép expose destructive commands |
 | `CONFIG_WEB_ADMIN_AUTH_TOKEN` | `""` | Bearer token cho Admin API exposure |
-| `CONFIG_CMD_EXEC_WORKER_COUNT` | `2` | Số persistent command worker |
-| `CONFIG_CMD_EXEC_JOB_TIMEOUT_MS` | `3000` | Deadline end-to-end của một command |
 | `CONFIG_MCP_WS_BRIDGE` | `y` | Bật WebSocket bridge tới external MCP broker |
 
 ### Dashboard Web UI
@@ -304,8 +302,7 @@ components/device_state/         Runtime feature state (mutex-protected snapshot
 components/wifi_provisioning/    Wi-Fi STA/SoftAP và captive DNS
 components/ble_central/          NimBLE Central/GATT Client
 components/cbor_codec/           QCBOR và JSON codec
-components/command_dispatcher/   Command registry, ACK routing
-components/command_executor/     Worker task chạy command offline
+components/device_command_service/ Command queue, ACK routing, typed requests
 components/gateway_events/       Event bus cho realtime WebSocket sync
 components/web_server/           Web UI, REST API, WebSocket events và admin auth
 components/mcp_endpoint/         JSON-RPC/MCP endpoint

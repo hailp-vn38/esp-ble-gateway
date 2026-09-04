@@ -7,7 +7,6 @@
 #include "cJSON.h"
 #include "esp_timer.h"
 
-#include "command_executor.h"
 #include "ble_central.h"
 #include "gateway_status.h"
 #include "web_http.h"
@@ -115,30 +114,6 @@ static esp_err_t status_get_handler(httpd_req_t *request)
                 cJSON_AddNumberToObject(schema, "message_alloc_fail",
                                         (double)status.schema_queue_metrics.message_alloc_fail);
             }
-        }
-
-        // Executor runtime metrics + worker stack headroom.
-        command_executor_stats_t executor;
-        uint32_t worker_stack_min = 0;
-        command_executor_get_stats(&executor, &worker_stack_min);
-        cJSON *metrics = cJSON_AddObjectToObject(json, "executor");
-        if (metrics != NULL) {
-            cJSON_AddNumberToObject(metrics, "submitted",
-                                    (double)executor.submitted);
-            cJSON_AddNumberToObject(metrics, "completed",
-                                    (double)executor.completed);
-            cJSON_AddNumberToObject(metrics, "queue_full",
-                                    (double)executor.queue_full);
-            cJSON_AddNumberToObject(metrics, "queue_timeout",
-                                    (double)executor.queue_timeout);
-            cJSON_AddNumberToObject(metrics, "dispatch_timeout",
-                                    (double)executor.dispatch_timeout);
-            cJSON_AddNumberToObject(metrics, "max_queue_depth",
-                                    (double)executor.max_queue_depth);
-            cJSON_AddNumberToObject(metrics, "max_queue_wait_ms",
-                                    (double)executor.max_queue_wait_ms);
-            cJSON_AddNumberToObject(metrics, "worker_stack_min_bytes",
-                                    (double)worker_stack_min);
         }
 
         // WebSocket transport metrics
