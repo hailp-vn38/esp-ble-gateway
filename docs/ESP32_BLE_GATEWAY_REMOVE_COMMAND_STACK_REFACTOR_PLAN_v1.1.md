@@ -1521,7 +1521,7 @@ Expected: no match.
 
 ---
 
-# PHASE 12 - Zero-Consumer Gate and Delete Legacy Components
+# PHASE 12 - Zero-Consumer Gate and Delete Legacy Components ✅ DONE (2026-09-04)
 
 ## Tổng quan
 
@@ -1611,15 +1611,15 @@ idf.py build
 
 ## Checklist
 
-- [ ] Pre-delete consumer gate pass
-- [ ] `components/command_executor/` deleted
-- [ ] `components/command_dispatcher/` deleted
-- [ ] No compatibility shim
-- [ ] No legacy Kconfig symbols
-- [ ] Full repo implementation grep clean
-- [ ] Clean production build pass
-- [ ] Clean test build pass
-- [ ] Hardware boot pass
+- [x] Pre-delete consumer gate pass
+- [x] `components/command_executor/` deleted
+- [x] `components/command_dispatcher/` deleted
+- [x] No compatibility shim
+- [x] No legacy Kconfig symbols
+- [x] Full repo implementation grep clean
+- [x] Clean production build pass
+- [x] Clean test build pass
+- [x] Hardware boot pass
 
 ---
 
