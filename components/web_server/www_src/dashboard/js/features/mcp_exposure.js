@@ -1,12 +1,5 @@
 // --- MCP feature permission controls ---
 const mcpControls = {
-    loadId: 0,
-    enabledByDevice: new Map(),
-
-    async loadExposures(deviceId) {
-        return api.request(`/api/mcp/exposures?device_id=${encodeURIComponent(deviceId)}`);
-    },
-
     async toggleExposure(deviceId, featureId, enable) {
         const payload = {device_id: deviceId, feature_id: featureId, enabled: enable};
         return api.request('/api/mcp/exposures', {
@@ -17,7 +10,7 @@ const mcpControls = {
     },
 
     renderExposureRow(deviceId, feature) {
-        const enabled = feature.control_enabled === true && feature.health === 'enabled';
+        const enabled = feature.mcp_control?.enabled === true && feature.mcp_control.health === 'enabled';
         const row = document.createElement('div');
         row.className = 'flex flex-col sm:flex-row sm:items-center justify-between gap-4 p-5';
 
@@ -46,13 +39,17 @@ const mcpControls = {
         const control = document.createElement('div');
         control.className = 'flex items-center justify-between sm:justify-end gap-3 flex-shrink-0';
         const stateLabel = document.createElement('span');
+        const health = feature.mcp_control?.health || 'missing';
         stateLabel.className = enabled ? 'text-xs font-semibold text-brand-700' : 'text-xs font-semibold text-gray-500';
-        stateLabel.textContent = i18n.t(enabled ? 'device_detail.mcp_enabled' : 'device_detail.mcp_disabled');
+        stateLabel.textContent = health === 'needs_review' ? i18n.t('device_detail.mcp_needs_review') :
+            health === 'orphaned' || health === 'missing' ? i18n.t('device_detail.mcp_unavailable') :
+            i18n.t(enabled ? 'device_detail.mcp_enabled' : 'device_detail.mcp_disabled');
         const switchLabel = document.createElement('label');
         switchLabel.className = 'settings-switch';
         const input = document.createElement('input');
         input.type = 'checkbox';
         input.checked = enabled;
+        input.disabled = health !== 'enabled' && health !== 'disabled';
         input.setAttribute('role', 'switch');
         input.setAttribute('aria-checked', String(enabled));
         input.setAttribute('aria-label', `${feature.semantic_name || feature.feature_id}: ${stateLabel.textContent}`);
@@ -78,42 +75,13 @@ const mcpControls = {
         features.forEach(feature => rows.appendChild(this.renderExposureRow(deviceId, feature)));
     },
 
-    async loadDevice(deviceId) {
-        const requestId = ++this.loadId;
-        const rows = document.getElementById('mcp-feature-controls');
-        rows.innerHTML = `<div class="p-5 text-sm text-gray-400"><i class="ph ph-spinner animate-spin mr-2"></i>${i18n.t('device_detail.mcp_loading')}</div>`;
-
-        try {
-            const data = await this.loadExposures(deviceId);
-            if (requestId !== this.loadId || state.selectedDeviceDetail?.id !== deviceId) return;
-            const features = Array.isArray(data.features) ? data.features : [];
-            this.renderFeatures(deviceId, features);
-        } catch (error) {
-            if (requestId !== this.loadId || state.selectedDeviceDetail?.id !== deviceId) return;
-            rows.replaceChildren();
-            const failure = document.createElement('div');
-            failure.className = 'p-5 bg-amber-50';
-            const title = document.createElement('p');
-            title.className = 'text-sm font-semibold text-amber-800';
-            title.textContent = i18n.t('device_detail.mcp_load_error');
-            const message = document.createElement('p');
-            message.className = 'text-xs text-amber-700 mt-1 break-words';
-            message.textContent = error.message;
-            const hint = document.createElement('p');
-            hint.className = 'text-xs text-amber-700 mt-2';
-            hint.textContent = i18n.t('device_detail.mcp_token_hint');
-            failure.append(title, message, hint);
-            rows.appendChild(failure);
-        }
-    },
-
     async onToggle(deviceId, feature, input, stateLabel) {
-        const enabled = feature.control_enabled === true && feature.health === 'enabled';
+        const enabled = feature.mcp_control?.enabled === true && feature.mcp_control.health === 'enabled';
         input.disabled = true;
         try {
-            await this.toggleExposure(deviceId, feature.feature_id, !enabled);
-            feature.control_enabled = !enabled;
-            feature.health = !enabled ? 'enabled' : 'orphaned';
+            const result = await this.toggleExposure(deviceId, feature.feature_id, !enabled);
+            feature.mcp_control.enabled = result.control_enabled === true;
+            feature.mcp_control.health = result.health || 'missing';
             input.checked = !enabled;
             input.setAttribute('aria-checked', String(!enabled));
             stateLabel.textContent = i18n.t(!enabled ? 'device_detail.mcp_enabled' : 'device_detail.mcp_disabled');
@@ -124,7 +92,8 @@ const mcpControls = {
             input.setAttribute('aria-checked', String(enabled));
             ui.showToast(error.message, 'error');
         } finally {
-            input.disabled = false;
+            input.disabled = feature.mcp_control?.health !== 'enabled' &&
+                feature.mcp_control?.health !== 'disabled';
         }
     }
 };

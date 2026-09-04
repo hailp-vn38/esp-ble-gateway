@@ -1576,7 +1576,7 @@ no POST
 
 ---
 
-# 16. Phase 7 — Make `mcpControls` a pure renderer + mutation controller
+# 16. Phase 7 — Make `mcpControls` a pure renderer + mutation controller ✅ DONE (2026-09-04)
 
 ## File
 
@@ -1658,11 +1658,14 @@ unsupported:
 
 ## Checklist
 
-- [ ] Pure renderer/mutation controller.
-- [ ] No GET method inside MCP UI module.
-- [ ] No command field.
-- [ ] No dynamic capacity.
-- [ ] No tool identity.
+- [x] Pure renderer/mutation controller.
+- [x] No GET method inside MCP UI module.
+- [x] No command field.
+- [x] No dynamic capacity.
+- [x] No tool identity.
+
+> Validation: dashboard assemble, JavaScript syntax, and zero-reference checks
+> passed. Live browser validation remains unavailable.
 
 ---
 
