@@ -1566,7 +1566,7 @@ no POST
 ## Checklist
 
 - [x] No `currentTools`.
-- [ ] No `writable_tool_index` lookup in frontend. (Deferred with obsolete schema compatibility loader to Phase 11.)
+- [x] No `writable_tool_index` lookup in frontend.
 - [x] Existing Web device controls still work via normalized `control` metadata.
 - [x] MCP permission remains independent from Web command transport.
 

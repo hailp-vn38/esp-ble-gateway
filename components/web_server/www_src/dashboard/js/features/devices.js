@@ -613,23 +613,6 @@ const devices = {
         container.appendChild(loading);
     },
 
-    normalizeSchemaFeatures(features, tools) {
-        return features.map(feature => {
-            const tool = feature.writable_tool_index >= 0 ? tools[feature.writable_tool_index] : null;
-            return {
-                ...feature,
-                template: feature.template || {},
-                control: {
-                    writable: Boolean(tool),
-                    write_command: tool?.command,
-                    minimum: tool?.min_value,
-                    maximum: tool?.max_value,
-                    step: tool?.step
-                }
-            };
-        });
-    },
-
     renderFeatures(features, device) {
         const container = document.getElementById('feature-cards');
         container.replaceChildren();
