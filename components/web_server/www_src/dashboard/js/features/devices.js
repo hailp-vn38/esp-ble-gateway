@@ -3,7 +3,6 @@ const devices = {
     schemaLoadId: 0,
     currentSchemaState: 'unknown',
     currentFeatures: [],
-    currentTools: [],
     loadPromise: null,
     _eventsInitialized: false,
     _deviceResyncTimer: null,
@@ -159,8 +158,8 @@ const devices = {
         const features = Array.isArray(schema.features) ? schema.features : [];
         const tools = Array.isArray(schema.tools) ? schema.tools : [];
         this.currentFeatures = features;
-        this.currentTools = tools;
-        this.renderFeatures(features, tools, state.selectedDeviceDetail);
+        this.currentFeatures = this.normalizeSchemaFeatures(features, tools);
+        this.renderFeatures(this.currentFeatures, state.selectedDeviceDetail);
     },
 
     _reconcileFeatureCacheAfterSnapshot(deviceId, snapshotSeq) {
@@ -186,7 +185,7 @@ const devices = {
         }
         // Re-render if features are loaded
         if (this.currentFeatures.length > 0 && state.selectedDeviceDetail?.id === deviceId) {
-            this.renderFeatures(this.currentFeatures, this.currentTools, state.selectedDeviceDetail);
+            this.renderFeatures(this.currentFeatures, state.selectedDeviceDetail);
         }
     },
 
@@ -211,7 +210,6 @@ const devices = {
                 if (this.currentFeatures.length > 0) {
                     this.renderFeatures(
                         this.currentFeatures,
-                        this.currentTools,
                         state.selectedDeviceDetail);
                 }
                 document.getElementById('feature-offline-notice').classList.toggle(
@@ -247,7 +245,7 @@ const devices = {
                 if (ev.valueType === 'bool') feat.state.value_bool = ev.value;
                 else if (ev.valueType === 'int') feat.state.value_int = ev.value;
                 feat.state.updated_at_ms = ev.updatedAtMs;
-                this.renderFeatures(this.currentFeatures, this.currentTools, state.selectedDeviceDetail);
+                this.renderFeatures(this.currentFeatures, state.selectedDeviceDetail);
                 break;
             }
         }
@@ -388,7 +386,6 @@ const devices = {
     openDetailView(dev, updateRoute = true) {
         state.selectedDeviceDetail = dev;
         this.currentFeatures = [];
-        this.currentTools = [];
         document.getElementById('device-advanced-section').open = false;
         this.renderDeviceHeader(dev);
 
@@ -492,7 +489,7 @@ const devices = {
 
     async sendToggle(feature) {
         if (!state.selectedDeviceDetail || !feature) return;
-        const command = feature.write_command || 'toggle';
+        const command = feature.control?.write_command || 'toggle';
         const valueType = feature.property_id === 1 ? 'boolean' : 'none';
         const value = feature.state && feature.state.valid ? !feature.state.value_bool : true;
         await this.sendCommand(command, valueType, value);
@@ -602,7 +599,6 @@ const devices = {
         const loadId = ++this.schemaLoadId;
         const container = document.getElementById('feature-cards');
         this.currentFeatures = [];
-        this.currentTools = [];
         container.replaceChildren();
         this.renderSchemaState('loading');
         this.renderFeaturesLoading(container);
@@ -615,9 +611,8 @@ const devices = {
             this.renderSchemaState(snapshot.state);
             const features = Array.isArray(snapshot.features) ? snapshot.features : [];
             const tools = Array.isArray(snapshot.tools) ? snapshot.tools : [];
-            this.currentFeatures = features;
-            this.currentTools = tools;
-            this.renderFeatures(features, tools, device);
+            this.currentFeatures = this.normalizeSchemaFeatures(features, tools);
+            this.renderFeatures(this.currentFeatures, device);
             // Reconcile cached feature events newer than schema snapshot cursor
             this._reconcileFeatureCacheAfterSnapshot(device.id, result.eventSeq);
             if (syncMcpAfterLoad) await mcpControls.loadDevice(device.id);
@@ -627,7 +622,6 @@ const devices = {
                 state.selectedDeviceDetail?.id !== device.id) return;
             this.renderSchemaState('error');
             this.currentFeatures = [];
-            this.currentTools = [];
             this.renderFeaturesError(container, error, device);
             return false;
         }
@@ -644,36 +638,9 @@ const devices = {
             const detail = result.detail;
             if (loadId !== this.schemaLoadId || state.selectedDeviceDetail?.id !== device.id) return;
             const features = Array.isArray(detail.features) ? detail.features : [];
-            const tools = [];
-            const legacyFeatures = features.map(feature => {
-                const control = feature.control || {};
-                const semantic = feature.semantic || {};
-                const normalized = {
-                    feature_id: feature.feature_id,
-                    property_id: feature.property_id,
-                    template: {
-                        semantic_name: semantic.name,
-                        primary_property: semantic.primary_property
-                    },
-                    write_command: control.write_command,
-                    writable_tool_index: -1,
-                    state: feature.state
-                };
-                if (control.writable && control.write_command) {
-                    normalized.writable_tool_index = tools.length;
-                    tools.push({
-                        command: control.write_command,
-                        min_value: control.minimum ?? 0,
-                        max_value: control.maximum ?? 100,
-                        step: control.step ?? 1
-                    });
-                }
-                return normalized;
-            });
             this.renderSchemaState(detail.schema?.state || 'unknown');
-            this.currentFeatures = legacyFeatures;
-            this.currentTools = tools;
-            this.renderFeatures(legacyFeatures, tools, device);
+            this.currentFeatures = features;
+            this.renderFeatures(features, device);
             mcpControls.renderFeatures(device.id, features.map(feature => ({
                 feature_id: feature.feature_id,
                 semantic_name: feature.semantic?.name,
@@ -687,7 +654,6 @@ const devices = {
             if (loadId !== this.schemaLoadId || state.selectedDeviceDetail?.id !== device.id) return;
             this.renderSchemaState('error');
             this.currentFeatures = [];
-            this.currentTools = [];
             this.renderFeaturesError(container, error, device);
             return false;
         }
@@ -700,7 +666,24 @@ const devices = {
         container.appendChild(loading);
     },
 
-    renderFeatures(features, tools, device) {
+    normalizeSchemaFeatures(features, tools) {
+        return features.map(feature => {
+            const tool = feature.writable_tool_index >= 0 ? tools[feature.writable_tool_index] : null;
+            return {
+                ...feature,
+                template: feature.template || {},
+                control: {
+                    writable: Boolean(tool),
+                    write_command: tool?.command,
+                    minimum: tool?.min_value,
+                    maximum: tool?.max_value,
+                    step: tool?.step
+                }
+            };
+        });
+    },
+
+    renderFeatures(features, device) {
         const container = document.getElementById('feature-cards');
         container.replaceChildren();
         if (!features.length) {
@@ -708,10 +691,10 @@ const devices = {
             return;
         }
         features.forEach(feature =>
-            container.appendChild(this.renderFeatureCard(feature, tools, device)));
+            container.appendChild(this.renderFeatureCard(feature, device)));
     },
 
-    renderFeatureCard(feature, tools, device) {
+    renderFeatureCard(feature, device) {
         const card = document.createElement('div');
         card.className = 'rounded-lg border border-gray-200 bg-gray-50 p-4';
 
@@ -751,7 +734,7 @@ const devices = {
         const control = document.createElement('div');
         control.className = 'flex flex-col sm:flex-row gap-2';
 
-        if (feature.template && feature.write_command) {
+        if (feature.template && feature.control?.writable && feature.control.write_command) {
             const tpl = feature.template;
             if (tpl.primary_property === 1) {
                 /* ON/OFF property → toggle button */
@@ -767,10 +750,9 @@ const devices = {
                 control.appendChild(toggleBtn);
             } else if (tpl.primary_property === 2) {
                 /* LEVEL property → slider or integer input */
-                const tool = feature.writable_tool_index >= 0 ? tools[feature.writable_tool_index] : null;
-                const min = tool ? tool.min_value : 0;
-                const max = tool ? tool.max_value : 100;
-                const step = tool ? tool.step : 1;
+                const min = feature.control.minimum ?? 0;
+                const max = feature.control.maximum ?? 100;
+                const step = feature.control.step ?? 1;
                 const input = document.createElement('input');
                 input.type = 'range';
                 input.min = min;
@@ -784,7 +766,7 @@ const devices = {
                 applyBtn.disabled = device.status !== 'online';
                 applyBtn.className = 'px-4 py-2 bg-brand-600 text-white rounded-lg hover:bg-brand-700 transition-colors text-sm font-medium disabled:opacity-50 disabled:cursor-not-allowed';
                 applyBtn.textContent = i18n.t('device_detail.apply');
-                applyBtn.onclick = () => this.sendCommand(feature.write_command, 'integer', Number(input.value), [input, applyBtn]);
+                applyBtn.onclick = () => this.sendCommand(feature.control.write_command, 'integer', Number(input.value), [input, applyBtn]);
                 control.append(input, applyBtn);
             } else {
                 /* Unknown property → action button */
@@ -793,7 +775,7 @@ const devices = {
                 actionBtn.disabled = device.status !== 'online';
                 actionBtn.className = 'w-full sm:w-auto px-4 py-2 bg-brand-600 text-white rounded-lg hover:bg-brand-700 transition-colors text-sm font-medium flex-shrink-0 disabled:opacity-50 disabled:cursor-not-allowed';
                 actionBtn.textContent = i18n.t('device_detail.run');
-                actionBtn.onclick = () => this.sendCommand(feature.write_command, 'none', null, [actionBtn]);
+                actionBtn.onclick = () => this.sendCommand(feature.control.write_command, 'none', null, [actionBtn]);
                 control.appendChild(actionBtn);
             }
         } else {
@@ -922,7 +904,6 @@ const devices = {
             state.schemaRevisionByDevice.delete(deviceId);
             state.selectedDeviceDetail = null;
             this.currentFeatures = [];
-            this.currentTools = [];
             this._pendingSchemaRefresh = null;
 
             ui.showToast(i18n.t('device_detail.removed'), "info");

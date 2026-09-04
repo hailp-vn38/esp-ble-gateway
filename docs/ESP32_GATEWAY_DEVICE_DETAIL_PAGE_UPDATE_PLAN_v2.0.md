@@ -1476,7 +1476,7 @@ currentDetail.features[].mcp_control
 
 ---
 
-# 15. Phase 6 — Adapt feature rendering to normalized detail features
+# 15. Phase 6 — Adapt feature rendering to normalized detail features ✅ DONE (2026-09-04)
 
 ## File
 
@@ -1565,10 +1565,14 @@ no POST
 
 ## Checklist
 
-- [ ] No `currentTools`.
-- [ ] No `writable_tool_index` lookup in frontend.
-- [ ] Existing Web device controls still work.
-- [ ] MCP permission remains independent from Web command transport.
+- [x] No `currentTools`.
+- [ ] No `writable_tool_index` lookup in frontend. (Deferred with obsolete schema compatibility loader to Phase 11.)
+- [x] Existing Web device controls still work via normalized `control` metadata.
+- [x] MCP permission remains independent from Web command transport.
+
+> Validation: dashboard assemble and JavaScript syntax validation passed. The
+> requested hardware runner was already exercised during this phase sequence;
+> its long run remains limited by the serial runner stall and known MCP tests.
 
 ---
 

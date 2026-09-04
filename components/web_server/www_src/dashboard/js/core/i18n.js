@@ -409,7 +409,7 @@ const i18n = {
             } else if (schemaState === 'error') {
                 void devices.loadDetail(state.selectedDeviceDetail);
             } else {
-                devices.renderFeatures(devices.currentFeatures, devices.currentTools, state.selectedDeviceDetail);
+                devices.renderFeatures(devices.currentFeatures, state.selectedDeviceDetail);
             }
             if (schemaState !== 'error') {
             }
