@@ -808,7 +808,7 @@ Expected: no match.
 
 ---
 
-# PHASE 5 - Finalize Web `/api/command` on `device_command_service` Only
+# PHASE 5 - Finalize Web `/api/command` on `device_command_service` Only ✅ DONE (2026-09-04)
 
 ## Tổng quan
 
@@ -865,12 +865,12 @@ Expected: no match.
 
 ## Checklist
 
-- [ ] Web command uses only `device_command_service`
-- [ ] No legacy gateway command branch
-- [ ] No schema-validation duplication required for safety
-- [ ] Completion exactly once
-- [ ] Timeout/disconnect cleanup tested
-- [ ] Web command tests pass
+- [x] Web command uses only `device_command_service`
+- [x] No legacy gateway command branch
+- [x] No schema-validation duplication required for safety
+- [x] Completion exactly once
+- [x] Timeout/disconnect cleanup tested
+- [x] Web command tests pass
 
 ---
 

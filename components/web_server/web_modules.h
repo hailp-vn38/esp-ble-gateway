@@ -5,7 +5,6 @@
 #include <stddef.h>
 
 #include "esp_http_server.h"
-#include "command_dispatcher.h"
 
 /* Wrapper around httpd_uri_t that default-initializes WS fields to false.
  * Required when CONFIG_HTTPD_WS_SUPPORT=y to avoid missing-field-initializer
@@ -24,6 +23,7 @@ esp_err_t web_gateway_api_register(httpd_handle_t server);
 
 esp_err_t web_device_api_register(httpd_handle_t server);
 esp_err_t web_command_api_register(httpd_handle_t server);
+size_t web_command_active_contexts(void);
 esp_err_t web_device_schema_api_register(httpd_handle_t server);
 
 esp_err_t web_system_api_register_gateway(httpd_handle_t server);
@@ -50,9 +50,5 @@ void web_event_ws_get_stats(int *active_clients, uint32_t *ring_used,
                             uint32_t *send_error_total,
                             uint32_t *connect_total,
                             uint32_t *disconnect_total);
-
-// Shared helper used by command and device APIs for async dispatch results.
-void web_send_dispatch_result(httpd_req_t *request,
-                              const dispatch_result_t *result);
 
 #endif // WEB_MODULES_H

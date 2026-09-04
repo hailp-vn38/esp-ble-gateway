@@ -6,8 +6,6 @@
 #include <string.h>
 
 #include "cJSON.h"
-#include "command_dispatcher.h"
-#include "command_executor.h"
 #include "device_command_service.h"
 #include "esp_log.h"
 #include "freertos/FreeRTOS.h"
@@ -15,6 +13,7 @@
 #include "web_http.h"
 
 static const char *TAG = "web_command_api";
+static size_t s_active_contexts;
 
 typedef struct {
     httpd_req_t *request;
@@ -88,6 +87,7 @@ static void device_command_completion(const device_command_result_t *result,
     if (httpd_req_async_handler_complete(context->request) != ESP_OK) {
         ESP_LOGW(TAG, "Could not complete asynchronous device command");
     }
+    __atomic_sub_fetch(&s_active_contexts, 1, __ATOMIC_RELAXED);
     free(context);
 }
 
@@ -106,128 +106,22 @@ static esp_err_t dispatch_device_command_async(httpd_req_t *request,
         return web_send_api_error(request, "503 Service Unavailable",
                                   "Could not start asynchronous dispatch");
     }
+    __atomic_add_fetch(&s_active_contexts, 1, __ATOMIC_RELAXED);
 
     if (device_command_service_submit(req, device_command_completion, context) !=
         ESP_OK) {
         web_send_api_error(context->request, "503 Service Unavailable",
                            "Command service is full");
         httpd_req_async_handler_complete(context->request);
+        __atomic_sub_fetch(&s_active_contexts, 1, __ATOMIC_RELAXED);
         free(context);
     }
     return ESP_OK;
 }
 
-/* ── Legacy gateway command path (executor) ──────────────────────────── */
-
-static const char *http_status_for(const dispatch_result_t *result)
+size_t web_command_active_contexts(void)
 {
-    switch (result->status) {
-    case DISPATCH_STATUS_OK:
-        return "200 OK";
-    case DISPATCH_STATUS_INVALID_ARGUMENT:
-    case DISPATCH_STATUS_UNSUPPORTED_COMMAND:
-    case DISPATCH_STATUS_INVALID_COMMAND_ARGUMENT:
-        return "400 Bad Request";
-    case DISPATCH_STATUS_NOT_FOUND:
-        return "404 Not Found";
-    case DISPATCH_STATUS_BUSY:
-    case DISPATCH_STATUS_CONFLICT:
-        return "409 Conflict";
-    case DISPATCH_STATUS_TIMEOUT:
-        return "504 Gateway Timeout";
-    case DISPATCH_STATUS_RESOURCE_EXHAUSTED:
-        return "507 Insufficient Storage";
-    case DISPATCH_STATUS_NOT_CONNECTED:
-    case DISPATCH_STATUS_TRANSPORT_ERROR:
-    case DISPATCH_STATUS_DEVICE_ERROR:
-        return "502 Bad Gateway";
-    default:
-        return "500 Internal Server Error";
-    }
-}
-
-static const char *error_code_for(const dispatch_result_t *result)
-{
-    switch (result->status) {
-    case DISPATCH_STATUS_INVALID_ARGUMENT: return "invalid_request";
-    case DISPATCH_STATUS_NOT_FOUND: return "device_not_found";
-    case DISPATCH_STATUS_BUSY: return "device_busy";
-    case DISPATCH_STATUS_CONFLICT: return "conflict";
-    case DISPATCH_STATUS_RESOURCE_EXHAUSTED: return "store_full";
-    case DISPATCH_STATUS_TIMEOUT: return "command_timeout";
-    case DISPATCH_STATUS_NOT_CONNECTED: return "device_not_connected";
-    case DISPATCH_STATUS_TRANSPORT_ERROR: return "transport_error";
-    case DISPATCH_STATUS_DEVICE_ERROR: return "device_error";
-    case DISPATCH_STATUS_UNSUPPORTED_COMMAND: return "unsupported_command";
-    case DISPATCH_STATUS_INVALID_COMMAND_ARGUMENT:
-        return "invalid_command_argument";
-    default: return "internal_error";
-    }
-}
-
-void web_send_dispatch_result(httpd_req_t *request,
-                              const dispatch_result_t *result)
-{
-    bool ok = dispatch_result_is_ok(result);
-    if (!ok) httpd_resp_set_status(request, http_status_for(result));
-
-    cJSON *json = cJSON_CreateObject();
-    if (json != NULL) {
-        cJSON_AddBoolToObject(json, "success", ok);
-        cJSON_AddNumberToObject(json, "status", (int)result->status);
-        cJSON_AddStringToObject(
-            json, "message",
-            result->format == DISPATCH_RESULT_TEXT ? result->payload : "");
-        if (!ok) {
-            cJSON *error = cJSON_AddObjectToObject(json, "error");
-            if (error != NULL) {
-                cJSON_AddStringToObject(error, "code",
-                                        error_code_for(result));
-            }
-        }
-        if (result->format == DISPATCH_RESULT_JSON) {
-            cJSON *data = cJSON_Parse(result->payload);
-            if (data != NULL) cJSON_AddItemToObject(json, "data", data);
-        }
-    }
-    web_send_json(request, json);
-}
-
-static void gateway_command_completion(const dispatch_result_t *result,
-                                       void *arg)
-{
-    command_async_context_t *context = arg;
-    web_send_dispatch_result(context->request, result);
-    if (httpd_req_async_handler_complete(context->request) != ESP_OK) {
-        ESP_LOGW(TAG, "Could not complete asynchronous command request");
-    }
-    free(context);
-}
-
-static esp_err_t dispatch_gateway_command_async(httpd_req_t *request,
-                                                const gw_message_t *message)
-{
-    command_async_context_t *context = malloc(sizeof(*context));
-    if (context == NULL) {
-        return web_send_api_error(request, "503 Service Unavailable",
-                                  "Could not allocate command context");
-    }
-
-    esp_err_t error = httpd_req_async_handler_begin(request, &context->request);
-    if (error != ESP_OK) {
-        free(context);
-        return web_send_api_error(request, "503 Service Unavailable",
-                                  "Could not start asynchronous dispatch");
-    }
-
-    if (command_executor_submit(message, gateway_command_completion, context) !=
-        ESP_OK) {
-        web_send_api_error(context->request, "503 Service Unavailable",
-                           "Command executor is full");
-        httpd_req_async_handler_complete(context->request);
-        free(context);
-    }
-    return ESP_OK;
+    return __atomic_load_n(&s_active_contexts, __ATOMIC_RELAXED);
 }
 
 static esp_err_t command_post_handler(httpd_req_t *request)

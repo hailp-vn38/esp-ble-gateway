@@ -3,5 +3,6 @@ idf_component_register(
          "test_web_api_baseline.c"
     INCLUDE_DIRS "." "../" "../../device_management"
     PRIV_REQUIRES unity web_server esp_netif lwip gateway_events
-                  command_dispatcher device_management device_store
+                  device_command_service device_management device_schema
+                  device_store
 )
