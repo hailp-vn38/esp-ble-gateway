@@ -17,6 +17,9 @@ typedef struct {
     mcp_request_context_t protocol;
     mcp_responder_t responder;
     bool notification;
+    bool semantic_control;
+    char device_id[GW_MSG_DEVICE_ID_LEN];
+    char feature_id[GW_FEATURE_ID_LEN];
 } mcp_async_context_t;
 
 static bool responder_valid(const mcp_responder_t *responder)
@@ -158,8 +161,11 @@ static void device_command_completion(const device_command_result_t *result,
     mcp_async_context_t *context = arg;
     if (!context->notification && responder_alive(&context->responder)) {
         mcp_rpc_error_t error = {0};
-        cJSON *payload =
-            mcp_tools_format_device_result(result, &context->protocol, &error);
+        cJSON *payload = context->semantic_control
+            ? mcp_device_control_format_completion(
+                  context->device_id, context->feature_id, result,
+                  &context->protocol, &error)
+            : mcp_tools_format_device_result(result, &context->protocol, &error);
         if (payload != NULL) {
             send_result(&context->responder, payload, context->id);
         } else {
@@ -277,52 +283,66 @@ static esp_err_t handle_tools_call(const mcp_responder_t *responder,
         const cJSON *tool_args = cJSON_GetObjectItemCaseSensitive(params, "arguments");
         const cJSON *local_params = cJSON_IsObject(tool_args) ? tool_args : params;
 
-        mcp_rpc_error_t local_err = {0};
-        cJSON *result = mcp_device_control_execute(local_params, protocol,
-                                                   &local_err);
-        if (result == NULL) {
-            if (local_err.code == 0) {
-                /* Async path — device_control dispatches internally */
-                if (responder->clone == NULL) {
-                    return notification ? ESP_ERR_INVALID_STATE
-                                        : send_error(responder, -32603,
-                                                     "Async unavailable", id,
-                                                     "503 Service Unavailable");
-                }
-                mcp_async_context_t *async = calloc(1, sizeof(*async));
-                if (async == NULL) {
-                    return notification ? ESP_ERR_NO_MEM
-                                        : send_error(responder, -32603,
-                                                     "Out of memory", id,
-                                                     "503 Service Unavailable");
-                }
-                async->id = id != NULL ? cJSON_Duplicate(id, true) : NULL;
-                async->protocol = *protocol;
-                async->notification = notification;
-                esp_err_t clone_result = responder->clone(responder, &async->responder);
-                if (clone_result != ESP_OK) {
-                    cJSON_Delete(async->id);
-                    free(async);
-                    return notification ? clone_result
-                                        : send_error(responder, -32603,
-                                                     "Async unavailable", id,
-                                                     "503 Service Unavailable");
-                }
-                esp_err_t submitted = mcp_device_control_dispatch_async(
-                    local_params, &async->responder, async->id, &async->protocol);
-                if (submitted == ESP_OK) return ESP_OK;
-                responder_release(&async->responder);
+        mcp_device_control_plan_t plan;
+        esp_err_t resolved = mcp_device_control_resolve(local_params, protocol,
+                                                        &plan);
+        if (resolved != ESP_OK || plan.kind == MCP_DEVICE_CONTROL_EXEC_ERROR) {
+            return send_error(responder,
+                              plan.error.code != 0 ? plan.error.code : -32603,
+                              plan.error.message != NULL ? plan.error.message
+                                                         : "Internal error",
+                              id, NULL);
+        }
+        if (plan.kind == MCP_DEVICE_CONTROL_EXEC_ASYNC_SET) {
+            if (responder->clone == NULL) {
+                return notification ? ESP_ERR_INVALID_STATE
+                                    : send_error(responder, -32603,
+                                                 "Async unavailable", id,
+                                                 "503 Service Unavailable");
+            }
+            mcp_async_context_t *async = calloc(1, sizeof(*async));
+            if (async == NULL) {
+                return notification ? ESP_ERR_NO_MEM
+                                    : send_error(responder, -32603,
+                                                 "Out of memory", id,
+                                                 "503 Service Unavailable");
+            }
+            async->id = id != NULL ? cJSON_Duplicate(id, true) : NULL;
+            if (id != NULL && async->id == NULL) {
+                free(async);
+                return send_error(responder, -32603, "Out of memory", id,
+                                  "503 Service Unavailable");
+            }
+            async->protocol = *protocol;
+            async->notification = notification;
+            async->semantic_control = true;
+            strlcpy(async->device_id, plan.device_id, sizeof(async->device_id));
+            strlcpy(async->feature_id, plan.feature_id, sizeof(async->feature_id));
+            esp_err_t cloned = responder->clone(responder, &async->responder);
+            if (cloned != ESP_OK) {
                 cJSON_Delete(async->id);
                 free(async);
-                if (notification) return submitted;
-                return send_error(responder,
-                                  submitted == ESP_ERR_NO_MEM ? MCP_ERR_GATEWAY_BUSY : -32603,
-                                  submitted == ESP_ERR_NO_MEM ? "Busy: command queue full"
-                                                              : "Service unavailable",
-                                  id, "503 Service Unavailable");
+                return notification ? cloned
+                                    : send_error(responder, -32603,
+                                                 "Async unavailable", id,
+                                                 "503 Service Unavailable");
             }
-            return send_error(responder, local_err.code, local_err.message, id, NULL);
+            esp_err_t submitted = device_command_service_submit(
+                &plan.request, device_command_completion, async);
+            if (submitted == ESP_OK) return ESP_OK;
+            responder_release(&async->responder);
+            cJSON_Delete(async->id);
+            free(async);
+            if (notification) return submitted;
+            return send_error(responder,
+                              submitted == ESP_ERR_NO_MEM ? MCP_ERR_GATEWAY_BUSY
+                                                          : -32603,
+                              submitted == ESP_ERR_NO_MEM
+                                  ? "Busy: command queue full"
+                                  : "Service unavailable",
+                              id, "503 Service Unavailable");
         }
+        cJSON *result = plan.local_result;
         if (notification) {
             cJSON_Delete(result);
             return send_none(responder);

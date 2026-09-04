@@ -273,7 +273,8 @@ mcp_resolve_status_t mcp_tools_resolve(const cJSON *params, gw_message_t *msg,
                                    error);
     }
 
-    // 2. Try dynamic catalog (§32 — tool resolution order).
+    // 2. Dynamic catalog is executable only in the dynamic profile.
+#if !CONFIG_MCP_TOOL_SURFACE_COMPACT
     const mcp_tool_binding_t *dyn_binding = mcp_tool_catalog_find_ptr(tool_name);
     if (dyn_binding != NULL) {
         mcp_tool_binding_t binding;
@@ -390,6 +391,7 @@ mcp_resolve_status_t mcp_tools_resolve(const cJSON *params, gw_message_t *msg,
 
         return MCP_RESOLVE_OK;
     }
+#endif
 
     // 3. Unknown tool.
     *error = (mcp_rpc_error_t){-32602, "unknown tool"};

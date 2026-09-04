@@ -10,6 +10,7 @@
 #include "freertos/queue.h"
 #include "freertos/task.h"
 #include "memory_policy.h"
+#include "device_schema.h"
 
 static const char *TAG = "dev_cmd_svc";
 
@@ -90,6 +91,9 @@ static device_command_transport_hooks_t s_hooks = {
     .send_command = default_send_command,
     .is_connected = default_is_connected,
 };
+
+static void build_wire_message(const device_command_request_t *request,
+                               uint32_t request_id, gw_message_t *msg);
 
 /* ── Helpers ─────────────────────────────────────────────────────────── */
 
@@ -187,6 +191,22 @@ static device_command_status_t validate_request(
     case DEVICE_CMD_ORIGIN_CONTROL:
         if (request->command[0] == '\0') {
             return DEVICE_CMD_STATUS_INVALID_ARGUMENT;
+        }
+        {
+            gw_message_t message;
+            build_wire_message(request, 0, &message);
+            message.has_request_id = 0;
+            device_schema_validation_t validation =
+                device_schema_validate_command(&message, NULL);
+            if (validation == DEVICE_SCHEMA_VALID_UNSUPPORTED_COMMAND) {
+                return DEVICE_CMD_STATUS_UNSUPPORTED_COMMAND;
+            }
+            if (validation == DEVICE_SCHEMA_VALID_ARGUMENT) {
+                return DEVICE_CMD_STATUS_INVALID_ARGUMENT;
+            }
+            if (validation != DEVICE_SCHEMA_VALID) {
+                return DEVICE_CMD_STATUS_UNSUPPORTED_COMMAND;
+            }
         }
         break;
 

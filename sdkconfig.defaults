@@ -1,4 +1,6 @@
 # ============================================================
+CONFIG_MCP_TOOL_SURFACE_COMPACT=y
+# CONFIG_MCP_TOOL_SURFACE_DYNAMIC is not set
 # ESP32-S3 — Production sdkconfig.defaults
 # Board: ESP32-S3 / 16 MB Flash / 8 MB OCTAL PSRAM / 512 KB SRAM
 # Toolchain: ESP-IDF v6.1-rc1

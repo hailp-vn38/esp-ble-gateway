@@ -117,29 +117,24 @@ mcp_policy_result_t mcp_policy_check_feature_control(
         return MCP_POLICY_DENY_COMMAND;
     }
 
-    /* 5. Exposure: control_enabled */
+    /* 5. A persisted semantic grant is mandatory. */
     mcp_tool_exposure_t exposure;
     if (mcp_tool_exposure_get_feature(device_id, feature_id,
-                                       &exposure) == ESP_OK) {
-        if (!exposure.control_enabled) {
-            return MCP_POLICY_DENY_COMMAND;
-        }
-        /* 6. Exposure: health == ENABLED */
-        if (exposure.state != MCP_EXPOSURE_ENABLED) {
-            return MCP_POLICY_CAPABILITY_UNKNOWN;
-        }
+                                      &exposure) != ESP_OK) {
+        return MCP_POLICY_DENY_COMMAND;
     }
-    /* If no exposure record, allow (default behavior) */
+    if (!exposure.control_enabled) return MCP_POLICY_DENY_COMMAND;
+
+    /* 6. Capability health must have been explicitly accepted. */
+    if (exposure.state != MCP_EXPOSURE_ENABLED) {
+        return MCP_POLICY_CAPABILITY_UNKNOWN;
+    }
 
     /* 7. Digest matches */
     uint8_t current_digest[MCP_CAPABILITY_DIGEST_LEN];
     mcp_tool_digest_compute(resolved_tool, current_digest);
-    if (mcp_tool_exposure_get_feature(device_id, feature_id,
-                                       &exposure) == ESP_OK) {
-        if (!mcp_tool_digest_match(current_digest,
-                                    exposure.capability_digest)) {
-            return MCP_POLICY_CAPABILITY_UNKNOWN;
-        }
+    if (!mcp_tool_digest_match(current_digest, exposure.capability_digest)) {
+        return MCP_POLICY_CAPABILITY_UNKNOWN;
     }
 
     /* 8. Destructive grant allowed */

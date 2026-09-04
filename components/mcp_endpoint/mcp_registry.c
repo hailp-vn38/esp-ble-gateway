@@ -14,12 +14,6 @@
 
 #define MAX_LEN_OF(field) ((int)(sizeof(((gw_message_t *)0)->field) - 1))
 
-#define SCHEMA_FAIL(schema)       \
-    do {                          \
-        cJSON_Delete(schema);     \
-        return NULL;              \
-    } while (0)
-
 static cJSON *new_object_schema(void)
 {
     cJSON *schema = cJSON_CreateObject();
@@ -78,22 +72,28 @@ static cJSON *schema_device_control(void)
     cJSON *feat = cJSON_CreateObject();
     if (feat == NULL) { cJSON_Delete(schema); return NULL; }
     cJSON_AddStringToObject(feat, "type", "string");
-    cJSON_AddStringToObject(feat, "description", "Feature id or semantic name");
+    cJSON_AddStringToObject(feat, "description", "Optional for describe; required for read/set. Feature id or trusted semantic name");
     cJSON_AddItemToObject(properties, "feature", feat);
 
     /* bool_value: optional boolean for set */
     cJSON *bool_val = cJSON_CreateObject();
     if (bool_val == NULL) { cJSON_Delete(schema); return NULL; }
     cJSON_AddStringToObject(bool_val, "type", "boolean");
-    cJSON_AddStringToObject(bool_val, "description", "Boolean value for set (when type is bool)");
+    cJSON_AddStringToObject(bool_val, "description", "BOOL set only");
     cJSON_AddItemToObject(properties, "bool_value", bool_val);
 
     /* int_value: optional integer for set */
     cJSON *int_val = cJSON_CreateObject();
     if (int_val == NULL) { cJSON_Delete(schema); return NULL; }
     cJSON_AddStringToObject(int_val, "type", "integer");
-    cJSON_AddStringToObject(int_val, "description", "Integer value for set (when type is int)");
+    cJSON_AddStringToObject(int_val, "description", "INT set only");
     cJSON_AddItemToObject(properties, "int_value", int_val);
+
+    cJSON *required = cJSON_CreateArray();
+    if (required == NULL) { cJSON_Delete(schema); return NULL; }
+    cJSON_AddItemToArray(required, cJSON_CreateString("device"));
+    cJSON_AddItemToArray(required, cJSON_CreateString("operation"));
+    cJSON_AddItemToObject(schema, "required", required);
 
     return schema;
 }
@@ -102,28 +102,29 @@ static cJSON *schema_device_control(void)
 
 // Production static tools: get_status + list_devices always present.
 // device_control is added in compact mode.
-static const mcp_tool_desc_t MCP_STATIC_TOOLS[] = {
+static const mcp_tool_desc_t MCP_STATIC_TOOLS[] __attribute__((unused)) = {
     {"get_status", "Get gateway and BLE status", schema_empty, true, false},
-    {"list_devices", "List devices known by the gateway", schema_empty, true, false},
+    {"list_devices", "List devices and semantic capability status. Use a returned device_id with device_control operation=describe to discover controllable features.", schema_empty, true, false},
 };
 
-static const mcp_tool_desc_t MCP_COMPACT_TOOLS[] = {
+static const mcp_tool_desc_t MCP_COMPACT_TOOLS[] __attribute__((unused)) = {
     {"get_status", "Get gateway and BLE status", schema_empty, true, false},
-    {"list_devices", "List devices known by the gateway", schema_empty, true, false},
-    {"device_control", "Control a device feature (describe/read/set)",
+    {"list_devices", "List devices known by the gateway, including semantic control hints. Use a returned device_id and controls[].feature_id with device_control to set a feature directly. Call device_control describe only when more feature details are required.", schema_empty, true, false},
+    {"device_control", "Describe, read, or set semantic device features. For set, prefer device_id and feature_id returned by list_devices. Call describe with only device to discover all semantic features.",
      schema_device_control, false, false},
 };
 
 const mcp_tool_desc_t *mcp_registry_find(const char *name)
 {
-    /* Check compact tools first (device_control) */
+#if CONFIG_MCP_TOOL_SURFACE_COMPACT
     for (size_t i = 0; i < sizeof(MCP_COMPACT_TOOLS) / sizeof(MCP_COMPACT_TOOLS[0]); i++) {
         if (strcmp(MCP_COMPACT_TOOLS[i].name, name) == 0) return &MCP_COMPACT_TOOLS[i];
     }
-    /* Then static tools */
+#else
     for (size_t i = 0; i < sizeof(MCP_STATIC_TOOLS) / sizeof(MCP_STATIC_TOOLS[0]); i++) {
         if (strcmp(MCP_STATIC_TOOLS[i].name, name) == 0) return &MCP_STATIC_TOOLS[i];
     }
+#endif
     return NULL;
 }
 

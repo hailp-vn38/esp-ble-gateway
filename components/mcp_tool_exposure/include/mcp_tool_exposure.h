@@ -14,6 +14,20 @@ extern "C" {
 
 #define MCP_DYNAMIC_TOOL_NAME_MAX 128
 #define MCP_CAPABILITY_DIGEST_LEN 16
+#define MCP_SEMANTIC_CONTROL_HINT_MAX 4
+
+typedef struct {
+    char feature_id[GW_FEATURE_ID_LEN];
+    char semantic_name[24];
+    char property_name[24];
+    uint8_t value_type;
+    bool has_min;
+    int32_t min_value;
+    bool has_max;
+    int32_t max_value;
+    bool has_step;
+    uint32_t step;
+} mcp_control_hint_t;
 
 typedef enum {
     MCP_EXPOSURE_ENABLED = 0,
@@ -135,6 +149,16 @@ esp_err_t mcp_tool_exposure_set_feature_enabled(const char *device_id,
 
 // Policy revision tracking (independent of catalog revision).
 uint32_t mcp_tool_exposure_get_policy_revision(void);
+
+// Return a bounded, committed-order list of AI-safe writable controls. A hint
+// is emitted only when its template, exposure state, digest and destructive
+// policy are all valid. SET must still re-check the same policy.
+esp_err_t mcp_semantic_control_get_hints(
+    const char *device_id,
+    mcp_control_hint_t *out,
+    size_t capacity,
+    size_t *out_count,
+    bool *out_truncated);
 
 #ifdef __cplusplus
 }

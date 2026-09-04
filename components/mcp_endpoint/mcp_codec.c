@@ -196,7 +196,9 @@ int mcp_protocol_detect(const cJSON *root, const mcp_wire_context_t *wire,
             }
             ctx->era = MCP_ERA_2024_11_05;
         } else if (strcmp(ctx->protocol_version, MCP_PROTOCOL_VERSION_2025) ==
-                   0) {
+                       0 ||
+                   strcmp(ctx->protocol_version,
+                          MCP_PROTOCOL_VERSION_2025_06) == 0) {
             if (!CONFIG_MCP_COMPAT_2025) {
                 cJSON *data =
                     mcp_protocol_build_unsupported_version_data("2025-11-25");
@@ -391,13 +393,19 @@ cJSON *mcp_protocol_build_initialize_result(const cJSON *params,
     const char *requested_protocol = cJSON_GetStringValue(
         cJSON_GetObjectItemCaseSensitive(params, "protocolVersion"));
 
-    // Exact support for the observed Xiaozhi version; preserve the existing
-    // 2025 compatibility counter-offer for unknown legacy proposals.
-    const char *selected_protocol =
-        requested_protocol != NULL &&
-                strcmp(requested_protocol, MCP_PROTOCOL_VERSION_2024) == 0
-            ? MCP_PROTOCOL_VERSION_2024
-            : MCP_PROTOCOL_VERSION_2025;
+    // Echo every explicitly supported compatibility version. Unknown legacy
+    // proposals retain the existing 2025-11-25 counter-offer behavior.
+    const char *selected_protocol = MCP_PROTOCOL_VERSION_2025;
+    if (requested_protocol != NULL) {
+        if (strcmp(requested_protocol, MCP_PROTOCOL_VERSION_2024) == 0) {
+            selected_protocol = MCP_PROTOCOL_VERSION_2024;
+        } else if (strcmp(requested_protocol,
+                          MCP_PROTOCOL_VERSION_2025_06) == 0) {
+            selected_protocol = MCP_PROTOCOL_VERSION_2025_06;
+        } else if (strcmp(requested_protocol, MCP_PROTOCOL_VERSION_2025) == 0) {
+            selected_protocol = MCP_PROTOCOL_VERSION_2025;
+        }
+    }
 
     cJSON *result = cJSON_CreateObject();
     if (result == NULL) {
@@ -460,6 +468,8 @@ cJSON *mcp_protocol_build_unsupported_version_data(const char *requested)
                              cJSON_CreateString(MCP_PROTOCOL_VERSION_2024));
         cJSON_AddItemToArray(supported,
                              cJSON_CreateString(MCP_PROTOCOL_VERSION_2025));
+        cJSON_AddItemToArray(supported,
+                             cJSON_CreateString(MCP_PROTOCOL_VERSION_2025_06));
     }
     cJSON_AddItemToObject(data, "supported", supported);
 
@@ -512,6 +522,8 @@ cJSON *mcp_codec_build_discovery(void)
     if (CONFIG_MCP_COMPAT_2025) {
         cJSON_AddItemToArray(supported_versions,
                              cJSON_CreateString(MCP_PROTOCOL_VERSION_2025));
+        cJSON_AddItemToArray(supported_versions,
+                             cJSON_CreateString(MCP_PROTOCOL_VERSION_2025_06));
     }
     cJSON_AddItemToObject(result, "supportedVersions", supported_versions);
 

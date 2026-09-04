@@ -5,430 +5,378 @@
 #include <string.h>
 
 #include "cJSON.h"
-#include "device_command_service.h"
 #include "device_schema.h"
 #include "device_state.h"
 #include "device_template.h"
-#include "esp_log.h"
-#include "mcp_tool_exposure.h"
 
-static const char *TAG = "mcp_device_ctrl";
+typedef enum { OP_DESCRIBE = 0, OP_READ, OP_SET } operation_t;
+typedef enum { RESOLVE_OK = 0, RESOLVE_NOT_FOUND, RESOLVE_AMBIGUOUS,
+               RESOLVE_INVALID } resolve_status_t;
 
-/* ── Operation types ─────────────────────────────────────────────────── */
-
-typedef enum {
-    MCP_DEVICE_OP_DESCRIBE = 0,
-    MCP_DEVICE_OP_READ,
-    MCP_DEVICE_OP_SET,
-} mcp_device_operation_t;
-
-/* ── Resolution helpers ──────────────────────────────────────────────── */
-
-static esp_err_t resolve_device(const cJSON *device_arg,
-                                 char *device_id_out, size_t out_len)
+static resolve_status_t resolve_device(const cJSON *arg, char *out,
+                                       size_t out_len)
 {
-    if (device_arg == NULL || !cJSON_IsString(device_arg)) {
-        return ESP_ERR_INVALID_ARG;
+    if (!cJSON_IsString(arg) || arg->valuestring == NULL ||
+        arg->valuestring[0] == '\0') return RESOLVE_INVALID;
+    device_entry_t exact;
+    if (device_store_get(arg->valuestring, &exact) == DEVICE_STORE_OK) {
+        strlcpy(out, arg->valuestring, out_len);
+        return RESOLVE_OK;
     }
-    const char *device_id = cJSON_GetStringValue(device_arg);
-    if (device_id == NULL || device_id[0] == '\0') {
-        return ESP_ERR_INVALID_ARG;
-    }
-
-    /* Try exact device id first */
-    device_entry_t entry;
-    if (device_store_get(device_id, &entry) == DEVICE_STORE_OK) {
-        strlcpy(device_id_out, device_id, out_len);
-        return ESP_OK;
-    }
-
-    /* Try configured name via snapshot scan */
     device_entry_t entries[DEVICE_STORE_MAX_DEVICES];
     size_t count = 0;
-    if (device_store_snapshot(entries, DEVICE_STORE_MAX_DEVICES, &count) != DEVICE_STORE_OK) {
-        return ESP_ERR_NOT_FOUND;
+    if (device_store_snapshot(entries, DEVICE_STORE_MAX_DEVICES, &count) !=
+        DEVICE_STORE_OK) return RESOLVE_NOT_FOUND;
+    const char *match = NULL;
+    for (size_t i = 0; i < count; ++i) {
+        if (strcmp(entries[i].name, arg->valuestring) != 0) continue;
+        if (match != NULL) return RESOLVE_AMBIGUOUS;
+        match = entries[i].device_id;
     }
-    for (size_t i = 0; i < count; i++) {
-        if (strcmp(entries[i].name, device_id) == 0) {
-            strlcpy(device_id_out, entries[i].device_id, out_len);
-            return ESP_OK;
-        }
-    }
-
-    return ESP_ERR_NOT_FOUND;
+    if (match == NULL) return RESOLVE_NOT_FOUND;
+    strlcpy(out, match, out_len);
+    return RESOLVE_OK;
 }
 
-static esp_err_t resolve_feature(const char *device_id,
-                                  const char *feature_arg,
-                                  device_schema_feature_t *out_feature)
+static resolve_status_t resolve_feature(const device_schema_snapshot_t *schema,
+                                        const cJSON *arg,
+                                        device_schema_feature_t *out)
 {
-    if (feature_arg == NULL || feature_arg[0] == '\0') {
-        return ESP_ERR_INVALID_ARG;
-    }
-
-    device_schema_snapshot_t cap;
-    if (device_schema_get(device_id, &cap) != ESP_OK || !cap.has_committed) {
-        return ESP_ERR_NOT_FOUND;
-    }
-
-    /* Try exact feature_id match */
-    for (size_t i = 0; i < cap.feature_count; i++) {
-        if (strcmp(cap.features[i].feature_id, feature_arg) == 0) {
-            *out_feature = cap.features[i];
-            return ESP_OK;
+    if (!cJSON_IsString(arg) || arg->valuestring == NULL ||
+        arg->valuestring[0] == '\0') return RESOLVE_INVALID;
+    for (size_t i = 0; i < schema->feature_count; ++i) {
+        if (strcmp(schema->features[i].feature_id, arg->valuestring) == 0) {
+            *out = schema->features[i];
+            return RESOLVE_OK;
         }
     }
-
-    /* Try semantic template name match */
-    for (size_t i = 0; i < cap.feature_count; i++) {
+    const device_schema_feature_t *match = NULL;
+    for (size_t i = 0; i < schema->feature_count; ++i) {
         const device_template_t *tpl = device_template_resolve(
-            cap.features[i].feature_type, cap.features[i].feature_schema_version);
-        if (tpl != NULL && strcmp(tpl->semantic_name, feature_arg) == 0) {
-            *out_feature = cap.features[i];
-            return ESP_OK;
-        }
+            schema->features[i].feature_type,
+            schema->features[i].feature_schema_version);
+        if (tpl == NULL || strcmp(tpl->semantic_name, arg->valuestring) != 0)
+            continue;
+        if (match != NULL) return RESOLVE_AMBIGUOUS;
+        match = &schema->features[i];
     }
-
-    return ESP_ERR_NOT_FOUND;
+    if (match == NULL) return RESOLVE_NOT_FOUND;
+    *out = *match;
+    return RESOLVE_OK;
 }
 
-static const device_schema_tool_t *find_writable_tool(
-    const device_schema_snapshot_t *cap,
-    const device_schema_feature_t *feature)
+static bool add_feature(cJSON *array, const device_schema_snapshot_t *schema,
+                        const device_schema_feature_t *feature)
 {
-    if (feature->writable_tool_index < 0 ||
-        (size_t)feature->writable_tool_index >= cap->tool_count) {
-        return NULL;
-    }
-    return &cap->tools[feature->writable_tool_index];
-}
-
-/* ── Describe operation (local) ──────────────────────────────────────── */
-
-static cJSON *handle_describe(const char *device_id, const char *feature_id)
-{
-    device_schema_feature_t feature;
-    if (resolve_feature(device_id, feature_id, &feature) != ESP_OK) {
-        return NULL;
-    }
-
     const device_template_t *tpl = device_template_resolve(
-        feature.feature_type, feature.feature_schema_version);
-
-    cJSON *result = cJSON_CreateObject();
-    if (result == NULL) return NULL;
-
-    cJSON_AddStringToObject(result, "device_id", device_id);
-    cJSON_AddStringToObject(result, "feature_id", feature.feature_id);
-
-    if (tpl != NULL) {
-        cJSON_AddStringToObject(result, "type",
-                                device_template_feature_name(feature.feature_type));
-        cJSON_AddStringToObject(result, "semantic_name", tpl->semantic_name);
+        feature->feature_type, feature->feature_schema_version);
+    if (tpl == NULL) return true;
+    cJSON *item = cJSON_CreateObject();
+    if (item == NULL) return false;
+    cJSON_AddStringToObject(item, "feature_id", feature->feature_id);
+    cJSON_AddStringToObject(item, "semantic_name", tpl->semantic_name);
+    cJSON_AddStringToObject(item, "type",
+                            device_template_feature_name(feature->feature_type));
+    cJSON_AddStringToObject(item, "property",
+                            device_template_property_name(feature->property_id));
+    device_template_value_type_t type =
+        device_template_property_value_type(feature->property_id);
+    cJSON_AddStringToObject(item, "value_type",
+                            type == DEVICE_TEMPLATE_VALUE_BOOL ? "bool" :
+                            type == DEVICE_TEMPLATE_VALUE_INT ? "int" : "none");
+    cJSON_AddBoolToObject(item, "writable", feature->writable_tool_index >= 0);
+    if (type == DEVICE_TEMPLATE_VALUE_INT &&
+        feature->writable_tool_index >= 0 &&
+        (size_t)feature->writable_tool_index < schema->tool_count) {
+        const device_schema_tool_t *tool =
+            &schema->tools[feature->writable_tool_index];
+        cJSON_AddNumberToObject(item, "minimum", tool->min_value);
+        cJSON_AddNumberToObject(item, "maximum", tool->max_value);
+        cJSON_AddNumberToObject(item, "step", tool->step);
     }
-
-    /* Add property info */
-    const char *prop_name = device_template_property_name(feature.property_id);
-    cJSON_AddStringToObject(result, "property", prop_name);
-
-    device_template_value_type_t vtype =
-        device_template_property_value_type(feature.property_id);
-    cJSON_AddStringToObject(result, "value_type",
-                            vtype == DEVICE_TEMPLATE_VALUE_BOOL ? "bool" :
-                            vtype == DEVICE_TEMPLATE_VALUE_INT ? "int" : "none");
-
-    return result;
+    cJSON_AddItemToArray(array, item);
+    return true;
 }
 
-/* ── Read operation (local cache) ────────────────────────────────────── */
-
-static cJSON *handle_read(const char *device_id,
-                           const device_schema_feature_t *feature)
+static cJSON *describe(const char *device_id,
+                       const device_schema_snapshot_t *schema,
+                       const device_schema_feature_t *filter)
 {
-    device_state_entry_t state;
-    esp_err_t err = device_state_get(device_id, feature->feature_id,
-                                      feature->property_id, &state);
-
-    cJSON *result = cJSON_CreateObject();
-    if (result == NULL) return NULL;
-
-    cJSON_AddStringToObject(result, "device_id", device_id);
-    cJSON_AddStringToObject(result, "feature_id", feature->feature_id);
-
-    if (err == ESP_OK && state.valid) {
-        device_template_value_type_t vtype =
-            device_template_property_value_type(feature->property_id);
-        if (vtype == DEVICE_TEMPLATE_VALUE_BOOL) {
-            cJSON_AddBoolToObject(result, "value", state.value_bool);
-        } else if (vtype == DEVICE_TEMPLATE_VALUE_INT) {
-            cJSON_AddNumberToObject(result, "value", state.value_int);
-        }
-        cJSON_AddBoolToObject(result, "available", true);
+    cJSON *payload = cJSON_CreateObject();
+    cJSON *features = cJSON_CreateArray();
+    if (payload == NULL || features == NULL) goto fail;
+    cJSON_AddStringToObject(payload, "device_id", device_id);
+    device_entry_t device = {0};
+    if (device_store_get(device_id, &device) == DEVICE_STORE_OK) {
+        cJSON_AddStringToObject(payload, "name", device.name);
+    }
+    cJSON_AddItemToObject(payload, "features", features);
+    features = NULL;
+    if (filter != NULL) {
+        if (!add_feature(cJSON_GetObjectItem(payload, "features"), schema,
+                         filter))
+            goto fail;
     } else {
-        cJSON_AddNullToObject(result, "value");
-        cJSON_AddStringToObject(result, "error", "state_not_available");
-    }
-
-    return result;
-}
-
-/* ── Set operation (device service) ──────────────────────────────────── */
-
-typedef struct {
-    mcp_responder_t responder;
-    cJSON *id;
-    mcp_request_context_t protocol;
-} set_async_context_t;
-
-static void set_completion(const device_command_result_t *result, void *arg)
-{
-    set_async_context_t *ctx = arg;
-
-    bool ok = (result->status == DEVICE_CMD_STATUS_OK);
-    cJSON *resp = cJSON_CreateObject();
-    if (resp != NULL) {
-        cJSON_AddBoolToObject(resp, "success", ok);
-        cJSON_AddNumberToObject(resp, "status", (int)result->status);
-        if (!ok) {
-            const char *err_str = "internal_error";
-            switch (result->status) {
-            case DEVICE_CMD_STATUS_BUSY: err_str = "busy"; break;
-            case DEVICE_CMD_STATUS_NOT_CONNECTED: err_str = "not_connected"; break;
-            case DEVICE_CMD_STATUS_TIMEOUT: err_str = "timeout"; break;
-            case DEVICE_CMD_STATUS_DEVICE_REJECTED: err_str = "device_rejected"; break;
-            case DEVICE_CMD_STATUS_INVALID_ARGUMENT: err_str = "invalid_value"; break;
-            case DEVICE_CMD_STATUS_UNSUPPORTED_COMMAND: err_str = "unsupported_command"; break;
-            default: break;
-            }
-            cJSON_AddStringToObject(resp, "error", err_str);
+        for (size_t i = 0; i < schema->feature_count; ++i) {
+            if (!add_feature(cJSON_GetObjectItem(payload, "features"), schema,
+                             &schema->features[i])) goto fail;
         }
     }
-
-    /* Build MCP response */
-    cJSON *envelope = cJSON_CreateObject();
-    if (envelope != NULL) {
-        cJSON_AddStringToObject(envelope, "jsonrpc", "2.0");
-        cJSON *response_id = ctx->id != NULL ? cJSON_Duplicate(ctx->id, true)
-                                              : cJSON_CreateNull();
-        cJSON_AddItemToObject(envelope, "id", response_id);
-
-        if (resp != NULL) {
-            cJSON_AddItemToObject(envelope, "result", resp);
-        } else {
-            cJSON *error = cJSON_CreateObject();
-            cJSON_AddNumberToObject(error, "code", -32603);
-            cJSON_AddStringToObject(error, "message", "Out of memory");
-            cJSON_AddItemToObject(envelope, "error", error);
-        }
-
-        char *json = cJSON_PrintUnformatted(envelope);
-        cJSON_Delete(envelope);
-        if (json != NULL && ctx->responder.send_json != NULL) {
-            ctx->responder.send_json(ctx->responder.context, json,
-                                      strlen(json), NULL);
-            cJSON_free(json);
-        }
-    } else {
-        cJSON_Delete(resp);
-    }
-
-    cJSON_Delete(ctx->id);
-    if (ctx->responder.release != NULL) {
-        ctx->responder.release(ctx->responder.context);
-    }
-    free(ctx);
-}
-
-/* ── Public entry point ──────────────────────────────────────────────── */
-
-cJSON *mcp_device_control_execute(const cJSON *params,
-                                   const mcp_request_context_t *ctx,
-                                   mcp_rpc_error_t *error)
-{
-    if (params == NULL) {
-        *error = (mcp_rpc_error_t){-32602, "Missing params"};
-        return NULL;
-    }
-
-    /* Parse operation */
-    const cJSON *op_arg = cJSON_GetObjectItemCaseSensitive(params, "operation");
-    if (op_arg == NULL || !cJSON_IsString(op_arg)) {
-        *error = (mcp_rpc_error_t){-32602, "Missing operation"};
-        return NULL;
-    }
-    const char *op_str = cJSON_GetStringValue(op_arg);
-    mcp_device_operation_t operation;
-    if (strcmp(op_str, "describe") == 0) {
-        operation = MCP_DEVICE_OP_DESCRIBE;
-    } else if (strcmp(op_str, "read") == 0) {
-        operation = MCP_DEVICE_OP_READ;
-    } else if (strcmp(op_str, "set") == 0) {
-        operation = MCP_DEVICE_OP_SET;
-    } else {
-        *error = (mcp_rpc_error_t){-32602, "Invalid operation"};
-        return NULL;
-    }
-
-    /* Resolve device */
-    const cJSON *device_arg = cJSON_GetObjectItemCaseSensitive(params, "device");
-    char device_id[GW_MSG_DEVICE_ID_LEN] = {0};
-    if (resolve_device(device_arg, device_id, sizeof(device_id)) != ESP_OK) {
-        *error = (mcp_rpc_error_t){-32602, "Device not found"};
-        return NULL;
-    }
-
-    /* Resolve feature */
-    const cJSON *feature_arg = cJSON_GetObjectItemCaseSensitive(params, "feature");
-    device_schema_feature_t feature;
-    if (resolve_feature(device_id,
-                        feature_arg ? cJSON_GetStringValue(feature_arg) : NULL,
-                        &feature) != ESP_OK) {
-        *error = (mcp_rpc_error_t){-32602, "Feature not found"};
-        return NULL;
-    }
-
-    /* Execute by operation */
-    switch (operation) {
-    case MCP_DEVICE_OP_DESCRIBE:
-        return handle_describe(device_id, feature.feature_id);
-
-    case MCP_DEVICE_OP_READ:
-        return handle_read(device_id, &feature);
-
-    case MCP_DEVICE_OP_SET: {
-        /* Check exposure policy */
-        mcp_tool_exposure_t exposure;
-        if (mcp_tool_exposure_get_feature(device_id, feature.feature_id,
-                                           &exposure) == ESP_OK) {
-            if (!exposure.control_enabled) {
-                *error = (mcp_rpc_error_t){-32602, "Feature disabled"};
-                return NULL;
-            }
-            if (exposure.state != MCP_EXPOSURE_ENABLED) {
-                *error = (mcp_rpc_error_t){-32602, "Capability needs review"};
-                return NULL;
-            }
-        }
-
-        /* Get writable tool */
-        device_schema_snapshot_t cap;
-        if (device_schema_get(device_id, &cap) != ESP_OK || !cap.has_committed) {
-            *error = (mcp_rpc_error_t){-32602, "Capabilities not ready"};
-            return NULL;
-        }
-        const device_schema_tool_t *writable = find_writable_tool(&cap, &feature);
-        if (writable == NULL) {
-            *error = (mcp_rpc_error_t){-32602, "Feature is read-only"};
-            return NULL;
-        }
-
-        /* Validate value */
-        const cJSON *bool_val = cJSON_GetObjectItemCaseSensitive(params, "bool_value");
-        const cJSON *int_val = cJSON_GetObjectItemCaseSensitive(params, "int_value");
-
-        device_command_request_t request = {0};
-        request.origin = DEVICE_CMD_ORIGIN_CONTROL;
-        strlcpy(request.device_id, device_id, sizeof(request.device_id));
-        strlcpy(request.command, writable->command, sizeof(request.command));
-
-        device_template_value_type_t vtype =
-            device_template_property_value_type(feature.property_id);
-
-        if (vtype == DEVICE_TEMPLATE_VALUE_BOOL) {
-            if (bool_val == NULL || !cJSON_IsBool(bool_val)) {
-                *error = (mcp_rpc_error_t){-32602, "Missing bool_value"};
-                return NULL;
-            }
-            request.bool_value = cJSON_IsTrue(bool_val);
-            request.has_bool_value = true;
-        } else if (vtype == DEVICE_TEMPLATE_VALUE_INT) {
-            if (int_val == NULL || !cJSON_IsNumber(int_val)) {
-                *error = (mcp_rpc_error_t){-32602, "Missing int_value"};
-                return NULL;
-            }
-            int32_t val = int_val->valueint;
-            if (val < writable->min_value || val > writable->max_value) {
-                *error = (mcp_rpc_error_t){-32602, "Value out of range"};
-                return NULL;
-            }
-            request.int_value = val;
-            request.has_int_value = true;
-        } else {
-            *error = (mcp_rpc_error_t){-32602, "Unsupported property type"};
-            return NULL;
-        }
-
-        /* Return NULL to indicate async - caller must use dispatch_device_control_async */
-        *error = (mcp_rpc_error_t){0, NULL};
-        /* Store request info in error data for caller */
-        return (cJSON *)(intptr_t)-1; /* Sentinel: async path needed */
-    }
-    }
-
-    *error = (mcp_rpc_error_t){-32603, "Internal error"};
+    return payload;
+fail:
+    cJSON_Delete(features);
+    cJSON_Delete(payload);
     return NULL;
 }
 
-esp_err_t mcp_device_control_dispatch_async(
-    const cJSON *params,
-    const mcp_responder_t *responder,
-    cJSON *id,
-    const mcp_request_context_t *protocol)
+static cJSON *read_cached(const char *device_id,
+                          const device_schema_feature_t *feature,
+                          bool *is_error)
 {
-    if (params == NULL || responder == NULL) return ESP_ERR_INVALID_ARG;
+    cJSON *payload = cJSON_CreateObject();
+    if (payload == NULL) return NULL;
+    cJSON_AddStringToObject(payload, "device_id", device_id);
+    cJSON_AddStringToObject(payload, "feature_id", feature->feature_id);
+    device_template_value_type_t type =
+        device_template_property_value_type(feature->property_id);
+    if (type != DEVICE_TEMPLATE_VALUE_BOOL && type != DEVICE_TEMPLATE_VALUE_INT) {
+        cJSON_AddStringToObject(payload, "error", "unsupported_property");
+        *is_error = true;
+        return payload;
+    }
+    device_state_entry_t state;
+    if (device_state_get(device_id, feature->feature_id, feature->property_id,
+                         &state) != ESP_OK || !state.valid) {
+        cJSON_AddStringToObject(payload, "error", "state_not_available");
+        *is_error = true;
+        return payload;
+    }
+    if (type == DEVICE_TEMPLATE_VALUE_BOOL)
+        cJSON_AddBoolToObject(payload, "value", state.value_bool);
+    else
+        cJSON_AddNumberToObject(payload, "value", state.value_int);
+    return payload;
+}
 
-    /* Re-parse to build service request (params may be consumed) */
-    const cJSON *device_arg = cJSON_GetObjectItemCaseSensitive(params, "device");
-    const cJSON *feature_arg = cJSON_GetObjectItemCaseSensitive(params, "feature");
+cJSON *mcp_device_control_format_result(const cJSON *payload, bool is_error,
+                                         const mcp_request_context_t *protocol,
+                                         mcp_rpc_error_t *error)
+{
+    cJSON *out = cJSON_CreateObject();
+    cJSON *content = cJSON_CreateArray();
+    cJSON *item = cJSON_CreateObject();
+    cJSON *structured = payload != NULL ? cJSON_Duplicate(payload, true) : NULL;
+    char *text = payload != NULL ? cJSON_PrintUnformatted(payload) : NULL;
+    if (out == NULL || content == NULL || item == NULL || structured == NULL ||
+        text == NULL) goto fail;
+    cJSON_AddStringToObject(item, "type", "text");
+    cJSON_AddStringToObject(item, "text", text);
+    cJSON_free(text);
+    text = NULL;
+    cJSON_AddItemToArray(content, item);
+    item = NULL;
+    cJSON_AddItemToObject(out, "content", content);
+    content = NULL;
+    cJSON_AddBoolToObject(out, "isError", is_error);
+    cJSON_AddItemToObject(out, "structuredContent", structured);
+    structured = NULL;
+    if (protocol->era == MCP_ERA_2026_07_28) {
+        cJSON_AddStringToObject(out, "resultType", "complete");
+        if (!mcp_result_add_server_info(out)) goto fail;
+    }
+    return out;
+fail:
+    cJSON_free(text);
+    cJSON_Delete(structured);
+    cJSON_Delete(item);
+    cJSON_Delete(content);
+    cJSON_Delete(out);
+    *error = (mcp_rpc_error_t){-32603, "out of memory"};
+    return NULL;
+}
+
+static cJSON *tool_error(const char *code,
+                         const mcp_request_context_t *protocol,
+                         mcp_rpc_error_t *error)
+{
+    cJSON *payload = cJSON_CreateObject();
+    if (payload == NULL) {
+        *error = (mcp_rpc_error_t){-32603, "out of memory"};
+        return NULL;
+    }
+    cJSON_AddStringToObject(payload, "error", code);
+    cJSON *result = mcp_device_control_format_result(payload, true, protocol,
+                                                      error);
+    cJSON_Delete(payload);
+    return result;
+}
+
+cJSON *mcp_device_control_format_completion(
+    const char *device_id, const char *feature_id,
+    const device_command_result_t *result,
+    const mcp_request_context_t *protocol, mcp_rpc_error_t *error)
+{
+    cJSON *payload = cJSON_CreateObject();
+    if (payload == NULL) return NULL;
+    cJSON_AddStringToObject(payload, "device_id", device_id);
+    cJSON_AddStringToObject(payload, "feature_id", feature_id);
+    bool ok = result->status == DEVICE_CMD_STATUS_OK;
+    cJSON_AddBoolToObject(payload, "success", ok);
+    if (!ok) {
+        const char *name = "internal_error";
+        switch (result->status) {
+        case DEVICE_CMD_STATUS_INVALID_ARGUMENT: name = "invalid_value"; break;
+        case DEVICE_CMD_STATUS_UNSUPPORTED_COMMAND: name = "unsupported_command"; break;
+        case DEVICE_CMD_STATUS_BUSY: name = "busy"; break;
+        case DEVICE_CMD_STATUS_NOT_CONNECTED: name = "not_connected"; break;
+        case DEVICE_CMD_STATUS_TRANSPORT_ERROR: name = "transport_error"; break;
+        case DEVICE_CMD_STATUS_TIMEOUT: name = "timeout"; break;
+        case DEVICE_CMD_STATUS_DEVICE_REJECTED: name = "device_rejected"; break;
+        default: break;
+        }
+        cJSON_AddStringToObject(payload, "error", name);
+    }
+    cJSON *formatted = mcp_device_control_format_result(payload, !ok, protocol,
+                                                         error);
+    cJSON_Delete(payload);
+    return formatted;
+}
+
+static void set_tool_error(mcp_device_control_plan_t *plan, const char *code,
+                           const mcp_request_context_t *protocol)
+{
+    plan->kind = MCP_DEVICE_CONTROL_EXEC_LOCAL;
+    plan->local_result = tool_error(code, protocol, &plan->error);
+    if (plan->local_result == NULL) plan->kind = MCP_DEVICE_CONTROL_EXEC_ERROR;
+}
+
+esp_err_t mcp_device_control_resolve(const cJSON *params,
+                                     const mcp_request_context_t *protocol,
+                                     mcp_device_control_plan_t *out)
+{
+    if (out == NULL || protocol == NULL) return ESP_ERR_INVALID_ARG;
+    memset(out, 0, sizeof(*out));
+    out->kind = MCP_DEVICE_CONTROL_EXEC_ERROR;
+    if (!cJSON_IsObject(params)) {
+        out->error = (mcp_rpc_error_t){-32602, "params must be an object"};
+        return ESP_OK;
+    }
     const cJSON *op_arg = cJSON_GetObjectItemCaseSensitive(params, "operation");
-    const cJSON *bool_val = cJSON_GetObjectItemCaseSensitive(params, "bool_value");
-    const cJSON *int_val = cJSON_GetObjectItemCaseSensitive(params, "int_value");
-
-    char device_id[GW_MSG_DEVICE_ID_LEN] = {0};
-    if (resolve_device(device_arg, device_id, sizeof(device_id)) != ESP_OK) {
-        return ESP_ERR_INVALID_ARG;
+    const char *op = cJSON_IsString(op_arg) ? op_arg->valuestring : NULL;
+    operation_t operation;
+    if (op == NULL) {
+        out->error = (mcp_rpc_error_t){-32602, "missing operation"}; return ESP_OK;
+    } else if (strcmp(op, "describe") == 0) operation = OP_DESCRIBE;
+    else if (strcmp(op, "read") == 0) operation = OP_READ;
+    else if (strcmp(op, "set") == 0) operation = OP_SET;
+    else {
+        out->error = (mcp_rpc_error_t){-32602, "invalid operation"}; return ESP_OK;
     }
 
-    device_schema_feature_t feature;
-    const char *feat_str = feature_arg ? cJSON_GetStringValue(feature_arg) : NULL;
-    if (resolve_feature(device_id, feat_str, &feature) != ESP_OK) {
-        return ESP_ERR_INVALID_ARG;
+    resolve_status_t device_status = resolve_device(
+        cJSON_GetObjectItemCaseSensitive(params, "device"), out->device_id,
+        sizeof(out->device_id));
+    if (device_status == RESOLVE_AMBIGUOUS)
+        set_tool_error(out, "ambiguous_device", protocol);
+    else if (device_status != RESOLVE_OK)
+        set_tool_error(out, "device_not_found", protocol);
+    if (out->kind != MCP_DEVICE_CONTROL_EXEC_ERROR) return ESP_OK;
+
+    device_schema_snapshot_t schema;
+    if (device_schema_get(out->device_id, &schema) != ESP_OK ||
+        !schema.has_committed) {
+        set_tool_error(out, "capabilities_not_ready", protocol); return ESP_OK;
+    }
+    const cJSON *feature_arg = cJSON_GetObjectItemCaseSensitive(params, "feature");
+    device_schema_feature_t feature = {0};
+    bool has_feature = feature_arg != NULL;
+    if (operation != OP_DESCRIBE && !has_feature) {
+        out->error = (mcp_rpc_error_t){-32602, "feature is required"}; return ESP_OK;
+    }
+    if (has_feature) {
+        resolve_status_t status = resolve_feature(&schema, feature_arg, &feature);
+        if (status == RESOLVE_AMBIGUOUS)
+            set_tool_error(out, "ambiguous_feature", protocol);
+        else if (status != RESOLVE_OK)
+            set_tool_error(out, "feature_not_found", protocol);
+        if (out->kind != MCP_DEVICE_CONTROL_EXEC_ERROR) return ESP_OK;
+        strlcpy(out->feature_id, feature.feature_id, sizeof(out->feature_id));
     }
 
-    device_schema_snapshot_t cap;
-    if (device_schema_get(device_id, &cap) != ESP_OK || !cap.has_committed) {
-        return ESP_ERR_INVALID_STATE;
+    if (operation == OP_DESCRIBE) {
+        cJSON *payload = describe(out->device_id, &schema,
+                                  has_feature ? &feature : NULL);
+        if (payload == NULL) goto oom;
+        out->local_result = mcp_device_control_format_result(
+            payload, false, protocol, &out->error);
+        cJSON_Delete(payload);
+        out->kind = out->local_result != NULL ? MCP_DEVICE_CONTROL_EXEC_LOCAL
+                                               : MCP_DEVICE_CONTROL_EXEC_ERROR;
+        return ESP_OK;
     }
-    const device_schema_tool_t *writable = find_writable_tool(&cap, &feature);
-    if (writable == NULL) return ESP_ERR_INVALID_STATE;
+    if (operation == OP_READ) {
+        bool is_error = false;
+        cJSON *payload = read_cached(out->device_id, &feature, &is_error);
+        if (payload == NULL) goto oom;
+        out->local_result = mcp_device_control_format_result(
+            payload, is_error, protocol, &out->error);
+        cJSON_Delete(payload);
+        out->kind = out->local_result != NULL ? MCP_DEVICE_CONTROL_EXEC_LOCAL
+                                               : MCP_DEVICE_CONTROL_EXEC_ERROR;
+        return ESP_OK;
+    }
 
-    /* Build service request */
-    device_command_request_t request = {0};
-    request.origin = DEVICE_CMD_ORIGIN_CONTROL;
-    strlcpy(request.device_id, device_id, sizeof(request.device_id));
-    strlcpy(request.command, writable->command, sizeof(request.command));
-
-    device_template_value_type_t vtype =
+    if (feature.writable_tool_index < 0 ||
+        (size_t)feature.writable_tool_index >= schema.tool_count) {
+        set_tool_error(out, "feature_read_only", protocol); return ESP_OK;
+    }
+    const device_schema_tool_t *tool = &schema.tools[feature.writable_tool_index];
+    mcp_policy_result_t policy = mcp_policy_check_feature_control(
+        out->device_id, feature.feature_id, tool);
+    if (policy != MCP_POLICY_ALLOW) {
+        set_tool_error(out, policy == MCP_POLICY_DENY_DESTRUCTIVE
+                                ? "destructive_denied" : "control_denied",
+                       protocol);
+        return ESP_OK;
+    }
+    const cJSON *bool_value = cJSON_GetObjectItemCaseSensitive(params, "bool_value");
+    const cJSON *int_value = cJSON_GetObjectItemCaseSensitive(params, "int_value");
+    if ((bool_value != NULL) == (int_value != NULL)) {
+        out->error = (mcp_rpc_error_t){-32602, "exactly one typed value is required"};
+        return ESP_OK;
+    }
+    device_template_value_type_t type =
         device_template_property_value_type(feature.property_id);
-    if (vtype == DEVICE_TEMPLATE_VALUE_BOOL && bool_val != NULL) {
-        request.bool_value = cJSON_IsTrue(bool_val);
-        request.has_bool_value = true;
-    } else if (vtype == DEVICE_TEMPLATE_VALUE_INT && int_val != NULL) {
-        request.int_value = int_val->valueint;
-        request.has_int_value = true;
+    if (type == DEVICE_TEMPLATE_VALUE_BOOL) {
+        if (!cJSON_IsBool(bool_value)) {
+            out->error = (mcp_rpc_error_t){-32602, "bool_value is required"};
+            return ESP_OK;
+        }
+        out->request.has_bool_value = true;
+        out->request.bool_value = cJSON_IsTrue(bool_value);
+    } else if (type == DEVICE_TEMPLATE_VALUE_INT) {
+        if (!cJSON_IsNumber(int_value) ||
+            int_value->valuedouble != (double)int_value->valueint) {
+            out->error = (mcp_rpc_error_t){-32602, "int_value must be an integer"};
+            return ESP_OK;
+        }
+        out->request.has_int_value = true;
+        out->request.int_value = int_value->valueint;
+    } else {
+        set_tool_error(out, "unsupported_property", protocol); return ESP_OK;
     }
-
-    /* Async context */
-    set_async_context_t *ctx = calloc(1, sizeof(*ctx));
-    if (ctx == NULL) return ESP_ERR_NO_MEM;
-    ctx->responder = *responder;
-    ctx->id = id != NULL ? cJSON_Duplicate(id, true) : NULL;
-    ctx->protocol = *protocol;
-
-    esp_err_t err = device_command_service_submit(&request, set_completion, ctx);
-    if (err != ESP_OK) {
-        cJSON_Delete(ctx->id);
-        free(ctx);
-    }
-    return err;
+    out->request.origin = DEVICE_CMD_ORIGIN_CONTROL;
+    strlcpy(out->request.device_id, out->device_id, sizeof(out->request.device_id));
+    strlcpy(out->request.command, tool->command, sizeof(out->request.command));
+    strlcpy(out->request.feature_id, feature.feature_id,
+            sizeof(out->request.feature_id));
+    out->request.has_feature_id = true;
+    out->request.property_id = feature.property_id;
+    out->request.has_property_id = true;
+    out->kind = MCP_DEVICE_CONTROL_EXEC_ASYNC_SET;
+    return ESP_OK;
+oom:
+    out->error = (mcp_rpc_error_t){-32603, "out of memory"};
+    out->kind = MCP_DEVICE_CONTROL_EXEC_ERROR;
+    return ESP_OK;
 }

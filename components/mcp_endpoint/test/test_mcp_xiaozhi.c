@@ -125,7 +125,7 @@ TEST_CASE("Xiaozhi ping receives empty JSON-RPC result", "[mcp][xiaozhi]")
     cJSON_Delete(response);
 }
 
-TEST_CASE("Xiaozhi tools list uses shared MCP catalog", "[mcp][xiaozhi]")
+TEST_CASE("Xiaozhi compact tools list is exact and teaches semantic flow", "[mcp][xiaozhi]")
 {
     static const char request[] =
         "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"tools/list\",\"params\":{}}";
@@ -143,6 +143,21 @@ TEST_CASE("Xiaozhi tools list uses shared MCP catalog", "[mcp][xiaozhi]")
     cJSON *result = cJSON_GetObjectItemCaseSensitive(response, "result");
     cJSON *tools = cJSON_GetObjectItemCaseSensitive(result, "tools");
     TEST_ASSERT_TRUE(cJSON_IsArray(tools));
-    TEST_ASSERT_GREATER_THAN(0, cJSON_GetArraySize(tools));
+    TEST_ASSERT_EQUAL_INT(3, cJSON_GetArraySize(tools));
+    const char *expected[] = {"get_status", "list_devices", "device_control"};
+    for (size_t i = 0; i < 3; ++i) {
+        cJSON *tool = cJSON_GetArrayItem(tools, i);
+        TEST_ASSERT_EQUAL_STRING(
+            expected[i], cJSON_GetStringValue(
+                             cJSON_GetObjectItemCaseSensitive(tool, "name")));
+    }
+    cJSON *list_tool = cJSON_GetArrayItem(tools, 1);
+    cJSON *control_tool = cJSON_GetArrayItem(tools, 2);
+    TEST_ASSERT_NOT_NULL(strstr(cJSON_GetStringValue(
+        cJSON_GetObjectItemCaseSensitive(list_tool, "description")),
+        "controls[].feature_id"));
+    TEST_ASSERT_NOT_NULL(strstr(cJSON_GetStringValue(
+        cJSON_GetObjectItemCaseSensitive(control_tool, "description")),
+        "prefer device_id and feature_id returned by list_devices"));
     cJSON_Delete(response);
 }

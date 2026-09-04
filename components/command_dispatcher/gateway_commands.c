@@ -14,6 +14,7 @@
 #include "device_store.h"
 #include "device_schema.h"
 #include "device_state.h"
+#include "device_template.h"
 #include "gateway_events.h"
 #include "mcp_tool_exposure.h"
 
@@ -261,6 +262,71 @@ static void cmd_list_devices(const gw_message_t *msg, dispatch_result_t *result)
         cJSON_AddStringToObject(item, "name", devices[i].name);
         cJSON_AddBoolToObject(item, "connected", connected);
         cJSON_AddBoolToObject(item, "ready", ready);
+
+        device_schema_snapshot_t schema = {0};
+        bool schema_available =
+            device_schema_get(devices[i].device_id, &schema) == ESP_OK &&
+            schema.has_committed;
+        size_t writable_count = 0;
+        if (schema_available) {
+            for (size_t f = 0; f < schema.feature_count; ++f) {
+                if (schema.features[f].writable_tool_index >= 0 &&
+                    (size_t)schema.features[f].writable_tool_index <
+                        schema.tool_count) {
+                    ++writable_count;
+                }
+            }
+        }
+        cJSON *capabilities = cJSON_AddObjectToObject(item, "capabilities");
+        if (capabilities != NULL) {
+            cJSON_AddBoolToObject(capabilities, "available", schema_available);
+            cJSON_AddStringToObject(capabilities, "state",
+                                    device_schema_state_name(schema.state));
+            cJSON_AddNumberToObject(capabilities, "feature_count",
+                                    schema_available ? schema.feature_count : 0);
+            cJSON_AddNumberToObject(capabilities, "writable_feature_count",
+                                    schema_available ? writable_count : 0);
+            if (schema_available) {
+                cJSON_AddNumberToObject(capabilities, "revision",
+                                        schema.revision);
+            }
+        }
+
+        cJSON *controls = cJSON_AddArrayToObject(item, "controls");
+        mcp_control_hint_t hints[MCP_SEMANTIC_CONTROL_HINT_MAX] = {0};
+        size_t hint_count = 0;
+        bool controls_truncated = false;
+        if (controls != NULL &&
+            mcp_semantic_control_get_hints(
+                devices[i].device_id, hints, MCP_SEMANTIC_CONTROL_HINT_MAX,
+                &hint_count, &controls_truncated) == ESP_OK) {
+            for (size_t h = 0; h < hint_count; ++h) {
+                cJSON *control = cJSON_CreateObject();
+                if (control == NULL) break;
+                cJSON_AddStringToObject(control, "feature_id",
+                                        hints[h].feature_id);
+                cJSON_AddStringToObject(control, "semantic_name",
+                                        hints[h].semantic_name);
+                cJSON_AddStringToObject(control, "property",
+                                        hints[h].property_name);
+                cJSON_AddStringToObject(
+                    control, "value_type",
+                    hints[h].value_type == DEVICE_TEMPLATE_VALUE_BOOL
+                        ? "bool" : "int");
+                cJSON_AddBoolToObject(control, "writable", true);
+                if (hints[h].has_min)
+                    cJSON_AddNumberToObject(control, "minimum",
+                                            hints[h].min_value);
+                if (hints[h].has_max)
+                    cJSON_AddNumberToObject(control, "maximum",
+                                            hints[h].max_value);
+                if (hints[h].has_step)
+                    cJSON_AddNumberToObject(control, "step", hints[h].step);
+                cJSON_AddItemToArray(controls, control);
+            }
+        }
+        if (controls_truncated)
+            cJSON_AddBoolToObject(item, "controls_truncated", true);
         cJSON_AddBoolToObject(item, "has_ble_addr", devices[i].has_ble_identity);
         if (devices[i].has_ble_identity) {
             char address[18];
@@ -273,6 +339,29 @@ static void cmd_list_devices(const gw_message_t *msg, dispatch_result_t *result)
 
     bool printed = cJSON_PrintPreallocated(array, result->payload,
                                            sizeof(result->payload), false);
+    /* Preserve inventory when aggregate control hints exceed the fixed MCP
+     * payload. Remove hints from the end while retaining committed order for
+     * every remaining prefix, and advertise the fallback to describe. */
+    while (!printed) {
+        bool removed = false;
+        for (int i = cJSON_GetArraySize(array) - 1; i >= 0 && !removed; --i) {
+            cJSON *item = cJSON_GetArrayItem(array, i);
+            cJSON *controls = cJSON_GetObjectItemCaseSensitive(item, "controls");
+            int control_count = cJSON_GetArraySize(controls);
+            if (control_count <= 0) continue;
+            cJSON_DeleteItemFromArray(controls, control_count - 1);
+            cJSON *truncated = cJSON_GetObjectItemCaseSensitive(
+                item, "controls_truncated");
+            if (truncated != NULL)
+                cJSON_SetBoolValue(truncated, true);
+            else
+                cJSON_AddBoolToObject(item, "controls_truncated", true);
+            removed = true;
+        }
+        if (!removed) break;
+        printed = cJSON_PrintPreallocated(array, result->payload,
+                                          sizeof(result->payload), false);
+    }
     cJSON_Delete(array);
     if (!printed) {
         command_dispatcher_set_text_result(result,

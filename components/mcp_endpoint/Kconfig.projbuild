@@ -2,7 +2,7 @@ menu "MCP Endpoint"
 
     choice MCP_TOOL_SURFACE
         prompt "MCP tool surface mode"
-        default MCP_TOOL_SURFACE_DYNAMIC
+        default MCP_TOOL_SURFACE_COMPACT
 
         config MCP_TOOL_SURFACE_COMPACT
             bool "Compact semantic MCP surface (3 tools)"
@@ -61,10 +61,10 @@ menu "MCP Endpoint"
         bool "Enable MCP 2024/2025 initialize compatibility"
         default y
         help
-            Accept MCP 2024-11-05 and 2025-11-25 initialize/initialized flows
-            and subsequent tools/list and tools/call requests. The server does
-            not create an MCP-Session-Id and keeps no per-client protocol
-            session state.
+            Accept MCP 2024-11-05, 2025-06-18, and 2025-11-25
+            initialize/initialized flows and subsequent tools/list and
+            tools/call requests. The server does not create an MCP-Session-Id
+            and keeps no per-client protocol session state.
 
     config MCP_STRICT_ACCEPT_HEADER
         bool "Require both MCP Streamable HTTP Accept media types"

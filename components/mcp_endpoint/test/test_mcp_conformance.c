@@ -506,7 +506,7 @@ TEST_CASE("initialize with different version gets counter-offered",
 {
     mcp_setup();
     io_reset("{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"initialize\","
-             "\"params\":{\"protocolVersion\":\"2025-06-18\","
+             "\"params\":{\"protocolVersion\":\"2025-03-26\","
              "\"capabilities\":{},"
              "\"clientInfo\":{\"name\":\"old-client\",\"version\":\"1.0\"}}}");
     install_transport();
@@ -521,6 +521,29 @@ TEST_CASE("initialize with different version gets counter-offered",
     TEST_ASSERT_EQUAL_STRING(
         "2025-11-25",
         cJSON_GetStringValue(cJSON_GetObjectItemCaseSensitive(result, "protocolVersion")));
+    cJSON_Delete(response);
+}
+
+TEST_CASE("initialize negotiates exact MCP 2025-06-18",
+          "[mcp_2025]")
+{
+    mcp_setup();
+    io_reset("{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"initialize\","
+             "\"params\":{\"protocolVersion\":\"2025-06-18\","
+             "\"capabilities\":{},"
+             "\"clientInfo\":{\"name\":\"june-client\",\"version\":\"1.0\"}}}");
+    install_transport();
+    memset(&g_req, 0, sizeof(g_req));
+    g_req.content_len = (int)g_io.body_len;
+    TEST_ASSERT_EQUAL_INT(0, mcp_handle_request(&g_req));
+
+    cJSON *response = io_response_json();
+    cJSON *result = cJSON_GetObjectItemCaseSensitive(response, "result");
+    TEST_ASSERT_NOT_NULL(result);
+    TEST_ASSERT_EQUAL_STRING(
+        "2025-06-18",
+        cJSON_GetStringValue(cJSON_GetObjectItemCaseSensitive(
+            result, "protocolVersion")));
     cJSON_Delete(response);
 }
 
@@ -573,6 +596,26 @@ TEST_CASE("2025 tools/list returns proper MCP shape",
     cJSON *tools = cJSON_GetObjectItemCaseSensitive(result, "tools");
     TEST_ASSERT_NOT_NULL(tools);
     TEST_ASSERT_TRUE(cJSON_IsArray(tools));
+    cJSON_Delete(response);
+}
+
+TEST_CASE("2025-06-18 header supports tools/list",
+          "[mcp_2025]")
+{
+    mcp_setup();
+    io_reset("{\"jsonrpc\":\"2.0\",\"id\":20,\"method\":\"tools/list\"}");
+    io_set_header("MCP-Protocol-Version", "2025-06-18");
+    install_transport();
+    memset(&g_req, 0, sizeof(g_req));
+    g_req.content_len = (int)g_io.body_len;
+    TEST_ASSERT_EQUAL_INT(0, mcp_handle_request(&g_req));
+
+    cJSON *response = io_response_json();
+    cJSON *result = cJSON_GetObjectItemCaseSensitive(response, "result");
+    TEST_ASSERT_NOT_NULL(result);
+    TEST_ASSERT_TRUE(cJSON_IsArray(
+        cJSON_GetObjectItemCaseSensitive(result, "tools")));
+    TEST_ASSERT_NULL(cJSON_GetObjectItemCaseSensitive(response, "error"));
     cJSON_Delete(response);
 }
 

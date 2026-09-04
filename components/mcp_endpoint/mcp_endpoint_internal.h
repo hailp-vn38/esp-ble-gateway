@@ -25,6 +25,7 @@
 #define MCP_PROTOCOL_VERSION_2024  "2024-11-05"
 #define MCP_PROTOCOL_VERSION_2026  "2026-07-28"
 #define MCP_PROTOCOL_VERSION_2025  "2025-11-25"
+#define MCP_PROTOCOL_VERSION_2025_06 "2025-06-18"
 #define MCP_SERVER_NAME            "esp32-ble-gateway"
 #define MCP_SERVER_VERSION         "1.0.0"
 
@@ -232,15 +233,38 @@ cJSON *mcp_tools_format_device_result(const device_command_result_t *result,
 // Device control (mcp_device_control.c)
 // ---------------------------------------------------------------------------
 
-cJSON *mcp_device_control_execute(const cJSON *params,
-                                   const mcp_request_context_t *ctx,
-                                   mcp_rpc_error_t *error);
+typedef enum {
+    MCP_DEVICE_CONTROL_EXEC_LOCAL = 0,
+    MCP_DEVICE_CONTROL_EXEC_ASYNC_SET,
+    MCP_DEVICE_CONTROL_EXEC_ERROR,
+} mcp_device_control_exec_kind_t;
 
-esp_err_t mcp_device_control_dispatch_async(
+typedef struct {
+    mcp_device_control_exec_kind_t kind;
+    cJSON *local_result;
+    device_command_request_t request;
+    char device_id[GW_MSG_DEVICE_ID_LEN];
+    char feature_id[GW_FEATURE_ID_LEN];
+    mcp_rpc_error_t error;
+} mcp_device_control_plan_t;
+
+esp_err_t mcp_device_control_resolve(
     const cJSON *params,
-    const mcp_responder_t *responder,
-    cJSON *id,
-    const mcp_request_context_t *protocol);
+    const mcp_request_context_t *protocol,
+    mcp_device_control_plan_t *out);
+
+cJSON *mcp_device_control_format_result(
+    const cJSON *semantic_payload,
+    bool is_error,
+    const mcp_request_context_t *protocol,
+    mcp_rpc_error_t *error);
+
+cJSON *mcp_device_control_format_completion(
+    const char *device_id,
+    const char *feature_id,
+    const device_command_result_t *result,
+    const mcp_request_context_t *protocol,
+    mcp_rpc_error_t *error);
 
 typedef enum {
     MCP_RESOLVE_OK = 0,

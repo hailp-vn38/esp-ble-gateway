@@ -41,8 +41,7 @@ static esp_err_t exposure_get_handler(httpd_req_t *request)
     mcp_exposure_capacity_t capacity;
     mcp_tool_exposure_get_capacity(&capacity);
 
-    // Get catalog revision.
-    uint32_t revision = mcp_tool_catalog_get_revision();
+    uint32_t revision = mcp_tool_exposure_get_policy_revision();
 
     cJSON *root = cJSON_CreateObject();
     cJSON *commands = cJSON_CreateArray();
@@ -58,12 +57,12 @@ static esp_err_t exposure_get_handler(httpd_req_t *request)
     }
 
     cJSON_AddStringToObject(root, "device_id", device_id);
-    cJSON_AddNumberToObject(root, "catalog_revision", revision);
+    cJSON_AddNumberToObject(root, "policy_revision", revision);
 
     cJSON_AddNumberToObject(cap_obj, "enabled", capacity.enabled);
     cJSON_AddNumberToObject(cap_obj, "max_enabled", capacity.max_enabled);
     cJSON_AddNumberToObject(cap_obj, "records", capacity.records);
-    cJSON_AddNumberToObject(cap_obj, "max_records", capacity.max_enabled);
+    cJSON_AddNumberToObject(cap_obj, "max_records", capacity.max_records);
     cJSON_AddItemToObject(root, "capacity", cap_obj);
 
     if (cap_err == ESP_OK && cap.has_committed) {
@@ -114,8 +113,8 @@ static esp_err_t exposure_get_handler(httpd_req_t *request)
                     "orphaned";
                 cJSON_AddStringToObject(fitem, "health", state_str);
             } else {
-                cJSON_AddBoolToObject(fitem, "control_enabled", true);
-                cJSON_AddStringToObject(fitem, "health", "enabled");
+                cJSON_AddBoolToObject(fitem, "control_enabled", false);
+                cJSON_AddStringToObject(fitem, "health", "missing");
             }
 
             cJSON_AddItemToArray(features, fitem);
@@ -249,7 +248,7 @@ static esp_err_t exposure_put_handler(httpd_req_t *request)
 
         bool enabled = cJSON_IsTrue(enabled_item);
 
-        /* Resolve feature to command */
+        /* Validate that this is a writable committed semantic feature. */
         device_schema_snapshot_t cap;
         if (device_schema_get(device_id, &cap) != ESP_OK || !cap.has_committed) {
             cJSON_Delete(json);
@@ -259,14 +258,11 @@ static esp_err_t exposure_put_handler(httpd_req_t *request)
         }
 
         const char *command = NULL;
-        bool is_destructive = false;
         for (size_t f = 0; f < cap.feature_count; f++) {
             if (strcmp(cap.features[f].feature_id, feature_id) == 0) {
                 int8_t idx = cap.features[f].writable_tool_index;
                 if (idx >= 0 && (size_t)idx < cap.tool_count) {
                     command = cap.tools[idx].command;
-                    is_destructive =
-                        (cap.tools[idx].flags & DEVICE_SCHEMA_FLAG_DESTRUCTIVE) != 0;
                 }
                 break;
             }
@@ -279,17 +275,8 @@ static esp_err_t exposure_put_handler(httpd_req_t *request)
                                            "not_found");
         }
 
-        esp_err_t err;
-        if (enabled) {
-            mcp_exposure_enable_options_t opts = {0};
-            const cJSON *confirm =
-                cJSON_GetObjectItemCaseSensitive(json, "confirm_destructive");
-            opts.confirm_destructive =
-                cJSON_IsBool(confirm) && cJSON_IsTrue(confirm);
-            err = mcp_tool_exposure_enable(device_id, command, &opts);
-        } else {
-            err = mcp_tool_exposure_disable(device_id, command);
-        }
+        esp_err_t err = mcp_tool_exposure_set_feature_enabled(
+            device_id, feature_id, enabled);
 
         cJSON_Delete(json);
 
