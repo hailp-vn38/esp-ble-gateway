@@ -963,7 +963,7 @@ tool_name
 
 ---
 
-# 11. Phase 2 — Add the single Device Detail backend snapshot
+# 11. Phase 2 — Add the single Device Detail backend snapshot ✅ DONE (2026-09-04)
 
 ## Goal
 
@@ -1146,13 +1146,18 @@ max_enabled
 
 ## Checklist
 
-- [ ] One detail endpoint exists.
-- [ ] One schema snapshot per request.
-- [ ] Feature state included.
-- [ ] MCP feature policy included.
-- [ ] INT constraints included.
-- [ ] Event sequence header included.
-- [ ] No dynamic MCP metadata.
+- [x] One detail endpoint exists.
+- [x] One schema snapshot per request.
+- [x] Feature state included.
+- [x] MCP feature policy included.
+- [x] INT constraints included.
+- [x] Event sequence header included.
+- [x] No dynamic MCP metadata.
+
+> Validation: firmware build passed. `test/run_tests.sh` reached 370 tests
+> (359 pass, 11 pre-existing MCP endpoint failures) before being stopped after
+> the USB serial device became unavailable; no Phase 2-specific failure was
+> observed.
 
 ---
 

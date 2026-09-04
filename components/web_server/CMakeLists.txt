@@ -61,6 +61,7 @@ idf_component_register(
          "web_device_api.c"
          "web_command_api.c"
          "web_device_schema_api.c"
+         "web_device_detail_api.c"
          "web_exposure_api.c"
          "web_system_api.c"
          "web_wifi_api.c"
