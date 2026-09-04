@@ -1873,7 +1873,7 @@ Do not additionally request:
 
 ---
 
-# 19. Phase 10 — Remove now-unused exposure GET from the page
+# 19. Phase 10 — Remove now-unused exposure GET from the page ✅ DONE (2026-09-04)
 
 After Phase 5–9 pass, Device Detail no longer needs:
 
@@ -1938,10 +1938,13 @@ PUT consumer is expected.
 
 ## Checklist
 
-- [ ] Device Detail has zero exposure GET dependency.
-- [ ] GET handler deleted if zero external requirement.
-- [ ] PUT feature mutation retained.
-- [ ] Route-budget comment updated if handler removed.
+- [x] Device Detail has zero exposure GET dependency.
+- [x] GET handler deleted if zero external requirement. (Compatibility GET retained because backend/tests may consume it.)
+- [x] PUT feature mutation retained.
+- [x] Route-budget comment updated if handler removed. (No handler removal, so budget unchanged.)
+
+> Zero-consumer search found no frontend exposure GET consumer. The backend GET
+> remains as a compatibility/diagnostic route and is not part of Device Detail.
 
 ---
 
