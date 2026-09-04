@@ -57,7 +57,10 @@ const api = {
                 connected: device.connected,
                 ready: device.ready,
                 status: device.ready ? 'online' : (device.connected ? 'connecting' : 'offline'),
-                rssi: null
+                rssi: null,
+                capabilities: device.capabilities || null,
+                controls: Array.isArray(device.controls) ? device.controls : [],
+                controlsTruncated: device.controls_truncated === true
             }))
         };
     },
@@ -71,8 +74,17 @@ const api = {
             connected: device.connected,
             ready: device.ready,
             status: device.ready ? 'online' : (device.connected ? 'connecting' : 'offline'),
-            rssi: null
+            rssi: null,
+            capabilities: device.capabilities || null,
+            controls: Array.isArray(device.controls) ? device.controls : [],
+            controlsTruncated: device.controls_truncated === true
         }));
+    },
+    async getDeviceDetailSnapshot(deviceId) {
+        const {data, eventSeq} = await this.requestWithMeta(
+            `/api/devices/detail?device_id=${encodeURIComponent(deviceId)}`
+        );
+        return {detail: data, eventSeq};
     },
     async addDevice(data) {
         return this.request('/api/devices', {

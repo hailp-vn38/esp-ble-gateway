@@ -1249,7 +1249,7 @@ Missing feature remains fail closed.
 
 ---
 
-# 13. Phase 4 — Add frontend detail API
+# 13. Phase 4 — Add frontend detail API ✅ DONE (2026-09-04)
 
 ## File
 
@@ -1320,9 +1320,13 @@ shares one in-flight request.
 
 ## Checklist
 
-- [ ] `getDeviceDetailSnapshot()` added.
-- [ ] Device inventory semantic hints retained.
-- [ ] Existing GET dedupe retained.
+- [x] `getDeviceDetailSnapshot()` added.
+- [x] Device inventory semantic hints retained.
+- [x] Existing GET dedupe retained.
+
+> Validation: dashboard assemble and API module syntax passed. The requested
+> test runner was started and flashed the test app, but was stopped after the
+> serial runner stalled; 116 tests had passed at that point.
 - [ ] No MCP-specific command mapping added to `api.js`.
 
 ---
