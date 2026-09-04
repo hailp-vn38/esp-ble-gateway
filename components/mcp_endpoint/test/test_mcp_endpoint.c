@@ -88,56 +88,6 @@ TEST_CASE("tools/list exposes annotations from the registry", "[mcp_endpoint]")
     cJSON_Delete(response);
 }
 
-TEST_CASE("dynamic tools use the same command and device name identity",
-          "[mcp_endpoint]")
-{
-    device_entry_t existing;
-    device_store_result_t stored =
-        device_store_get("AC:27:6E:CC:F2:26", &existing);
-    if (stored == DEVICE_STORE_OK) {
-        TEST_ASSERT_EQUAL_INT(
-            DEVICE_STORE_OK,
-            device_store_edit("AC:27:6E:CC:F2:26", "Kitchen LED"));
-    } else {
-        TEST_ASSERT_EQUAL_INT(
-            DEVICE_STORE_ERR_NOT_FOUND, stored);
-        TEST_ASSERT_EQUAL_INT(
-            DEVICE_STORE_OK,
-            device_store_add("AC:27:6E:CC:F2:26", "Kitchen LED"));
-    }
-
-    mcp_tool_binding_t binding = {0};
-    TEST_ASSERT_EQUAL(
-        ESP_OK,
-        mcp_tool_name_generate("Kitchen LED", "set_led", binding.tool_name,
-                               sizeof(binding.tool_name)));
-    strlcpy(binding.device_id, "AC:27:6E:CC:F2:26",
-            sizeof(binding.device_id));
-    strlcpy(binding.command, "set_led", sizeof(binding.command));
-
-    cJSON *tool = mcp_dynamic_tool_build_json(&binding);
-    TEST_ASSERT_NOT_NULL(tool);
-    TEST_ASSERT_EQUAL_STRING("set_led_Kitchen_LED",
-        cJSON_GetStringValue(cJSON_GetObjectItemCaseSensitive(tool, "name")));
-    TEST_ASSERT_EQUAL_STRING("set_led_Kitchen_LED",
-        cJSON_GetStringValue(cJSON_GetObjectItemCaseSensitive(tool, "title")));
-
-    cJSON *annotations =
-        cJSON_GetObjectItemCaseSensitive(tool, "annotations");
-    TEST_ASSERT_EQUAL_STRING(
-        "set_led_Kitchen_LED",
-        cJSON_GetStringValue(
-            cJSON_GetObjectItemCaseSensitive(annotations, "title")));
-    cJSON_Delete(tool);
-
-    char vietnamese_name[MCP_DYNAMIC_TOOL_NAME_MAX + 1];
-    TEST_ASSERT_EQUAL(
-        ESP_OK,
-        mcp_tool_name_generate("Đèn bếp", "set_led", vietnamese_name,
-                               sizeof(vietnamese_name)));
-    TEST_ASSERT_EQUAL_STRING("set_led_Den_bep", vietnamese_name);
-}
-
 // ---------------------------------------------------------------------------
 // tools/call — gateway commands (2026)
 // ---------------------------------------------------------------------------

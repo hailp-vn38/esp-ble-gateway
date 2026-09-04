@@ -38,10 +38,6 @@ typedef struct {
     mcp_exposure_persisted_record_t records[];
 } mcp_exposure_store_blob_t;
 
-/* Tool name generation (mcp_tool_name.c) */
-esp_err_t mcp_tool_name_generate(const char *device_name, const char *command,
-                                 char *out_name, size_t out_len);
-
 /* SHA-256 semantic digest (mcp_tool_digest.c) */
 void mcp_tool_digest_compute(const device_schema_tool_t *cap,
                              uint8_t out[MCP_CAPABILITY_DIGEST_LEN]);
@@ -56,31 +52,5 @@ esp_err_t mcp_exposure_store_load(mcp_exposure_persisted_record_t *records,
 esp_err_t mcp_exposure_store_save(const mcp_exposure_persisted_record_t *records,
                                   size_t count, uint32_t revision);
 esp_err_t mcp_exposure_store_erase(void);
-
-/* Dynamic catalog (mcp_tool_catalog.c) */
-typedef void (*mcp_catalog_change_fn)(uint32_t revision, void *context);
-
-esp_err_t mcp_tool_catalog_init(mcp_catalog_change_fn on_change,
-                                void *change_context);
-esp_err_t mcp_tool_catalog_add(const mcp_tool_binding_t *binding);
-esp_err_t mcp_tool_catalog_remove(const char *tool_name);
-const mcp_tool_binding_t *mcp_tool_catalog_find_ptr(const char *tool_name);
-uint32_t mcp_tool_catalog_get_revision(void);
-void mcp_tool_catalog_get_snapshot(mcp_tool_binding_t *out,
-                                  size_t capacity, size_t *out_count);
-void mcp_tool_catalog_remove_device(const char *device_id);
-
-/* Find catalog entry by device_id + feature_id. Returns NULL if not found. */
-const mcp_tool_binding_t *mcp_tool_catalog_find_by_feature(
-    const char *device_id, const char *feature_id);
-
-/* Mark a catalog entry as hidden/shown ( FEATURE_BOUND flag). */
-void mcp_tool_catalog_set_hidden(const char *tool_name, bool hidden);
-
-/* Semantic tool name generation (mcp_tool_name.c).
- * Pattern: {semantic_name}_{device_slug} */
-esp_err_t mcp_tool_name_generate_semantic(const char *semantic_name,
-                                           const char *device_name,
-                                           char *out_name, size_t out_len);
 
 #endif /* MCP_TOOL_EXPOSURE_INTERNAL_H */

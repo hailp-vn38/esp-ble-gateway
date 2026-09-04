@@ -100,14 +100,8 @@ static cJSON *schema_device_control(void)
 
 #undef SCHEMA_FAIL
 
-// Production static tools: get_status + list_devices always present.
-// device_control is added in compact mode.
-static const mcp_tool_desc_t MCP_STATIC_TOOLS[] __attribute__((unused)) = {
-    {"get_status", "Get gateway and BLE status", schema_empty, true, false},
-    {"list_devices", "List devices and semantic capability status. Use returned device_id and controls[].feature_id with device_control set. Call describe only when more feature details are required.", schema_empty, true, false},
-};
-
-static const mcp_tool_desc_t MCP_COMPACT_TOOLS[] __attribute__((unused)) = {
+// Compact MCP surface: exactly 3 tools.
+static const mcp_tool_desc_t MCP_TOOLS[] = {
     {"get_status", "Get gateway and BLE status", schema_empty, true, false},
     {"list_devices", "List devices known by the gateway, including semantic control hints. Use returned device_id and controls[].feature_id with device_control set. Call describe only when more feature details are required.", schema_empty, true, false},
     {"device_control", "Describe, read, or set semantic device features. For set, use device_id and feature_id from list_devices. Call describe with only device to discover all semantic features.",
@@ -116,30 +110,18 @@ static const mcp_tool_desc_t MCP_COMPACT_TOOLS[] __attribute__((unused)) = {
 
 const mcp_tool_desc_t *mcp_registry_find(const char *name)
 {
-#if CONFIG_MCP_TOOL_SURFACE_COMPACT
-    for (size_t i = 0; i < sizeof(MCP_COMPACT_TOOLS) / sizeof(MCP_COMPACT_TOOLS[0]); i++) {
-        if (strcmp(MCP_COMPACT_TOOLS[i].name, name) == 0) return &MCP_COMPACT_TOOLS[i];
+    for (size_t i = 0; i < sizeof(MCP_TOOLS) / sizeof(MCP_TOOLS[0]); i++) {
+        if (strcmp(MCP_TOOLS[i].name, name) == 0) return &MCP_TOOLS[i];
     }
-#else
-    for (size_t i = 0; i < sizeof(MCP_STATIC_TOOLS) / sizeof(MCP_STATIC_TOOLS[0]); i++) {
-        if (strcmp(MCP_STATIC_TOOLS[i].name, name) == 0) return &MCP_STATIC_TOOLS[i];
-    }
-#endif
     return NULL;
 }
 
 // Build static tools array only (§12.9).
 int mcp_registry_build_tools_list(cJSON *tools_array)
 {
-#ifdef CONFIG_MCP_TOOL_SURFACE_COMPACT
-    const mcp_tool_desc_t *table = MCP_COMPACT_TOOLS;
-    const size_t count = sizeof(MCP_COMPACT_TOOLS) / sizeof(MCP_COMPACT_TOOLS[0]);
-#else
-    const mcp_tool_desc_t *table = MCP_STATIC_TOOLS;
-    const size_t count = sizeof(MCP_STATIC_TOOLS) / sizeof(MCP_STATIC_TOOLS[0]);
-#endif
+    const size_t count = sizeof(MCP_TOOLS) / sizeof(MCP_TOOLS[0]);
     for (size_t i = 0; i < count; i++) {
-        const mcp_tool_desc_t *desc = &table[i];
+        const mcp_tool_desc_t *desc = &MCP_TOOLS[i];
         cJSON *tool = cJSON_CreateObject();
         cJSON *schema = desc->input_schema();
         cJSON *annotations = cJSON_CreateObject();
@@ -165,120 +147,3 @@ int mcp_registry_build_tools_list(cJSON *tools_array)
     return 0;
 }
 
-// ---------------------------------------------------------------------------
-// Dynamic tool schema builder from device capability
-// ---------------------------------------------------------------------------
-
-cJSON *mcp_dynamic_tool_build_schema(const device_schema_tool_t *cap)
-{
-    cJSON *schema = new_object_schema();
-    if (schema == NULL) return NULL;
-    cJSON *properties = cJSON_GetObjectItemCaseSensitive(schema, "properties");
-    if (properties == NULL) {
-        cJSON_Delete(schema);
-        return NULL;
-    }
-
-    if (cap->value_type == 0 /* NONE */) {
-        // No arguments needed — empty object.
-        return schema;
-    }
-
-    cJSON *value_prop = cJSON_CreateObject();
-    if (value_prop == NULL) {
-        cJSON_Delete(schema);
-        return NULL;
-    }
-
-    if (cap->value_type == 1 /* BOOL */) {
-        cJSON_AddStringToObject(value_prop, "type", "boolean");
-    } else if (cap->value_type == 2 /* INT */) {
-        cJSON_AddStringToObject(value_prop, "type", "integer");
-        cJSON_AddNumberToObject(value_prop, "minimum", cap->min_value);
-        cJSON_AddNumberToObject(value_prop, "maximum", cap->max_value);
-        if (cap->step > 0) {
-            cJSON_AddNumberToObject(value_prop, "multipleOf", cap->step);
-        }
-        char desc_buf[64];
-        if (cap->unit[0] != '\0') {
-            snprintf(desc_buf, sizeof(desc_buf), "Value (%s)", cap->unit);
-        } else {
-            snprintf(desc_buf, sizeof(desc_buf), "Value");
-        }
-        cJSON_AddStringToObject(value_prop, "description", desc_buf);
-    }
-
-    cJSON_AddItemToObject(properties, "value", value_prop);
-
-    cJSON *required = cJSON_CreateArray();
-    if (required == NULL) {
-        cJSON_Delete(schema);
-        return NULL;
-    }
-    cJSON_AddItemToArray(required, cJSON_CreateString("value"));
-    cJSON_AddItemToObject(schema, "required", required);
-
-    return schema;
-}
-
-// Build a single dynamic tool cJSON object from a binding.
-cJSON *mcp_dynamic_tool_build_json(const mcp_tool_binding_t *binding)
-{
-    cJSON *tool = cJSON_CreateObject();
-    if (tool == NULL) return NULL;
-
-    cJSON *schema = mcp_dynamic_tool_build_schema(&binding->capability);
-    cJSON *annotations = cJSON_CreateObject();
-    if (schema == NULL || annotations == NULL) {
-        cJSON_Delete(tool);
-        cJSON_Delete(schema);
-        cJSON_Delete(annotations);
-        return NULL;
-    }
-
-    cJSON_AddStringToObject(tool, "name", binding->tool_name);
-
-    // Xiaozhi surfaces both fields in different views. Keep one identity for
-    // name/title and never expose the internal device id as display metadata.
-    device_entry_t entry = {0};
-    const char *device_display_name = "configured device";
-    if (device_store_get(binding->device_id, &entry) == DEVICE_STORE_OK &&
-        entry.name[0] != '\0') {
-        device_display_name = entry.name;
-    }
-    cJSON_AddStringToObject(tool, "title", binding->tool_name);
-
-    // Trusted template description — no raw peripheral text (§19.1).
-    char desc[192];
-    if (binding->feature_id[0] != '\0') {
-        /* Semantic tool — describe by feature purpose. */
-        snprintf(desc, sizeof(desc),
-                 "Control the %s on %s.",
-                 binding->capability.label[0] != '\0'
-                     ? binding->capability.label
-                     : "device",
-                 device_display_name);
-    } else {
-        snprintf(desc, sizeof(desc), "Execute command '%s' on device '%s'.",
-                 binding->command, device_display_name);
-    }
-    cJSON_AddStringToObject(tool, "description", desc);
-    cJSON_AddItemToObject(tool, "inputSchema", schema);
-
-    // Feature metadata (V4-09).
-    if (binding->feature_id[0] != '\0') {
-        cJSON_AddStringToObject(tool, "featureId", binding->feature_id);
-    }
-
-    // Annotations (§19.4).
-    cJSON_AddBoolToObject(annotations, "readOnlyHint", false);
-    bool destructive = (binding->capability.flags & DEVICE_SCHEMA_FLAG_DESTRUCTIVE) != 0;
-    bool idempotent = (binding->capability.flags & DEVICE_SCHEMA_FLAG_IDEMPOTENT) != 0;
-    // Older MCP clients read ToolAnnotations.title instead of Tool.title.
-    cJSON_AddStringToObject(annotations, "title", binding->tool_name);
-    cJSON_AddBoolToObject(annotations, "destructiveHint", destructive);
-    cJSON_AddBoolToObject(annotations, "idempotentHint", idempotent);
-    cJSON_AddItemToObject(tool, "annotations", annotations);
-
-    return tool;
-}

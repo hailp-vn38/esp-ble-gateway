@@ -58,15 +58,6 @@ typedef struct {
 } mcp_tool_exposure_t;
 
 typedef struct {
-    char tool_name[MCP_DYNAMIC_TOOL_NAME_MAX + 1];
-    char device_id[GW_MSG_DEVICE_ID_LEN];
-    char command[GW_MSG_COMMAND_LEN];
-    char feature_id[GW_FEATURE_ID_LEN];
-    bool feature_bound;
-    device_schema_tool_t capability;
-} mcp_tool_binding_t;
-
-typedef struct {
     bool confirm_destructive;
 } mcp_exposure_enable_options_t;
 
@@ -98,13 +89,6 @@ esp_err_t mcp_tool_exposure_snapshot(
     size_t capacity,
     size_t *out_count);
 
-const mcp_tool_binding_t *mcp_tool_catalog_find_ptr(const char *tool_name);
-
-void mcp_tool_catalog_get_snapshot(mcp_tool_binding_t *out,
-                                   size_t capacity, size_t *out_count);
-
-uint32_t mcp_tool_catalog_get_revision(void);
-
 esp_err_t mcp_tool_exposure_reconcile_device_async(
     const char *device_id,
     uint32_t capability_revision);
@@ -115,10 +99,6 @@ esp_err_t mcp_tool_exposure_forget_device(const char *device_id);
 esp_err_t mcp_tool_exposure_refresh_device_name(const char *device_id);
 
 esp_err_t mcp_tool_exposure_get_capacity(mcp_exposure_capacity_t *out);
-
-// Tool naming: command + user-facing device name; never pass a device id.
-esp_err_t mcp_tool_name_generate(const char *device_name, const char *command,
-                                 char *out, size_t out_len);
 
 // Capability digest (mcp_tool_digest.c).
 void mcp_tool_digest_compute(const device_schema_tool_t *cap,

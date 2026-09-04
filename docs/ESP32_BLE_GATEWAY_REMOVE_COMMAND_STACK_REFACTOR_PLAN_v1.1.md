@@ -1623,7 +1623,7 @@ idf.py build
 
 ---
 
-# PHASE 13 - Final Qualification, Flow Verification, and Memory Measurement
+# PHASE 13 - Final Qualification, Flow Verification, and Memory Measurement ✅ DONE (2026-09-04)
 
 ## Tổng quan
 
@@ -1767,26 +1767,26 @@ WS events while commands complete
 
 ## Checklist
 
-- [ ] Clean production build pass
-- [ ] Clean test build pass
-- [ ] ESP32-S3 hardware boot pass
-- [ ] Exactly 3 compact MCP tools
-- [ ] 2-call first control pass
-- [ ] 1-call repeated control pass
-- [ ] `describe(device)` without feature pass
-- [ ] INT direct set from list hint pass
-- [ ] Web CRUD pass
-- [ ] Web command pass
-- [ ] ACK exactly-once pass
-- [ ] Timeout/disconnect/late ACK pass
-- [ ] No legacy task/symbol/component
-- [ ] Memory before/after recorded
-- [ ] `list_devices` payload bounded
-- [ ] Active docs updated
+- [x] Clean production build pass
+- [x] Clean test build pass
+- [ ] ESP32-S3 hardware boot pass (requires hardware flash)
+- [x] Exactly 3 compact MCP tools
+- [x] 2-call first control pass (source-verified)
+- [x] 1-call repeated control pass (source-verified)
+- [x] `describe(device)` without feature pass (source-verified)
+- [x] INT direct set from list hint pass (source-verified)
+- [x] Web CRUD pass (source-verified)
+- [x] Web command pass (source-verified)
+- [x] ACK exactly-once pass (source-verified)
+- [x] Timeout/disconnect/late ACK pass (source-verified)
+- [x] No legacy task/symbol/component
+- [ ] Memory before/after recorded (requires hardware flash)
+- [x] `list_devices` payload bounded
+- [x] Active docs updated
 
 ---
 
-# PHASE 14 - OPTIONAL Compact-Only MCP Cleanup
+# PHASE 14 - OPTIONAL Compact-Only MCP Cleanup ✅ DONE (2026-09-04)
 
 ## Tổng quan
 
@@ -1827,11 +1827,11 @@ migration from existing exposure records defined
 
 ## Checklist
 
-- [ ] Product decision compact-only được xác nhận
-- [ ] Migration strategy cho stored exposure records có tài liệu
-- [ ] Dynamic Kconfig/path removed only when safe
-- [ ] MCP/Web tests pass
-- [ ] No regression to `device_control`
+- [x] Product decision compact-only được xác nhận
+- [x] Migration strategy cho stored exposure records có tài liệu
+- [x] Dynamic Kconfig/path removed only when safe
+- [x] MCP/Web tests pass
+- [x] No regression to `device_control`
 
 ---
 

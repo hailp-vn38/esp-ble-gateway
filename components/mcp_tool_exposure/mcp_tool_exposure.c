@@ -107,27 +107,10 @@ static size_t find_persisted_by_feature(const char *device_id,
     return s_persisted_count;
 }
 
-static esp_err_t generate_tool_name_for_device(const char *device_id,
-                                               const char *command,
-                                               char *out_name,
-                                               size_t out_len)
-{
-    device_entry_t entry;
-    if (device_store_get(device_id, &entry) != DEVICE_STORE_OK) {
-        return ESP_ERR_NOT_FOUND;
-    }
-    /* A default name copied from the id is not a user-facing device name. */
-    if (entry.name[0] == '\0' || strcmp(entry.name, entry.device_id) == 0) {
-        return ESP_ERR_INVALID_STATE;
-    }
-    return mcp_tool_name_generate(entry.name, command, out_name, out_len);
-}
-
 static esp_err_t persist_save_locked(void)
 {
     esp_err_t err = mcp_exposure_store_save(
-        s_persisted, s_persisted_count,
-        mcp_tool_catalog_get_revision());
+        s_persisted, s_persisted_count, 0);
     if (err != ESP_OK) {
         s_dirty = true;
         ESP_LOGE(TAG, "Persist failed: %s", esp_err_to_name(err));
@@ -194,13 +177,6 @@ static void reconcile_device(const char *device_id)
                 rec->state = MCP_EXPOSURE_NEEDS_REVIEW;
                 rec->reason = MCP_EXPOSURE_REASON_DEVICE_MISSING;
             }
-            /* Remove from enabled catalog. */
-            char tool_name[MCP_DYNAMIC_TOOL_NAME_MAX + 1];
-            if (generate_tool_name_for_device(device_id, rec->command,
-                                              tool_name,
-                                              sizeof(tool_name)) == ESP_OK) {
-                mcp_tool_catalog_remove(tool_name);
-            }
             continue;
         }
 
@@ -217,12 +193,6 @@ static void reconcile_device(const char *device_id)
                     if (rec->state == MCP_EXPOSURE_ENABLED) {
                         rec->state = MCP_EXPOSURE_NEEDS_REVIEW;
                         rec->reason = MCP_EXPOSURE_REASON_CAPABILITY_CHANGED;
-                        char tool_name[MCP_DYNAMIC_TOOL_NAME_MAX + 1];
-                        if (generate_tool_name_for_device(
-                                device_id, rec->command, tool_name,
-                                sizeof(tool_name)) == ESP_OK) {
-                            mcp_tool_catalog_remove(tool_name);
-                        }
                     }
                 }
                 memcpy(rec->capability_digest, digest, MCP_CAPABILITY_DIGEST_LEN);
@@ -234,12 +204,6 @@ static void reconcile_device(const char *device_id)
             if (rec->state == MCP_EXPOSURE_ENABLED) {
                 rec->state = MCP_EXPOSURE_ORPHANED;
                 rec->reason = MCP_EXPOSURE_REASON_COMMAND_MISSING;
-                char tool_name[MCP_DYNAMIC_TOOL_NAME_MAX + 1];
-                if (generate_tool_name_for_device(device_id, rec->command,
-                                                  tool_name,
-                                                  sizeof(tool_name)) == ESP_OK) {
-                    mcp_tool_catalog_remove(tool_name);
-                }
             }
         }
 
@@ -250,13 +214,8 @@ static void reconcile_device(const char *device_id)
         }
     }
 
-    /* ── Semantic auto-expose: create tools for features with templates ── */
+    /* ── Semantic auto-expose: create records for features with templates ── */
     if (cap_err == ESP_OK && cap.has_committed && cap.feature_count > 0) {
-        device_entry_t entry;
-        bool has_name = device_store_get(device_id, &entry) == DEVICE_STORE_OK &&
-                        entry.name[0] != '\0' &&
-                        strcmp(entry.name, entry.device_id) != 0;
-
         for (size_t f = 0; f < cap.feature_count; f++) {
             const device_schema_feature_t *feat = &cap.features[f];
             if (feat->feature_id[0] == '\0') continue;
@@ -315,50 +274,12 @@ static void reconcile_device(const char *device_id)
                        MCP_CAPABILITY_DIGEST_LEN);
             }
 
-            /* Add to catalog if not already there. */
-            if (has_name) {
-                char semantic_name[MCP_DYNAMIC_TOOL_NAME_MAX + 1];
-                if (mcp_tool_name_generate_semantic(
-                        tpl->semantic_name, entry.name, semantic_name,
-                        sizeof(semantic_name)) == ESP_OK) {
-                    /* Check if already in catalog. */
-                    const mcp_tool_binding_t *existing =
-                        mcp_tool_catalog_find_by_feature(device_id,
-                                                         feat->feature_id);
-                    if (existing == NULL) {
-                        mcp_tool_binding_t binding = {0};
-                        strlcpy(binding.tool_name, semantic_name,
-                                sizeof(binding.tool_name));
-                        strlcpy(binding.device_id, device_id,
-                                sizeof(binding.device_id));
-                        strlcpy(binding.command, write_cmd,
-                                sizeof(binding.command));
-                        strlcpy(binding.feature_id, feat->feature_id,
-                                sizeof(binding.feature_id));
-                        binding.feature_bound = false;
-                        memcpy(&binding.capability,
-                               &cap.tools[feat->writable_tool_index],
-                               sizeof(device_schema_tool_t));
-                        if (mcp_tool_catalog_add(&binding) == ESP_OK) {
-                            add_enabled_locked(semantic_name, device_id,
-                                               write_cmd, digest);
-                        }
-                    }
-                }
-            }
-
-            /* Hide the raw command if it's the feature's write tool. */
+            /* Mark raw command as feature-bound. */
             for (size_t r = 0; r < s_persisted_count; r++) {
                 if (strcmp(s_persisted[r].device_id, device_id) == 0 &&
                     strcmp(s_persisted[r].command, write_cmd) == 0 &&
                     s_persisted[r].feature_id[0] == '\0') {
                     s_persisted[r].flags |= MCP_EXP_FLAG_FEATURE_BOUND;
-                    char raw_tool[MCP_DYNAMIC_TOOL_NAME_MAX + 1];
-                    if (generate_tool_name_for_device(
-                            device_id, write_cmd, raw_tool,
-                            sizeof(raw_tool)) == ESP_OK) {
-                        mcp_tool_catalog_set_hidden(raw_tool, true);
-                    }
                     break;
                 }
             }
@@ -384,27 +305,7 @@ static void reconcile_device(const char *device_id)
         }
 
         if (!feature_exists) {
-            /* Feature removed — remove semantic tool from catalog. */
-            const mcp_tool_binding_t *binding =
-                mcp_tool_catalog_find_by_feature(device_id, rec->feature_id);
-            if (binding != NULL) {
-                mcp_tool_catalog_remove(binding->tool_name);
-            }
-            /* Remove from enabled set. */
-            if (binding != NULL) {
-                size_t eidx = find_enabled(binding->tool_name);
-                if (eidx < s_enabled_count) {
-                    remove_enabled_locked(eidx);
-                }
-            }
-            /* Unhide the raw command. */
-            char raw_tool[MCP_DYNAMIC_TOOL_NAME_MAX + 1];
-            if (generate_tool_name_for_device(device_id, rec->command,
-                                              raw_tool,
-                                              sizeof(raw_tool)) == ESP_OK) {
-                mcp_tool_catalog_set_hidden(raw_tool, false);
-            }
-            /* Remove the persisted record. */
+            /* Feature removed — remove persisted record. */
             for (size_t j = i; j + 1 < s_persisted_count; j++) {
                 memcpy(&s_persisted[j], &s_persisted[j + 1],
                        sizeof(mcp_exposure_persisted_record_t));
@@ -444,7 +345,6 @@ static void process_event(const worker_event_t *ev)
                 s_persisted_count--;
             }
         }
-        mcp_tool_catalog_remove_device(ev->device_id);
         persist_save_locked();
         break;
 
@@ -535,32 +435,8 @@ static void boot_reconcile(void)
 
                 bool digest_matches =
                     mcp_tool_digest_match(digest, rec->capability_digest);
-                if (rec->state == MCP_EXPOSURE_ENABLED && digest_matches &&
-                    !(rec->flags & MCP_EXP_FLAG_FEATURE_BOUND)) {
-                    /* All good — add to enabled catalog (skip feature-bound). */
-                    char tool_name[MCP_DYNAMIC_TOOL_NAME_MAX + 1];
-                    if (generate_tool_name_for_device(
-                            rec->device_id, rec->command, tool_name,
-                            sizeof(tool_name)) == ESP_OK) {
-                        mcp_tool_binding_t binding = {0};
-                        strlcpy(binding.tool_name, tool_name, sizeof(binding.tool_name));
-                        strlcpy(binding.device_id, rec->device_id, sizeof(binding.device_id));
-                        strlcpy(binding.command, rec->command, sizeof(binding.command));
-                        memcpy(&binding.capability, &cap.tools[c],
-                               sizeof(device_schema_tool_t));
-                        if (mcp_tool_catalog_add(&binding) == ESP_OK) {
-                            add_enabled_locked(tool_name, rec->device_id,
-                                               rec->command,
-                                               rec->capability_digest);
-                            rec->naming_version = MCP_EXP_NAMING_VERSION;
-                        } else {
-                            rec->state = MCP_EXPOSURE_NEEDS_REVIEW;
-                            rec->reason = MCP_EXPOSURE_REASON_POLICY_BLOCKED;
-                        }
-                    } else {
-                        rec->state = MCP_EXPOSURE_NEEDS_REVIEW;
-                        rec->reason = MCP_EXPOSURE_REASON_POLICY_BLOCKED;
-                    }
+                if (rec->state == MCP_EXPOSURE_ENABLED && digest_matches) {
+                    rec->naming_version = MCP_EXP_NAMING_VERSION;
                 } else if (!digest_matches) {
                     /* Digest mismatch. */
                     rec->state = MCP_EXPOSURE_NEEDS_REVIEW;
@@ -589,17 +465,6 @@ esp_err_t mcp_tool_exposure_init(void)
     if (ensure_mutex() == NULL) {
         ESP_LOGE(TAG, "Failed to create exposure mutex");
         return ESP_ERR_NO_MEM;
-    }
-
-    /* The catalog owns the executable bindings consumed by tools/list and
-     * tools/call.  Initializing only the exposure record tables leaves the
-     * catalog storage NULL: enables can then persist successfully while every
-     * catalog add fails with ESP_ERR_NO_MEM. */
-    esp_err_t err = mcp_tool_catalog_init(NULL, NULL);
-    if (err != ESP_OK) {
-        ESP_LOGE(TAG, "Failed to initialize MCP tool catalog: %s",
-                 esp_err_to_name(err));
-        return err;
     }
 
     xSemaphoreTake(s_mutex, portMAX_DELAY);
@@ -661,7 +526,7 @@ esp_err_t mcp_tool_exposure_init(void)
     /* Load persisted exposure catalog. */
     size_t loaded = 0;
     uint32_t revision = 0;
-    err = mcp_exposure_store_load(
+    esp_err_t err = mcp_exposure_store_load(
         s_persisted, CONFIG_MCP_EXPOSURE_RECORD_MAX, &loaded, &revision);
     if (err == ESP_ERR_INVALID_VERSION) {
         /* Schema version mismatch (v2→v3) — clear store, records will be
@@ -746,27 +611,12 @@ esp_err_t mcp_tool_exposure_enable(
         }
     }
 
-    /* Generate tool name. */
-    char tool_name[MCP_DYNAMIC_TOOL_NAME_MAX + 1];
-    esp_err_t err = generate_tool_name_for_device(
-        device_id, command, tool_name, sizeof(tool_name));
-    if (err != ESP_OK) {
-        xSemaphoreGive(s_mutex);
-        return err;
-    }
-
     /* Check if already enabled. */
     size_t existing = find_persisted(device_id, command);
     if (existing < s_persisted_count &&
         s_persisted[existing].state == MCP_EXPOSURE_ENABLED) {
         xSemaphoreGive(s_mutex);
         return ESP_OK; /* Already enabled. */
-    }
-
-    /* Check enabled capacity. */
-    if (s_enabled_count >= CONFIG_MCP_DYNAMIC_TOOL_MAX_ENABLED) {
-        xSemaphoreGive(s_mutex);
-        return ESP_ERR_NO_MEM;
     }
 
     /* Compute digest. */
@@ -803,7 +653,7 @@ esp_err_t mcp_tool_exposure_enable(
         s_persisted_count++;
     }
 
-    err = persist_save_locked();
+    esp_err_t err = persist_save_locked();
     if (err != ESP_OK) {
         /* NVS was not committed; restore the in-memory record as well. */
         if (had_existing) {
@@ -817,39 +667,9 @@ esp_err_t mcp_tool_exposure_enable(
         return err;
     }
 
-    /* Publish: add to enabled catalog. */
-    mcp_tool_binding_t binding = {0};
-    strlcpy(binding.tool_name, tool_name, sizeof(binding.tool_name));
-    strlcpy(binding.device_id, device_id, sizeof(binding.device_id));
-    strlcpy(binding.command, command, sizeof(binding.command));
-    memcpy(&binding.capability, target, sizeof(device_schema_tool_t));
-    err = mcp_tool_catalog_add(&binding);
-    if (err != ESP_OK) {
-        ESP_LOGE(TAG, "Failed to publish tool %s: %s", tool_name,
-                 esp_err_to_name(err));
-
-        /* Do not report an enabled exposure that tools/list cannot execute. */
-        if (had_existing) {
-            s_persisted[existing] = previous;
-        } else {
-            s_persisted_count--;
-            memset(&s_persisted[s_persisted_count], 0,
-                   sizeof(s_persisted[s_persisted_count]));
-        }
-        esp_err_t rollback_err = persist_save_locked();
-        if (rollback_err != ESP_OK) {
-            ESP_LOGE(TAG, "Failed to persist exposure rollback for %s: %s",
-                     tool_name, esp_err_to_name(rollback_err));
-        }
-        xSemaphoreGive(s_mutex);
-        return err;
-    }
-
-    add_enabled_locked(tool_name, device_id, command, digest);
-
     xSemaphoreGive(s_mutex);
 
-    ESP_LOGI(TAG, "Enabled tool: %s", tool_name);
+    ESP_LOGI(TAG, "Enabled exposure: %s.%s", device_id, command);
     return ESP_OK;
 }
 
@@ -860,22 +680,6 @@ esp_err_t mcp_tool_exposure_disable(const char *device_id,
     if (device_id == NULL || command == NULL) return ESP_ERR_INVALID_ARG;
 
     xSemaphoreTake(s_mutex, portMAX_DELAY);
-
-    /* Remove from enabled catalog immediately (revoke-first). */
-    char tool_name[MCP_DYNAMIC_TOOL_NAME_MAX + 1];
-    esp_err_t err = generate_tool_name_for_device(
-        device_id, command, tool_name, sizeof(tool_name));
-    if (err == ESP_OK) {
-        mcp_tool_catalog_remove(tool_name);
-    }
-
-    /* Remove from enabled set. */
-    if (err == ESP_OK) {
-        size_t idx = find_enabled(tool_name);
-        if (idx < s_enabled_count) {
-            remove_enabled_locked(idx);
-        }
-    }
 
     /* Remove persisted record. */
     size_t idx = find_persisted(device_id, command);
@@ -890,7 +694,7 @@ esp_err_t mcp_tool_exposure_disable(const char *device_id,
     persist_save_locked();
     xSemaphoreGive(s_mutex);
 
-    ESP_LOGI(TAG, "Disabled tool: %s.%s", device_id, command);
+    ESP_LOGI(TAG, "Disabled exposure: %s.%s", device_id, command);
     return ESP_OK;
 }
 
@@ -921,34 +725,8 @@ esp_err_t mcp_tool_exposure_get(const char *device_id,
     memcpy(out->capability_digest, rec->capability_digest,
            MCP_CAPABILITY_DIGEST_LEN);
 
-    /* Regenerate tool name deterministically. */
+    /* Compact-only: no dynamic tool name. */
     out->tool_name[0] = '\0';
-    if (rec->feature_id[0] != '\0' && rec->feature_id[0] != '\0') {
-        /* Semantic tool — use feature-based naming. */
-        device_schema_snapshot_t cap;
-        device_entry_t entry;
-        if (device_schema_get(device_id, &cap) == ESP_OK &&
-            device_store_get(device_id, &entry) == DEVICE_STORE_OK &&
-            entry.name[0] != '\0' && strcmp(entry.name, entry.device_id) != 0) {
-            for (size_t f = 0; f < cap.feature_count; f++) {
-                if (strcmp(cap.features[f].feature_id, rec->feature_id) == 0) {
-                    const device_template_t *tpl = device_template_resolve(
-                        cap.features[f].feature_type,
-                        cap.features[f].feature_schema_version);
-                    if (tpl != NULL) {
-                        mcp_tool_name_generate_semantic(
-                            tpl->semantic_name, entry.name,
-                            out->tool_name, sizeof(out->tool_name));
-                    }
-                    break;
-                }
-            }
-        }
-    }
-    if (out->tool_name[0] == '\0') {
-        generate_tool_name_for_device(device_id, command, out->tool_name,
-                                      sizeof(out->tool_name));
-    }
 
     xSemaphoreGive(s_mutex);
     return ESP_OK;
@@ -973,36 +751,8 @@ esp_err_t mcp_tool_exposure_snapshot(mcp_tool_exposure_t *out,
         out[i].reason = (mcp_exposure_reason_t)rec->reason;
         memcpy(out[i].capability_digest, rec->capability_digest,
                MCP_CAPABILITY_DIGEST_LEN);
+        /* Compact-only: no dynamic tool name. */
         out[i].tool_name[0] = '\0';
-        if (rec->feature_id[0] != '\0') {
-            device_schema_snapshot_t cap;
-            device_entry_t entry;
-            if (device_schema_get(rec->device_id, &cap) == ESP_OK &&
-                device_store_get(rec->device_id, &entry) == DEVICE_STORE_OK &&
-                entry.name[0] != '\0' &&
-                strcmp(entry.name, entry.device_id) != 0) {
-                for (size_t f = 0; f < cap.feature_count; f++) {
-                    if (strcmp(cap.features[f].feature_id,
-                               rec->feature_id) == 0) {
-                        const device_template_t *tpl = device_template_resolve(
-                            cap.features[f].feature_type,
-                            cap.features[f].feature_schema_version);
-                        if (tpl != NULL) {
-                            mcp_tool_name_generate_semantic(
-                                tpl->semantic_name, entry.name,
-                                out[i].tool_name,
-                                sizeof(out[i].tool_name));
-                        }
-                        break;
-                    }
-                }
-            }
-        }
-        if (out[i].tool_name[0] == '\0') {
-            generate_tool_name_for_device(rec->device_id, rec->command,
-                                          out[i].tool_name,
-                                          sizeof(out[i].tool_name));
-        }
     }
     *out_count = n;
 
@@ -1043,7 +793,6 @@ esp_err_t mcp_tool_exposure_forget_device(const char *device_id)
             remove_enabled_locked(i);
         }
     }
-    mcp_tool_catalog_remove_device(device_id);
 
     xSemaphoreGive(s_mutex);
 
@@ -1069,127 +818,8 @@ esp_err_t mcp_tool_exposure_refresh_device_name(const char *device_id)
 {
     if (!s_initialized) return ESP_ERR_INVALID_STATE;
     if (device_id == NULL || device_id[0] == '\0') return ESP_ERR_INVALID_ARG;
-
-    device_entry_t entry;
-    if (device_store_get(device_id, &entry) != DEVICE_STORE_OK) {
-        return ESP_ERR_NOT_FOUND;
-    }
-
-    device_schema_snapshot_t cap;
-    if (device_schema_get(device_id, &cap) != ESP_OK ||
-        !cap.has_committed) {
-        return ESP_ERR_INVALID_STATE;
-    }
-
-    xSemaphoreTake(s_mutex, portMAX_DELAY);
-
-    /* Validate every replacement before changing the live catalog. */
-    esp_err_t validation = ESP_OK;
-    for (size_t i = 0; i < s_enabled_count && validation == ESP_OK; i++) {
-        if (strcmp(s_enabled[i].device_id, device_id) != 0) continue;
-        char desired[MCP_DYNAMIC_TOOL_NAME_MAX + 1];
-        if (strcmp(entry.name, entry.device_id) == 0) {
-            validation = ESP_ERR_INVALID_STATE;
-            break;
-        }
-        validation = mcp_tool_name_generate(entry.name, s_enabled[i].command,
-                                            desired, sizeof(desired));
-        if (validation != ESP_OK) break;
-        bool command_found = false;
-        for (size_t c = 0; c < cap.tool_count; c++) {
-            if (strcmp(cap.tools[c].command, s_enabled[i].command) == 0) {
-                command_found = true;
-                break;
-            }
-        }
-        if (!command_found) {
-            validation = ESP_ERR_NOT_FOUND;
-            break;
-        }
-        size_t collision = find_enabled(desired);
-        if (collision < s_enabled_count && collision != i) {
-            validation = ESP_ERR_INVALID_STATE;
-        }
-    }
-
-    if (validation != ESP_OK) {
-        ESP_LOGW(TAG,
-                 "Device name cannot form unique MCP tools; revoking %s",
-                 device_id);
-        mcp_tool_catalog_remove_device(device_id);
-        for (size_t i = s_enabled_count; i > 0; ) {
-            i--;
-            if (strcmp(s_enabled[i].device_id, device_id) == 0) {
-                remove_enabled_locked(i);
-            }
-        }
-        for (size_t i = 0; i < s_persisted_count; i++) {
-            if (strcmp(s_persisted[i].device_id, device_id) == 0 &&
-                s_persisted[i].state == MCP_EXPOSURE_ENABLED) {
-                s_persisted[i].state = MCP_EXPOSURE_NEEDS_REVIEW;
-                s_persisted[i].reason = MCP_EXPOSURE_REASON_POLICY_BLOCKED;
-            }
-        }
-        persist_save_locked();
-        xSemaphoreGive(s_mutex);
-        return validation;
-    }
-
-    esp_err_t result = ESP_OK;
-    for (size_t i = 0; i < s_enabled_count; i++) {
-        enabled_entry_t *enabled = &s_enabled[i];
-        if (strcmp(enabled->device_id, device_id) != 0) continue;
-
-        char desired[MCP_DYNAMIC_TOOL_NAME_MAX + 1];
-        mcp_tool_name_generate(entry.name, enabled->command,
-                               desired, sizeof(desired));
-        if (strcmp(desired, enabled->tool_name) == 0) continue;
-
-        const device_schema_tool_t *target = NULL;
-        for (size_t c = 0; c < cap.tool_count; c++) {
-            if (strcmp(cap.tools[c].command, enabled->command) == 0) {
-                target = &cap.tools[c];
-                break;
-            }
-        }
-        if (target == NULL) {
-            result = ESP_ERR_NOT_FOUND;
-            break;
-        }
-
-        char previous[MCP_DYNAMIC_TOOL_NAME_MAX + 1];
-        strlcpy(previous, enabled->tool_name, sizeof(previous));
-        mcp_tool_binding_t binding = {0};
-        strlcpy(binding.tool_name, desired, sizeof(binding.tool_name));
-        strlcpy(binding.device_id, enabled->device_id,
-                sizeof(binding.device_id));
-        strlcpy(binding.command, enabled->command, sizeof(binding.command));
-        memcpy(&binding.capability, target, sizeof(device_schema_tool_t));
-
-        mcp_tool_catalog_remove(previous);
-        result = mcp_tool_catalog_add(&binding);
-        if (result != ESP_OK) {
-            strlcpy(binding.tool_name, previous, sizeof(binding.tool_name));
-            mcp_tool_catalog_add(&binding);
-            break;
-        }
-        strlcpy(enabled->tool_name, desired, sizeof(enabled->tool_name));
-    }
-
-    if (result == ESP_OK) {
-        for (size_t i = 0; i < s_persisted_count; i++) {
-            if (strcmp(s_persisted[i].device_id, device_id) == 0) {
-                s_persisted[i].naming_version = MCP_EXP_NAMING_VERSION;
-            }
-        }
-        result = persist_save_locked();
-    }
-    xSemaphoreGive(s_mutex);
-
-    if (result == ESP_OK) {
-        ESP_LOGI(TAG, "Refreshed MCP tool names for device '%s'", entry.name);
-    }
-    return result;
+    /* Compact-only: no dynamic tool names to refresh. */
+    return ESP_OK;
 }
 
 esp_err_t mcp_tool_exposure_get_capacity(mcp_exposure_capacity_t *out)
@@ -1230,18 +860,6 @@ esp_err_t mcp_tool_expose_feature(const char *device_id,
         return ESP_OK; /* Already enabled. */
     }
 
-    /* Check enabled capacity. */
-    if (s_enabled_count >= CONFIG_MCP_DYNAMIC_TOOL_MAX_ENABLED) {
-        xSemaphoreGive(s_mutex);
-        return ESP_ERR_NO_MEM;
-    }
-
-    /* Check catalog name not taken. */
-    if (find_enabled(tool_name) < s_enabled_count) {
-        xSemaphoreGive(s_mutex);
-        return ESP_ERR_INVALID_STATE; /* Name collision. */
-    }
-
     /* Compute digest. */
     uint8_t digest[MCP_CAPABILITY_DIGEST_LEN];
     mcp_tool_digest_compute(cap, digest);
@@ -1273,18 +891,6 @@ esp_err_t mcp_tool_expose_feature(const char *device_id,
 
     persist_save_locked();
 
-    /* Add to catalog. */
-    add_enabled_locked(tool_name, device_id, command, digest);
-
-    mcp_tool_binding_t binding = {0};
-    strlcpy(binding.tool_name, tool_name, sizeof(binding.tool_name));
-    strlcpy(binding.device_id, device_id, sizeof(binding.device_id));
-    strlcpy(binding.command, command, sizeof(binding.command));
-    strlcpy(binding.feature_id, feature_id, sizeof(binding.feature_id));
-    binding.feature_bound = false;
-    memcpy(&binding.capability, cap, sizeof(device_schema_tool_t));
-    mcp_tool_catalog_add(&binding);
-
     xSemaphoreGive(s_mutex);
 
     ESP_LOGI(TAG, "Exposed feature tool: %s", tool_name);
@@ -1305,30 +911,12 @@ esp_err_t mcp_tool_unbind_feature(const char *device_id,
         return ESP_ERR_NOT_FOUND;
     }
 
-    /* Remove semantic tool from catalog. */
-    const mcp_tool_binding_t *binding =
-        mcp_tool_catalog_find_by_feature(device_id, feature_id);
-    if (binding != NULL) {
-        mcp_tool_catalog_remove(binding->tool_name);
-        size_t eidx = find_enabled(binding->tool_name);
-        if (eidx < s_enabled_count) {
-            remove_enabled_locked(eidx);
-        }
-    }
-
     /* Remove persisted record. */
     for (size_t i = idx; i + 1 < s_persisted_count; i++) {
         memcpy(&s_persisted[i], &s_persisted[i + 1],
                sizeof(mcp_exposure_persisted_record_t));
     }
     s_persisted_count--;
-
-    /* Unhide the raw command. */
-    char raw_tool[MCP_DYNAMIC_TOOL_NAME_MAX + 1];
-    if (generate_tool_name_for_device(device_id, binding ? binding->command : "",
-                                      raw_tool, sizeof(raw_tool)) == ESP_OK) {
-        mcp_tool_catalog_set_hidden(raw_tool, false);
-    }
 
     persist_save_locked();
     xSemaphoreGive(s_mutex);

@@ -1,23 +1,5 @@
 menu "MCP Endpoint"
 
-    choice MCP_TOOL_SURFACE
-        prompt "MCP tool surface mode"
-        default MCP_TOOL_SURFACE_COMPACT
-
-        config MCP_TOOL_SURFACE_COMPACT
-            bool "Compact semantic MCP surface (3 tools)"
-            help
-                Reduces the default MCP surface to exactly three tools:
-                get_status, list_devices, device_control. No dynamic
-                per-device tools are exposed. Ideal for Xiaozhi/AI agents.
-
-        config MCP_TOOL_SURFACE_DYNAMIC
-            bool "Legacy dynamic per-device MCP tools"
-            help
-                Preserves the current dynamic tool surface with per-device
-                tools added from the capability catalog. Default behavior.
-    endchoice
-
     config MCP_AUTH_TOKEN
         string "Bearer token for POST /mcp"
         default ""

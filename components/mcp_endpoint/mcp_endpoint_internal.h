@@ -302,10 +302,6 @@ typedef struct {
 const mcp_tool_desc_t *mcp_registry_find(const char *name);
 int mcp_registry_build_tools_list(cJSON *tools_array);
 
-// Dynamic tool schema builder from device capability (mcp_registry.c).
-cJSON *mcp_dynamic_tool_build_schema(const device_schema_tool_t *cap);
-cJSON *mcp_dynamic_tool_build_json(const mcp_tool_binding_t *binding);
-
 // ---------------------------------------------------------------------------
 // Policy (mcp_policy.c)
 // ---------------------------------------------------------------------------
