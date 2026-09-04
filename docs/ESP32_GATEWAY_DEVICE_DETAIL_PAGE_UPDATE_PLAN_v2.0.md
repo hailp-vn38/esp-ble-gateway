@@ -1161,7 +1161,7 @@ max_enabled
 
 ---
 
-# 12. Phase 3 — Upgrade exposure PUT response
+# 12. Phase 3 — Upgrade exposure PUT response ✅ DONE (2026-09-04)
 
 The feature-oriented mutation is already correct. Do not rewrite its input path.
 
@@ -1238,10 +1238,14 @@ Missing feature remains fail closed.
 
 ## Checklist
 
-- [ ] PUT remains `feature_id` based.
-- [ ] No raw command input.
-- [ ] Response can update local page state.
-- [ ] No follow-up exposure GET needed after toggle.
+- [x] PUT remains `feature_id` based.
+- [x] No raw command input.
+- [x] Response can update local page state.
+- [x] No follow-up exposure GET needed after toggle.
+
+> Validation: firmware build passed. `test/run_tests.sh --skip-build` flashed
+> and ran the suite; it was stopped after the serial test runner stalled, with
+> the same 11 pre-existing MCP endpoint failures and no exposure API failure.
 
 ---
 

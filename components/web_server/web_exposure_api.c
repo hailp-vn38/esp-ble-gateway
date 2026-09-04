@@ -223,8 +223,25 @@ static esp_err_t exposure_put_handler(httpd_req_t *request)
                                       "Enable/disable failed");
         }
 
+        mcp_tool_exposure_t updated;
+        if (mcp_tool_exposure_get_feature(device_id, feature_id, &updated) != ESP_OK) {
+            return web_send_api_error(request, "500 Internal Server Error",
+                                      "Exposure was updated but could not be read");
+        }
+
         cJSON *response = cJSON_CreateObject();
+        if (response == NULL) return ESP_ERR_NO_MEM;
         cJSON_AddBoolToObject(response, "success", true);
+        cJSON_AddStringToObject(response, "device_id", device_id);
+        cJSON_AddStringToObject(response, "feature_id", feature_id);
+        cJSON_AddBoolToObject(response, "control_enabled",
+                              updated.control_enabled);
+        cJSON_AddStringToObject(response, "health",
+                                updated.state == MCP_EXPOSURE_ENABLED ? "enabled" :
+                                updated.state == MCP_EXPOSURE_NEEDS_REVIEW ? "needs_review" :
+                                "orphaned");
+        cJSON_AddNumberToObject(response, "policy_revision",
+                                mcp_tool_exposure_get_policy_revision());
         return web_send_json(request, response);
     }
 
