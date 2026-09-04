@@ -1334,7 +1334,7 @@ Expected: no production match.
 
 ---
 
-# PHASE 10 - Remove Legacy Init and ACK Fallback From `main.c`
+# PHASE 10 - Remove Legacy Init and ACK Fallback From `main.c` ✅ DONE (2026-09-04)
 
 ## Tổng quan
 
@@ -1407,12 +1407,12 @@ Expected: no match.
 
 ## Checklist
 
-- [ ] Legacy init removed
-- [ ] ACK fallback removed
-- [ ] Service is sole ACK owner
-- [ ] Disconnect forwarded to service
-- [ ] Boot/integration tests pass
-- [ ] `main/CMakeLists.txt` no legacy REQUIRES
+- [x] Legacy init removed
+- [x] ACK fallback removed
+- [x] Service is sole ACK owner
+- [x] Disconnect forwarded to service
+- [x] Boot/integration tests pass
+- [x] `main/CMakeLists.txt` no legacy REQUIRES
 
 ---
 

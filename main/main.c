@@ -6,8 +6,6 @@
 
 #include "ble_central.h"
 #include "board_io.h"
-#include "command_dispatcher.h"
-#include "command_executor.h"
 #include "device_command_service.h"
 #include "device_store.h"
 #include "device_schema.h"
@@ -29,10 +27,8 @@ static void on_device_notify(const char *device_id, const gw_message_t *msg)
     if (device_state_on_notify(device_id, msg)) return;
     /* Observer: updates cache from structured ACK, does NOT consume it. */
     device_state_on_command_ack(device_id, msg);
-    /* Try new service first; fall back to legacy dispatcher for old callers */
-    if (!device_command_service_on_notify(device_id, msg)) {
-        command_dispatcher_on_device_notify(device_id, msg);
-    }
+    /* Service is sole ACK owner — no legacy dispatcher fallback. */
+    device_command_service_on_notify(device_id, msg);
 }
 
 static void on_device_ready(const char *device_id)
@@ -277,19 +273,6 @@ void app_main(void)
         ESP_LOGE(TAG, "Gateway events initialization failed");
         return;
     }
-    if (command_dispatcher_init() != 0) {
-        ESP_LOGE(TAG, "Command dispatcher initialization failed");
-        return;
-    }
-    if (command_dispatcher_freeze_registry() != 0) {
-        ESP_LOGE(TAG, "Command dispatcher registry freeze failed");
-        return;
-    }
-    if (command_executor_init() != ESP_OK) {
-        ESP_LOGE(TAG, "Command executor initialization failed");
-        return;
-    }
-    gw_memory_log_checkpoint("executor_ready");
     if (device_command_service_init() != ESP_OK) {
         ESP_LOGE(TAG, "Device command service initialization failed");
         return;
