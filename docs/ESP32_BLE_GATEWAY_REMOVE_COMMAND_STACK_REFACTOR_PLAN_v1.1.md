@@ -506,7 +506,7 @@ shutdown with pending          -> completion exactly once
 
 ---
 
-# PHASE 3 - Introduce Typed `device_management`
+# PHASE 3 - Introduce Typed `device_management` ✅ DONE (2026-09-04)
 
 ## Tổng quan
 
@@ -696,15 +696,15 @@ CRUD does not wait for BLE ACK/connect
 
 ## Checklist
 
-- [ ] Public API typed, không `gw_message_t`
-- [ ] Không cJSON/HTTP/MCP formatting
-- [ ] Không depend `mcp_tool_exposure`
-- [ ] Delete semantics documented + tested
-- [ ] Degraded result explicit
-- [ ] Pending command cancel on delete handled
-- [ ] CRUD non-blocking contract tested
-- [ ] Inventory typed snapshot pass
-- [ ] Lifecycle events published
+- [x] Public API typed, không `gw_message_t`
+- [x] Không cJSON/HTTP/MCP formatting
+- [x] Không depend `mcp_tool_exposure`
+- [x] Delete semantics documented + tested
+- [x] Degraded result explicit
+- [x] Pending command cancel on delete handled
+- [x] CRUD non-blocking contract tested
+- [x] Inventory typed snapshot pass
+- [x] Lifecycle events published
 
 ---
 

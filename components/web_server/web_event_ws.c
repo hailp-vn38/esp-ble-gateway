@@ -226,6 +226,9 @@ static int serialize_event(const gateway_event_t *ev, char *buf, size_t len)
                      ev->bool_value ? "true" : "false");
         break;
     case GW_EVENT_DEVICE_CHANGED:
+    case GW_EVENT_DEVICE_ADDED:
+    case GW_EVENT_DEVICE_RENAMED:
+    case GW_EVENT_DEVICE_REMOVED:
         n = snprintf(buf, len,
                      "{\"seq\":%" PRIu32 ",\"type\":\"device.changed\""
                      ",\"deviceId\":%s}",

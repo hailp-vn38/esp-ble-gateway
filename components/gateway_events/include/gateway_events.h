@@ -17,6 +17,9 @@ typedef enum {
     GW_EVENT_DEVICE_SCHEMA,
     GW_EVENT_FEATURE_STATE,
     GW_EVENT_RESYNC_REQUIRED,
+    GW_EVENT_DEVICE_ADDED,
+    GW_EVENT_DEVICE_RENAMED,
+    GW_EVENT_DEVICE_REMOVED,
 } gateway_event_type_t;
 
 typedef enum {
