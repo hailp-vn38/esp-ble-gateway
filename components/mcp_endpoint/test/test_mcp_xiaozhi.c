@@ -1,11 +1,8 @@
 #include <string.h>
 
 #include "cJSON.h"
-#include "command_dispatcher.h"
 #include "mcp_core.h"
 #include "unity.h"
-
-#include "../command_dispatcher_internal.h"
 
 typedef struct {
     char response[2048];
@@ -129,9 +126,6 @@ TEST_CASE("Xiaozhi compact tools list is exact and teaches semantic flow", "[mcp
 {
     static const char request[] =
         "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"tools/list\",\"params\":{}}";
-    command_dispatcher_reset_for_test();
-    TEST_ASSERT_EQUAL(0, command_dispatcher_init());
-    TEST_ASSERT_EQUAL(0, command_dispatcher_freeze_registry());
     capture_t capture = {0};
     mcp_responder_t responder = responder_for(&capture);
     mcp_wire_context_t wire = xiaozhi_wire(true);
@@ -168,9 +162,6 @@ TEST_CASE("Xiaozhi list_devices baseline records payload size",
     static const char request[] =
         "{\"jsonrpc\":\"2.0\",\"id\":3,\"method\":\"tools/call\","
         "\"params\":{\"name\":\"list_devices\",\"arguments\":{}}}";
-    command_dispatcher_reset_for_test();
-    TEST_ASSERT_EQUAL(0, command_dispatcher_init());
-    TEST_ASSERT_EQUAL(0, command_dispatcher_freeze_registry());
     capture_t capture = {0};
     mcp_responder_t responder = responder_for(&capture);
     mcp_wire_context_t wire = xiaozhi_wire(true);

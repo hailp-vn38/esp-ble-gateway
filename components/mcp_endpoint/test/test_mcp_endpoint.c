@@ -4,9 +4,7 @@
 #include "cJSON.h"
 #include "unity.h"
 
-#include "../command_dispatcher_internal.h"
 #include "cbor_codec.h"
-#include "command_dispatcher.h"
 #include "device_store.h"
 
 #include "test_mcp_transport.h"
@@ -17,50 +15,11 @@
 
 static void mcp_setup(void)
 {
-    command_dispatcher_reset_for_test();
-    TEST_ASSERT_EQUAL_INT(0, command_dispatcher_init());
-    TEST_ASSERT_EQUAL_INT(0, command_dispatcher_freeze_registry());
     mcp_auth_reset_rate_limit();
 }
 
-static bool s_mock_send_ok = true;
-static bool s_mock_ack_completes = true;
-static gw_message_t s_captured_wire;
-
-static int dev_mock_is_connected(const char *device_id)
-{
-    return device_id != NULL && device_id[0] != '\0' ? 1 : 0;
-}
-
-static int dev_mock_send(const char *device_id, const gw_message_t *msg)
-{
-    (void)device_id;
-    if (!s_mock_send_ok) return -1;
-    s_captured_wire = *msg;
-    if (s_mock_ack_completes) {
-        gw_message_t ack = {.protocol_version = GW_PROTOCOL_VERSION};
-        strlcpy(ack.type, "device_ack", sizeof(ack.type));
-        strlcpy(ack.device_id, msg->device_id, sizeof(ack.device_id));
-        strlcpy(ack.command, msg->command, sizeof(ack.command));
-        ack.has_device_id = 1;
-        ack.has_request_id = 1;
-        ack.bool_value = 1;
-        ack.request_id = msg->request_id;
-        command_dispatcher_on_device_notify(msg->device_id, &ack);
-    }
-    return 0;
-}
-
-static void install_device_hooks(void)
-{
-    static const device_command_hooks_t hooks = {
-        .send_command = dev_mock_send,
-        .is_connected = dev_mock_is_connected,
-    };
-    device_command_set_hooks(&hooks);
-    s_mock_send_ok = true;
-    s_mock_ack_completes = true;
-}
+// Device mock removed — device_command tool is no longer in the static
+// registry; all device_command requests return -32602 "unknown tool".
 
 // ---------------------------------------------------------------------------
 // tools/list — MCP 2026
@@ -491,7 +450,6 @@ TEST_CASE("allowlisted device command executes through the dispatcher",
           "[mcp_endpoint]")
 {
     mcp_setup();
-    install_device_hooks();
     // device_command is removed; unknown tool returns -32602.
     io_reset("{\"jsonrpc\":\"2.0\",\"id\":9,\"method\":\"tools/call\","
              "\"params\":{\"name\":\"device_command\","

@@ -11,7 +11,6 @@
 #include "freertos/task.h"
 
 #include "cbor_codec.h"
-#include "command_dispatcher.h"
 #include "device_command_service.h"
 #include "device_store.h"
 #include "device_schema.h"
@@ -102,8 +101,7 @@ typedef struct {
 // ---------------------------------------------------------------------------
 
 typedef enum {
-    MCP_TOOL_EXEC_GATEWAY_SYNC = 0,   // gateway dispatcher (legacy sync)
-    MCP_TOOL_EXEC_LOCAL,              // describe/read (compact, local cache)
+    MCP_TOOL_EXEC_LOCAL = 0,          // describe/read (compact, local cache)
     MCP_TOOL_EXEC_DEVICE_SERVICE,     // set commands (async via service)
     MCP_TOOL_EXEC_TYPED,              // get_status/list_devices (direct API)
 } mcp_tool_exec_kind_t;
@@ -221,9 +219,6 @@ bool mcp_result_add_server_info(cJSON *result);
 // Tools formatting (mcp_tools.c, mcp_registry.c)
 // ---------------------------------------------------------------------------
 
-cJSON *mcp_tools_format_dispatch(const dispatch_result_t *result,
-                                 const mcp_request_context_t *ctx,
-                                 mcp_rpc_error_t *err);
 cJSON *mcp_tools_tool_error(const char *text, const mcp_request_context_t *ctx,
                             mcp_rpc_error_t *err);
 cJSON *mcp_tools_format_device_result(const device_command_result_t *result,
@@ -287,10 +282,6 @@ mcp_resolve_status_t mcp_tools_resolve(const cJSON *params,
                                        char *denial_text, size_t denial_len,
                                        mcp_rpc_error_t *error);
 
-cJSON *mcp_tools_execute(const gw_message_t *msg,
-                         const mcp_request_context_t *ctx,
-                         mcp_rpc_error_t *error);
-
 cJSON *mcp_tools_execute_get_status(const mcp_request_context_t *ctx,
                                     mcp_rpc_error_t *error);
 
@@ -298,8 +289,6 @@ cJSON *mcp_tools_execute_list_devices(const mcp_request_context_t *ctx,
                                       mcp_rpc_error_t *error);
 
 cJSON *mcp_tools_list(const mcp_request_context_t *ctx);
-
-bool mcp_device_command_allowed(const char *command);
 
 // Registry (mcp_registry.c)
 typedef struct {
@@ -320,9 +309,6 @@ cJSON *mcp_dynamic_tool_build_json(const mcp_tool_binding_t *binding);
 // ---------------------------------------------------------------------------
 // Policy (mcp_policy.c)
 // ---------------------------------------------------------------------------
-
-mcp_policy_result_t mcp_policy_check_device_command(const char *device_id,
-                                                     const char *command);
 
 mcp_policy_result_t mcp_policy_check_feature_control(
     const char *device_id,

@@ -3,9 +3,7 @@
 #include "cJSON.h"
 #include "unity.h"
 
-#include "../command_dispatcher_internal.h"
 #include "cbor_codec.h"
-#include "command_dispatcher.h"
 
 #include "test_mcp_transport.h"
 
@@ -13,9 +11,6 @@
 
 static void mcp_setup(void)
 {
-    command_dispatcher_reset_for_test();
-    TEST_ASSERT_EQUAL_INT(0, command_dispatcher_init());
-    TEST_ASSERT_EQUAL_INT(0, command_dispatcher_freeze_registry());
     mcp_auth_reset_rate_limit();
 }
 

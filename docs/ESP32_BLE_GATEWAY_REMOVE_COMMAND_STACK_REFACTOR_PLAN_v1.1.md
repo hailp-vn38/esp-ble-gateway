@@ -1268,7 +1268,7 @@ simple relay intent <= 2 MCP tool calls
 
 ---
 
-# PHASE 9 - Simplify MCP Execution Model
+# PHASE 9 - Simplify MCP Execution Model ✅ DONE (2026-09-04)
 
 ## Tổng quan
 
@@ -1326,11 +1326,11 @@ Expected: no production match.
 
 ## Checklist
 
-- [ ] MCP endpoint không depend legacy components
-- [ ] No dispatcher/executor execution mode
-- [ ] Compact surface vẫn đúng 3 tools
-- [ ] Async path chỉ còn nơi cần thiết
-- [ ] MCP tests pass
+- [x] MCP endpoint không depend legacy components
+- [x] No dispatcher/executor execution mode
+- [x] Compact surface vẫn đúng 3 tools
+- [x] Async path chỉ còn nơi cần thiết
+- [x] MCP tests pass
 
 ---
 

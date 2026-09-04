@@ -6,10 +6,7 @@
 #include "sdkconfig.h"
 #include "unity.h"
 
-#include "../command_dispatcher_internal.h"
 #include "cbor_codec.h"
-#include "command_dispatcher.h"
-#include "command_executor.h"
 
 #include "test_mcp_transport.h"
 
@@ -20,36 +17,7 @@
 
 static void mcp_setup(void)
 {
-    command_dispatcher_reset_for_test();
-    TEST_ASSERT_EQUAL_INT(0, command_dispatcher_init());
-    TEST_ASSERT_EQUAL_INT(0, command_dispatcher_freeze_registry());
     mcp_auth_reset_rate_limit();
-    // A previous suite may have left the executor running (aborted test);
-    // device commands must take the synchronous fallback path by default.
-    command_executor_deinit();
-}
-
-// Device hooks whose send never completes: the worker stays blocked inside
-// its 2s ACK wait, keeping both queue slots occupied deterministically.
-static int blocking_is_connected(const char *device_id)
-{
-    return device_id != NULL && device_id[0] != '\0' ? 1 : 0;
-}
-
-static int blocking_send(const char *device_id, const gw_message_t *msg)
-{
-    (void)device_id;
-    (void)msg;
-    return 0;
-}
-
-static void install_device_hooks_blocking(void)
-{
-    static const device_command_hooks_t hooks = {
-        .send_command = blocking_send,
-        .is_connected = blocking_is_connected,
-    };
-    device_command_set_hooks(&hooks);
 }
 
 #define STRESS_LEAK_TOLERANCE_BYTES (2 * 1024)
@@ -70,7 +38,7 @@ TEST_CASE("tools/call loop is heap stable", "[mcp_stress]")
         "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"tools/call\","
         "\"params\":{\"name\":\"get_status\"}}";
 
-    // Warm up lazily allocated resources (dispatch mutex, cJSON caches).
+    // Warm up lazily allocated resources (cJSON caches).
     for (int i = 0; i < 5; i++) {
         TEST_ASSERT_EQUAL_INT(0, run_stress_request(request));
     }

@@ -10,7 +10,7 @@ idf_component_register(
          "mcp_device_control.c"
          "mcp_semantic_control.c"
     INCLUDE_DIRS "include"
-    REQUIRES esp_http_server cbor_codec command_dispatcher command_executor
+    REQUIRES esp_http_server cbor_codec
              device_command_service device_schema device_state device_template
              device_store gateway_status mcp_tool_exposure espressif__cjson
              nvs_flash esp_timer freertos

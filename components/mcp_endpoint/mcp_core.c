@@ -4,7 +4,6 @@
 #include <string.h>
 
 #include "cJSON.h"
-#include "command_executor.h"
 #include "device_command_service.h"
 #include "esp_log.h"
 
@@ -187,7 +186,7 @@ static esp_err_t handle_tools_call(const mcp_responder_t *responder,
 {
     const cJSON *params = cJSON_GetObjectItemCaseSensitive(root, "params");
     gw_message_t message = {0};
-    mcp_tool_exec_kind_t exec_kind = MCP_TOOL_EXEC_GATEWAY_SYNC;
+    mcp_tool_exec_kind_t exec_kind = MCP_TOOL_EXEC_LOCAL;
     char denial[96] = {0};
     mcp_rpc_error_t error = {0};
     mcp_resolve_status_t resolution =
@@ -382,15 +381,8 @@ static esp_err_t handle_tools_call(const mcp_responder_t *responder,
         return send_result(responder, result, id);
     }
 
-    cJSON *result = mcp_tools_execute(&message, protocol, &error);
-    if (result == NULL) {
-        return send_error(responder, error.code, error.message, id, NULL);
-    }
-    if (notification) {
-        cJSON_Delete(result);
-        return send_none(responder);
-    }
-    return send_result(responder, result, id);
+    /* All exec_kind cases handled above; any remaining path is unreachable */
+    return send_error(responder, -32603, "Internal error", id, NULL);
 }
 
 static esp_err_t route_request(const mcp_responder_t *responder, cJSON *root,
