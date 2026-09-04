@@ -407,12 +407,11 @@ const i18n = {
                 container.replaceChildren();
                 devices.renderFeaturesLoading(container);
             } else if (schemaState === 'error') {
-                void devices.loadSchema(state.selectedDeviceDetail);
+                void devices.loadDetail(state.selectedDeviceDetail);
             } else {
                 devices.renderFeatures(devices.currentFeatures, devices.currentTools, state.selectedDeviceDetail);
             }
             if (schemaState !== 'error') {
-                void mcpControls.loadDevice(state.selectedDeviceDetail.id);
             }
         }
     },

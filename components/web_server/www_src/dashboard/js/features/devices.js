@@ -261,7 +261,7 @@ const devices = {
         if (state.selectedDeviceDetail.id !== ev.deviceId) return;
 
         // Schema changed for selected device — reload schema once
-        this.loadSchema(state.selectedDeviceDetail, true);
+        this.loadDetail(state.selectedDeviceDetail);
     },
 
     _scheduleDeviceResync() {
@@ -412,7 +412,7 @@ const devices = {
 
         i18n.applyTranslations();
         nav.switchTab('device-detail', updateRoute);
-        this.loadSchema(dev);
+        this.loadDetail(dev);
     },
 
     renderConnectionState(device) {
@@ -584,7 +584,7 @@ const devices = {
             events.off('device.schema', () => {});
             events.off('resync:required', () => {});
             this._pendingSchemaRefresh = null;
-            const loaded = await this.loadSchema(device, true);
+            const loaded = await this.loadDetail(device);
             if (loaded) ui.showToast(i18n.t('device_detail.schema_updated'), 'success');
             else ui.showToast(i18n.t('device_detail.schema_load_error'), 'error');
         } catch (error) {
@@ -625,6 +625,66 @@ const devices = {
         } catch (error) {
             if (loadId !== this.schemaLoadId ||
                 state.selectedDeviceDetail?.id !== device.id) return;
+            this.renderSchemaState('error');
+            this.currentFeatures = [];
+            this.currentTools = [];
+            this.renderFeaturesError(container, error, device);
+            return false;
+        }
+    },
+
+    async loadDetail(device) {
+        const loadId = ++this.schemaLoadId;
+        const container = document.getElementById('feature-cards');
+        container.replaceChildren();
+        this.renderSchemaState('loading');
+        this.renderFeaturesLoading(container);
+        try {
+            const result = await api.getDeviceDetailSnapshot(device.id);
+            const detail = result.detail;
+            if (loadId !== this.schemaLoadId || state.selectedDeviceDetail?.id !== device.id) return;
+            const features = Array.isArray(detail.features) ? detail.features : [];
+            const tools = [];
+            const legacyFeatures = features.map(feature => {
+                const control = feature.control || {};
+                const semantic = feature.semantic || {};
+                const normalized = {
+                    feature_id: feature.feature_id,
+                    property_id: feature.property_id,
+                    template: {
+                        semantic_name: semantic.name,
+                        primary_property: semantic.primary_property
+                    },
+                    write_command: control.write_command,
+                    writable_tool_index: -1,
+                    state: feature.state
+                };
+                if (control.writable && control.write_command) {
+                    normalized.writable_tool_index = tools.length;
+                    tools.push({
+                        command: control.write_command,
+                        min_value: control.minimum ?? 0,
+                        max_value: control.maximum ?? 100,
+                        step: control.step ?? 1
+                    });
+                }
+                return normalized;
+            });
+            this.renderSchemaState(detail.schema?.state || 'unknown');
+            this.currentFeatures = legacyFeatures;
+            this.currentTools = tools;
+            this.renderFeatures(legacyFeatures, tools, device);
+            mcpControls.renderFeatures(device.id, features.map(feature => ({
+                feature_id: feature.feature_id,
+                semantic_name: feature.semantic?.name,
+                property: feature.semantic?.property,
+                value_type: feature.semantic?.value_type,
+                control_enabled: feature.mcp_control?.enabled === true,
+                health: feature.mcp_control?.health || 'missing'
+            })));
+            return true;
+        } catch (error) {
+            if (loadId !== this.schemaLoadId || state.selectedDeviceDetail?.id !== device.id) return;
             this.renderSchemaState('error');
             this.currentFeatures = [];
             this.currentTools = [];

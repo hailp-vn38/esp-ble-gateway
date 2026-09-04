@@ -1331,7 +1331,7 @@ shares one in-flight request.
 
 ---
 
-# 14. Phase 5 — Replace `loadSchema()` with `loadDetail()`
+# 14. Phase 5 — Replace `loadSchema()` with `loadDetail()` ✅ DONE (2026-09-04)
 
 ## File
 
@@ -1464,11 +1464,15 @@ currentDetail.features[].mcp_control
 
 ## Checklist
 
-- [ ] Open detail calls one detail endpoint.
-- [ ] `loadSchema()` is no longer the Device Detail owner.
-- [ ] `currentTools` removed.
-- [ ] No separate MCP load.
-- [ ] Global WS cursor is not reset by normal detail load.
+- [x] Open detail calls one detail endpoint.
+- [x] `loadSchema()` is no longer the Device Detail owner.
+- [ ] `currentTools` removed. (Deferred to Phase 6.)
+- [x] No separate MCP load.
+- [x] Global WS cursor is not reset by normal detail load.
+
+> Validation: dashboard assemble and JavaScript syntax validation passed. The
+> requested runner flashed and reached 68 passing tests before being stopped
+> during the long hardware suite; no Device Detail-specific failure observed.
 
 ---
 

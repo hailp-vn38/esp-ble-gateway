@@ -65,6 +65,19 @@ const mcpControls = {
         return row;
     },
 
+    renderFeatures(deviceId, features) {
+        const rows = document.getElementById('mcp-feature-controls');
+        rows.replaceChildren();
+        if (!features.length) {
+            const empty = document.createElement('div');
+            empty.className = 'p-5 text-sm text-gray-500';
+            empty.textContent = i18n.t('device_detail.mcp_empty');
+            rows.appendChild(empty);
+            return;
+        }
+        features.forEach(feature => rows.appendChild(this.renderExposureRow(deviceId, feature)));
+    },
+
     async loadDevice(deviceId) {
         const requestId = ++this.loadId;
         const rows = document.getElementById('mcp-feature-controls');
@@ -73,16 +86,8 @@ const mcpControls = {
         try {
             const data = await this.loadExposures(deviceId);
             if (requestId !== this.loadId || state.selectedDeviceDetail?.id !== deviceId) return;
-            rows.replaceChildren();
             const features = Array.isArray(data.features) ? data.features : [];
-            if (!features.length) {
-                const empty = document.createElement('div');
-                empty.className = 'p-5 text-sm text-gray-500';
-                empty.textContent = i18n.t('device_detail.mcp_empty');
-                rows.appendChild(empty);
-                return;
-            }
-            features.forEach(feature => rows.appendChild(this.renderExposureRow(deviceId, feature)));
+            this.renderFeatures(deviceId, features);
         } catch (error) {
             if (requestId !== this.loadId || state.selectedDeviceDetail?.id !== deviceId) return;
             rows.replaceChildren();
