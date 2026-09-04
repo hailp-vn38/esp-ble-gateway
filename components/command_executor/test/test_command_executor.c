@@ -2,11 +2,13 @@
 
 #include "freertos/FreeRTOS.h"
 #include "freertos/semphr.h"
+#include "freertos/task.h"
 #include "unity.h"
 
 #include "../../command_dispatcher/command_dispatcher_internal.h"
 #include "command_dispatcher.h"
 #include "command_executor.h"
+#include "esp_heap_caps.h"
 #include "sdkconfig.h"
 
 // ---------------------------------------------------------------------------
@@ -16,6 +18,37 @@
 #define BLOCK_WAIT_MS       10000
 #define COMPLETION_WAIT_MS  5000
 #define EXPIRY_MARGIN_MS    300
+
+static void cmd_exec_echo(const gw_message_t *message,
+                          dispatch_result_t *result);
+
+TEST_CASE("phase zero records command stack resource baseline",
+          "[command_executor][baseline]")
+{
+    command_executor_deinit();
+    command_dispatcher_reset_for_test();
+    TEST_ASSERT_EQUAL(0, command_dispatcher_init());
+    TEST_ASSERT_EQUAL(0, command_dispatcher_register("echo", cmd_exec_echo));
+    TEST_ASSERT_EQUAL(0, command_dispatcher_freeze_registry());
+    TEST_ASSERT_EQUAL(ESP_OK, command_executor_init());
+    command_executor_stats_t stats = {0};
+    uint32_t worker_stack_min = 0;
+    command_executor_get_stats(&stats, &worker_stack_min);
+
+    TEST_ASSERT_EQUAL_UINT32(CONFIG_CMD_EXEC_WORKER_COUNT,
+                             stats.active_workers);
+    TEST_ASSERT_GREATER_THAN_UINT32(0, worker_stack_min);
+    printf("PHASE0 free_internal_heap=%u minimum_free_internal_heap=%u "
+           "largest_internal_block=%u psram_free=%u task_count=%u "
+           "command_executor_worker_count=%u worker_stack_min_bytes=%u\n",
+           (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL),
+           (unsigned)heap_caps_get_minimum_free_size(MALLOC_CAP_INTERNAL),
+           (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL),
+           (unsigned)heap_caps_get_free_size(MALLOC_CAP_SPIRAM),
+           (unsigned)uxTaskGetNumberOfTasks(),
+           (unsigned)stats.active_workers, (unsigned)worker_stack_min);
+    command_executor_deinit();
+}
 
 typedef struct {
     SemaphoreHandle_t events;

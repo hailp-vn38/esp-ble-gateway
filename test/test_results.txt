@@ -1,24 +1,38 @@
+Phase 0 hardware test result
+Date: 2026-09-04
+Branch: dev-ws
+HEAD: 83d4ee43c766efe80fbfa5f685272fcb4b85aa41 + Phase 0 working tree
+Baseline SHA: f09321d2e010e3fbea19d071bc8c83bd90bfbcb8
+ESP-IDF: v6.1-rc1 (reports IDF 6.1.0 during configure)
+Target: ESP32-S3
+Port: /dev/cu.usbmodem101
 
-  Component                  PASS  FAIL  Total  Status
-  ───────────────────────────────────────────────────────
-  ble_central                  26     0     26  [32mALL PASS[0m
-  board_io                     64     0     64  [32mALL PASS[0m
-  cbor_codec                    9     0      9  [32mALL PASS[0m
-  command_dispatcher           31     0     31  [32mALL PASS[0m
-  command_executor              4     0      4  [32mALL PASS[0m
-  device_command_service       13     0     13  [32mALL PASS[0m
-  device_schema                22     0     22  [32mALL PASS[0m
-  device_state                 19     0     19  [32mALL PASS[0m
-  device_store                 10     0     10  [32mALL PASS[0m
-  device_template               7     0      7  [32mALL PASS[0m
-  gateway_events               10     0     10  [32mALL PASS[0m
-  mcp_endpoint                 55     0     55  [32mALL PASS[0m
-  mcp_tool_exposure             1     0      1  [32mALL PASS[0m
-  mcp_ws_bridge                18     0     18  [32mALL PASS[0m
-  memory_policy                 4     0      4  [32mALL PASS[0m
-  web_server                   26     0     26  [32mALL PASS[0m
-  wifi_provisioning            28     0     28  [32mALL PASS[0m
-  ───────────────────────────────────────────────────────
-  [31mTOTAL                       347     0    347[0m
+Build gate:
+  cd test
+  idf.py fullclean
+  idf.py build
+  PASS - esp32_ble_gateway_tests.bin = 0xa2100 bytes
+  PASS - app partition free = 0x5df00 bytes (37%)
 
-  Unity summary: 344 Tests 0 Failures 0 Ignored
+Hardware gate:
+  idf.py -p /dev/cu.usbmodem101 flash
+  PASS - ESP32-S3 revision v0.2, USB-Serial/JTAG
+  PASS - 353 Tests, 0 Failures, 0 Ignored
+
+Phase 0 probes (test application):
+  free internal heap: 285104 bytes
+  minimum free internal heap: 284256 bytes
+  largest internal block: 241664 bytes
+  PSRAM free: 0 bytes (CONFIG_SPIRAM is disabled in test/sdkconfig)
+  task count: 11
+  command executor worker count: 2
+  command executor minimum worker stack watermark: 2948 bytes
+  list_devices JSON-RPC response bytes: 91 (empty device-store fixture)
+
+Characterization coverage:
+  compact tools/list: exactly get_status, list_devices, device_control
+  MCP: get_status, list_devices, device_control describe/read/set routing
+  Web: GET/POST/PUT/DELETE /api/devices contract and POST /api/command validation
+  device command: ACK success, reject, timeout, disconnect
+  delete semantics: exposure -> schema -> state -> BLE peer -> store
+  delete degradation: exposure/BLE/store failures continue; schema failure aborts

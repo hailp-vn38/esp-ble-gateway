@@ -161,3 +161,56 @@ TEST_CASE("Xiaozhi compact tools list is exact and teaches semantic flow", "[mcp
         "prefer device_id and feature_id returned by list_devices"));
     cJSON_Delete(response);
 }
+
+TEST_CASE("Xiaozhi list_devices baseline records payload size",
+          "[mcp][xiaozhi][baseline]")
+{
+    static const char request[] =
+        "{\"jsonrpc\":\"2.0\",\"id\":3,\"method\":\"tools/call\","
+        "\"params\":{\"name\":\"list_devices\",\"arguments\":{}}}";
+    command_dispatcher_reset_for_test();
+    TEST_ASSERT_EQUAL(0, command_dispatcher_init());
+    TEST_ASSERT_EQUAL(0, command_dispatcher_freeze_registry());
+    capture_t capture = {0};
+    mcp_responder_t responder = responder_for(&capture);
+    mcp_wire_context_t wire = xiaozhi_wire(true);
+    TEST_ASSERT_EQUAL(ESP_OK, mcp_core_handle_json(
+                                  request, strlen(request), &wire, &responder));
+    TEST_ASSERT_GREATER_THAN_UINT32(0, capture.response_len);
+    printf("PHASE0 list_devices_payload_bytes=%u\n",
+           (unsigned)capture.response_len);
+    cJSON *response = cJSON_Parse(capture.response);
+    TEST_ASSERT_NOT_NULL(response);
+    TEST_ASSERT_TRUE(cJSON_IsObject(
+        cJSON_GetObjectItemCaseSensitive(response, "result")));
+    cJSON_Delete(response);
+}
+
+TEST_CASE("Xiaozhi device_control routes describe read and set",
+          "[mcp][xiaozhi][baseline]")
+{
+    static const char *operations[] = {"describe", "read", "set"};
+    mcp_wire_context_t wire = xiaozhi_wire(true);
+
+    for (size_t i = 0; i < 3; ++i) {
+        char request[320];
+        snprintf(request, sizeof(request),
+                 "{\"jsonrpc\":\"2.0\",\"id\":%u,\"method\":\"tools/call\","
+                 "\"params\":{\"name\":\"device_control\",\"arguments\":{"
+                 "\"operation\":\"%s\",\"device\":\"phase0-missing\","
+                 "\"feature\":\"power\",\"bool_value\":true}}}",
+                 (unsigned)(i + 10), operations[i]);
+        capture_t capture = {0};
+        mcp_responder_t responder = responder_for(&capture);
+        TEST_ASSERT_EQUAL(ESP_OK, mcp_core_handle_json(
+                                      request, strlen(request), &wire,
+                                      &responder));
+        cJSON *response = cJSON_Parse(capture.response);
+        TEST_ASSERT_NOT_NULL(response);
+        cJSON *result = cJSON_GetObjectItemCaseSensitive(response, "result");
+        TEST_ASSERT_TRUE(cJSON_IsObject(result));
+        TEST_ASSERT_TRUE(cJSON_IsTrue(
+            cJSON_GetObjectItemCaseSensitive(result, "isError")));
+        cJSON_Delete(response);
+    }
+}

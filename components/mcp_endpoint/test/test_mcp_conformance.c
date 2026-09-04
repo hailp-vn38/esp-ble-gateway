@@ -70,7 +70,7 @@ TEST_CASE("unsupported protocol version is -32022 with HTTP 400",
 {
     mcp_setup();
     io_reset("{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"tools/list\"}");
-    io_set_header("MCP-Protocol-Version", "2025-06-18");
+    io_set_header("MCP-Protocol-Version", "1999-01-01");
     install_transport();
     memset(&g_req, 0, sizeof(g_req));
     g_req.content_len = (int)g_io.body_len;
@@ -443,8 +443,17 @@ TEST_CASE("tools/list only contains control profile tools",
     TEST_ASSERT_NOT_NULL(tools);
     TEST_ASSERT_TRUE(cJSON_IsArray(tools));
 
-    // 2 control profile tools only (get_status + list_devices)
-    TEST_ASSERT_EQUAL_INT(2, cJSON_GetArraySize(tools));
+    // Compact control profile is exactly three tools.
+    TEST_ASSERT_EQUAL_INT(3, cJSON_GetArraySize(tools));
+    static const char *expected[] = {
+        "get_status", "list_devices", "device_control",
+    };
+    for (size_t i = 0; i < 3; ++i) {
+        cJSON *tool = cJSON_GetArrayItem(tools, (int)i);
+        TEST_ASSERT_EQUAL_STRING(
+            expected[i], cJSON_GetStringValue(
+                             cJSON_GetObjectItemCaseSensitive(tool, "name")));
+    }
 
     // No tool_names on wire (§12.9)
     TEST_ASSERT_NULL(cJSON_GetObjectItemCaseSensitive(result, "tool_names"));
