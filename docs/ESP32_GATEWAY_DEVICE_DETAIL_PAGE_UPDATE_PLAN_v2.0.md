@@ -1669,7 +1669,7 @@ unsupported:
 
 ---
 
-# 17. Phase 8 — Update Device Detail HTML and i18n
+# 17. Phase 8 — Update Device Detail HTML and i18n ✅ DONE (2026-09-04)
 
 ## Files
 
@@ -1738,10 +1738,13 @@ if no longer used elsewhere.
 
 ## Checklist
 
-- [ ] Page terminology matches compact-only MCP.
-- [ ] No "choose commands exposed to MCP clients".
-- [ ] No dynamic capacity text.
-- [ ] Loading/error states remain accessible.
+- [x] Page terminology matches compact-only MCP.
+- [x] No "choose commands exposed to MCP clients".
+- [x] No dynamic capacity text.
+- [x] Loading/error states remain accessible.
+
+> Validation: dashboard assemble and JavaScript syntax checks passed; live
+> browser visual QA remains unavailable because no browser session was present.
 
 ---
 
