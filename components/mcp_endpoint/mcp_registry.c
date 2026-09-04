@@ -130,8 +130,15 @@ const mcp_tool_desc_t *mcp_registry_find(const char *name)
 // Build static tools array only (§12.9).
 int mcp_registry_build_tools_list(cJSON *tools_array)
 {
-    for (size_t i = 0; i < sizeof(MCP_STATIC_TOOLS) / sizeof(MCP_STATIC_TOOLS[0]); i++) {
-        const mcp_tool_desc_t *desc = &MCP_STATIC_TOOLS[i];
+#ifdef CONFIG_MCP_TOOL_SURFACE_COMPACT
+    const mcp_tool_desc_t *table = MCP_COMPACT_TOOLS;
+    const size_t count = sizeof(MCP_COMPACT_TOOLS) / sizeof(MCP_COMPACT_TOOLS[0]);
+#else
+    const mcp_tool_desc_t *table = MCP_STATIC_TOOLS;
+    const size_t count = sizeof(MCP_STATIC_TOOLS) / sizeof(MCP_STATIC_TOOLS[0]);
+#endif
+    for (size_t i = 0; i < count; i++) {
+        const mcp_tool_desc_t *desc = &table[i];
         cJSON *tool = cJSON_CreateObject();
         cJSON *schema = desc->input_schema();
         cJSON *annotations = cJSON_CreateObject();

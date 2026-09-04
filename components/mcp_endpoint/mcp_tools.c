@@ -263,6 +263,11 @@ mcp_resolve_status_t mcp_tools_resolve(const cJSON *params, gw_message_t *msg,
     // 1. Try static registry first (gateway commands only).
     const mcp_tool_desc_t *desc = mcp_registry_find(tool_name);
     if (desc != NULL) {
+        /* device_control is a compact semantic tool — route locally */
+        if (strcmp(tool_name, "device_control") == 0) {
+            *exec_kind = MCP_TOOL_EXEC_LOCAL;
+            return MCP_RESOLVE_OK;
+        }
         *exec_kind = MCP_TOOL_EXEC_GATEWAY_SYNC;
         return normalize_arguments(source, "gateway_command", tool_name, msg,
                                    error);
