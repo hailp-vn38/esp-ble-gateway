@@ -2124,6 +2124,30 @@ command.tool_name
       after the hardware tests erased NVS, the flashed gateway booted into
       provisioning mode, so the STA Device Detail route was not reachable.
 
+## 22.0.1 Regression checkpoint — Initial detail request dedupe (2026-09-05)
+
+- [x] Identified the sequential startup race: the initial `/api/devices`
+      snapshot can finish and clear `loadPromise` immediately before the first
+      WebSocket `open`, causing `ws:connected` to reload both `/api/devices`
+      and the selected Device Detail.
+- [x] The first `ws:connected` reuses the completed live snapshot and issues
+      zero duplicate REST requests.
+- [x] A real reconnect still performs one `/api/devices` resync and one
+      selected Device Detail reload because WebSocket `onclose` clears
+      `events.live`.
+- [x] Lifecycle harness passed for both startup orderings and reconnect:
+      initial WebSocket open = 0 duplicate GET; reconnect = 1 snapshot resync.
+- [x] Modular JavaScript, assembled dashboard JavaScript, and generated gzip
+      validate successfully.
+- [x] `test/run_tests.sh -t 240 /dev/cu.usbmodem101` was executed on ESP32-S3;
+      363 tests passed and 0 failed before the existing Web device CRUD test
+      stalled, so the final Unity summary remains unavailable.
+- [x] Production firmware builds, flashes, and boots after the hardware test;
+      provisioning portal is available at `192.168.4.1`.
+- [ ] Browser Network capture on the STA Device Detail route. No browser was
+      available in this session and the test-erased gateway is in provisioning
+      mode.
+
 ## 22.1 Backend detail API
 
 Required tests:
@@ -2200,6 +2224,20 @@ Not expected:
 ```text
 GET /api/devices/schema?device_id=X
 GET /api/mcp/exposures?device_id=X
+```
+
+After the initial snapshot has entered live mode, the first WebSocket open:
+
+```text
+duplicate /api/devices GET count = 0
+duplicate detail GET count = 0
+```
+
+After a real WebSocket disconnect/reconnect:
+
+```text
+/api/devices resync count = 1
+selected detail reload count = 1
 ```
 
 ---

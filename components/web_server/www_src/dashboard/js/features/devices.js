@@ -58,6 +58,15 @@ const devices = {
             }
         }
 
+        // The initial REST snapshot may finish just before the WebSocket opens.
+        // In that ordering loadPromise has already been cleared, but goLive()
+        // proves the page already owns a current snapshot. Only reconnect after
+        // a disconnect (events.live=false) needs another REST resync.
+        if (reason === 'ws:connected' && events.live) {
+            ui.setRealtimeBanner('hide');
+            return;
+        }
+
         if (this._syncPromise) {
             this._syncRequested = true;
             return;
