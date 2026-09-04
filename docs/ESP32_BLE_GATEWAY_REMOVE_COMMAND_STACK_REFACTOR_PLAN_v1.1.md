@@ -708,7 +708,7 @@ CRUD does not wait for BLE ACK/connect
 
 ---
 
-# PHASE 4 - Migrate Web `/api/devices` Off Dispatcher/Executor
+# PHASE 4 - Migrate Web `/api/devices` Off Dispatcher/Executor ✅ DONE (2026-09-04)
 
 ## Tổng quan
 
@@ -798,13 +798,13 @@ Expected: no match.
 
 ## Checklist
 
-- [ ] `web_device_api.c` không include legacy headers
-- [ ] GET serialize một lần
-- [ ] CRUD direct typed API
-- [ ] HTTP status mapping explicit
-- [ ] Existing frontend contract không regression
-- [ ] Web device tests pass
-- [ ] Không blocking worker/executor
+- [x] `web_device_api.c` không include legacy headers
+- [x] GET serialize một lần
+- [x] CRUD direct typed API
+- [x] HTTP status mapping explicit
+- [x] Existing frontend contract không regression
+- [x] Web device tests pass
+- [x] Không blocking worker/executor
 
 ---
 

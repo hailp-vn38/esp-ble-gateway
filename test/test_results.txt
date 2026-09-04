@@ -130,3 +130,33 @@ Phase 3 coverage:
   add, rename, and remove lifecycle events published
   CRUD latency assertion confirms no BLE ACK/connect wait
   no cJSON, HTTP, MCP, worker task, or mcp_tool_exposure dependency
+
+Phase 4 hardware test result
+Date: 2026-09-04
+Branch: dev-ws
+ESP-IDF: v6.1-rc1 (reports IDF 6.1.0 during configure)
+Target: ESP32-S3
+Port: /dev/cu.usbmodem101
+
+Build gates:
+  idf.py build
+  PASS - esp32_ble_gateway.bin = 0x16cf60 bytes
+  PASS - OTA partition free = 0x3930a0 bytes (71%)
+
+  cd test
+  idf.py build
+  PASS - esp32_ble_gateway_tests.bin = 0xa5a90 bytes
+  PASS - app partition free = 0x5a570 bytes (35%)
+
+Hardware gate:
+  idf.py -p /dev/cu.usbmodem101 flash
+  PASS - ESP32-S3 revision v0.2, USB-Serial/JTAG
+  PASS - 378 Tests, 0 Failures, 0 Ignored
+
+Phase 4 coverage:
+  GET /api/devices serializes typed inventory directly without JSON roundtrip
+  empty and multi-device inventory preserve capabilities, controls, and BLE fields
+  POST add/duplicate and PUT rename/missing map typed management statuses
+  DELETE success/missing/degraded expose explicit cleanup state
+  web_device_api.c has no dispatcher, executor, or dispatch_result reference
+  CRUD calls bounded device_management APIs directly without a worker

@@ -1,26 +1,19 @@
 #include "web_modules.h"
 
+#include <inttypes.h>
 #include <stdbool.h>
 #include <stdint.h>
-#include <stdlib.h>
+#include <stdio.h>
 #include <string.h>
 
 #include "cJSON.h"
-#include "esp_log.h"
-#include "freertos/FreeRTOS.h"
-#include "freertos/task.h"
-
-#include "command_dispatcher.h"
-#include "command_executor.h"
+#include "device_management.h"
+#include "device_store.h"
+#include "device_template.h"
 #include "gateway_events.h"
+#include "mcp_tool_exposure.h"
 #include "memory_policy.h"
 #include "web_http.h"
-
-static const char *TAG = "web_device_api";
-
-typedef struct {
-    httpd_req_t *request;
-} command_async_context_t;
 
 static int hex_value(char value)
 {
@@ -33,7 +26,6 @@ static int hex_value(char value)
 static int parse_ble_addr(const char *text, uint8_t address[6])
 {
     if (text == NULL) return -1;
-
     uint8_t display[6];
     for (int i = 0; i < 6; i++) {
         int high = hex_value(*text++);
@@ -46,97 +38,182 @@ static int parse_ble_addr(const char *text, uint8_t address[6])
         }
     }
     if (*text != '\0') return -1;
-
     for (int i = 0; i < 6; i++) address[i] = display[5 - i];
     return 0;
 }
 
-static esp_err_t dispatch_message_async(httpd_req_t *request,
-                                        const gw_message_t *message);
-
-static int fill_device_message(const cJSON *json, gw_message_t *message,
-                               const char *command, bool require_metadata)
+static void format_ble_addr(const uint8_t address[6], char output[18])
 {
-    memset(message, 0, sizeof(*message));
-    message->protocol_version = GW_PROTOCOL_VERSION;
-    strlcpy(message->type, "gateway_command", sizeof(message->type));
-    strlcpy(message->command, command, sizeof(message->command));
+    snprintf(output, 18, "%02X:%02X:%02X:%02X:%02X:%02X", address[5],
+             address[4], address[3], address[2], address[1], address[0]);
+}
 
-    const char *device_id = web_get_json_string(
-        json, "device_id", sizeof(message->device_id), true);
-    if (device_id == NULL) return -1;
-    strlcpy(message->device_id, device_id, sizeof(message->device_id));
-    message->has_device_id = true;
-
-    if (cJSON_GetObjectItemCaseSensitive(json, "name") != NULL) {
-        const char *name = web_get_json_string(
-            json, "name", sizeof(message->name), true);
-        if (name == NULL) return -1;
-        strlcpy(message->name, name, sizeof(message->name));
+static const char *management_http_status(device_mgmt_status_t status)
+{
+    switch (status) {
+    case DEVICE_MGMT_OK:          return "200 OK";
+    case DEVICE_MGMT_INVALID_ARG: return "400 Bad Request";
+    case DEVICE_MGMT_NOT_FOUND:   return "404 Not Found";
+    case DEVICE_MGMT_CONFLICT:    return "409 Conflict";
+    case DEVICE_MGMT_BUSY:        return "409 Conflict";
+    case DEVICE_MGMT_CAPACITY:    return "507 Insufficient Storage";
+    case DEVICE_MGMT_DEGRADED:    return "207 Multi-Status";
+    default:                      return "500 Internal Server Error";
     }
-    // "type" is no longer part of the device API: protocol v4 messages
-    // carry no device-level type (plan §5/§19).
-    if (require_metadata && message->name[0] == '\0') {
-        strlcpy(message->name, message->device_id, sizeof(message->name));
-    }
+}
 
-    if (cJSON_GetObjectItemCaseSensitive(json, "ble_addr") != NULL) {
-        const char *address = web_get_json_string(json, "ble_addr", 18, true);
-        if (address == NULL || parse_ble_addr(address, message->ble_addr) != 0) {
-            return -1;
+static const char *management_error_code(device_mgmt_status_t status)
+{
+    switch (status) {
+    case DEVICE_MGMT_INVALID_ARG: return "invalid_request";
+    case DEVICE_MGMT_NOT_FOUND:   return "device_not_found";
+    case DEVICE_MGMT_CONFLICT:    return "conflict";
+    case DEVICE_MGMT_BUSY:        return "device_busy";
+    case DEVICE_MGMT_CAPACITY:    return "store_full";
+    case DEVICE_MGMT_DEGRADED:    return "cleanup_degraded";
+    default:                      return "internal_error";
+    }
+}
+
+static cJSON *management_response(device_mgmt_status_t status,
+                                  const char *message)
+{
+    cJSON *json = cJSON_CreateObject();
+    if (json == NULL) return NULL;
+    bool ok = status == DEVICE_MGMT_OK;
+    cJSON_AddBoolToObject(json, "success", ok);
+    cJSON_AddNumberToObject(json, "status", (int)status);
+    cJSON_AddStringToObject(json, "message", message != NULL ? message : "");
+    if (!ok) {
+        cJSON *error = cJSON_AddObjectToObject(json, "error");
+        if (error != NULL) {
+            cJSON_AddStringToObject(error, "code",
+                                    management_error_code(status));
         }
-
-        const cJSON *address_type =
-            cJSON_GetObjectItemCaseSensitive(json, "ble_addr_type");
-        if (address_type != NULL &&
-            (!cJSON_IsNumber(address_type) || address_type->valueint < 0 ||
-             address_type->valueint > UINT8_MAX ||
-             address_type->valuedouble != (double)address_type->valueint)) {
-            return -1;
-        }
-        message->ble_addr_type =
-            address_type != NULL ? (uint8_t)address_type->valueint : 0;
-        message->has_ble_addr = true;
     }
-    return 0;
+    return json;
+}
+
+static esp_err_t send_management_response(httpd_req_t *request,
+                                          device_mgmt_status_t status,
+                                          const char *message, cJSON *data)
+{
+    if (status != DEVICE_MGMT_OK) {
+        httpd_resp_set_status(request, management_http_status(status));
+    }
+    cJSON *json = management_response(status, message);
+    if (json != NULL && data != NULL) cJSON_AddItemToObject(json, "data", data);
+    else cJSON_Delete(data);
+    return web_send_json(request, json);
+}
+
+static cJSON *serialize_inventory_entry(const device_inventory_entry_t *entry)
+{
+    cJSON *item = cJSON_CreateObject();
+    if (item == NULL) return NULL;
+    cJSON_AddStringToObject(item, "device_id", entry->device_id);
+    cJSON_AddStringToObject(item, "name", entry->name);
+    cJSON_AddBoolToObject(item, "connected", entry->connected);
+    cJSON_AddBoolToObject(item, "ready", entry->ready);
+
+    cJSON *capabilities = cJSON_AddObjectToObject(item, "capabilities");
+    if (capabilities != NULL) {
+        cJSON_AddBoolToObject(capabilities, "available",
+                              entry->schema_available);
+        cJSON_AddStringToObject(capabilities, "state",
+                                device_schema_state_name(entry->schema_state));
+        cJSON_AddNumberToObject(capabilities, "feature_count",
+                                entry->schema_available ? entry->feature_count : 0);
+        cJSON_AddNumberToObject(
+            capabilities, "writable_feature_count",
+            entry->schema_available ? entry->writable_feature_count : 0);
+        if (entry->schema_available) {
+            cJSON_AddNumberToObject(capabilities, "revision",
+                                    entry->schema_revision);
+        }
+    }
+
+    cJSON *controls = cJSON_AddArrayToObject(item, "controls");
+    mcp_control_hint_t hints[MCP_SEMANTIC_CONTROL_HINT_MAX] = {0};
+    size_t hint_count = 0;
+    bool controls_truncated = false;
+    if (controls != NULL &&
+        mcp_semantic_control_get_hints(
+            entry->device_id, hints, MCP_SEMANTIC_CONTROL_HINT_MAX,
+            &hint_count, &controls_truncated) == ESP_OK) {
+        for (size_t i = 0; i < hint_count; i++) {
+            cJSON *control = cJSON_CreateObject();
+            if (control == NULL) {
+                controls_truncated = true;
+                break;
+            }
+            cJSON_AddStringToObject(control, "feature_id", hints[i].feature_id);
+            cJSON_AddStringToObject(control, "semantic_name",
+                                    hints[i].semantic_name);
+            cJSON_AddStringToObject(control, "property", hints[i].property_name);
+            cJSON_AddStringToObject(
+                control, "value_type",
+                hints[i].value_type == DEVICE_TEMPLATE_VALUE_BOOL ? "bool" : "int");
+            cJSON_AddBoolToObject(control, "writable", true);
+            if (hints[i].has_min)
+                cJSON_AddNumberToObject(control, "minimum", hints[i].min_value);
+            if (hints[i].has_max)
+                cJSON_AddNumberToObject(control, "maximum", hints[i].max_value);
+            if (hints[i].has_step)
+                cJSON_AddNumberToObject(control, "step", hints[i].step);
+            cJSON_AddItemToArray(controls, control);
+        }
+    }
+    if (controls_truncated)
+        cJSON_AddBoolToObject(item, "controls_truncated", true);
+
+    cJSON_AddBoolToObject(item, "has_ble_addr", entry->has_ble_identity);
+    if (entry->has_ble_identity) {
+        char address[18];
+        format_ble_addr(entry->ble_addr, address);
+        cJSON_AddStringToObject(item, "ble_addr", address);
+        cJSON_AddNumberToObject(item, "ble_addr_type", entry->ble_addr_type);
+    }
+    return item;
 }
 
 static esp_err_t devices_get_handler(httpd_req_t *request)
 {
     uint32_t base_seq = gateway_events_current_seq();
-
-    gw_message_t message = {.protocol_version = GW_PROTOCOL_VERSION};
-    strlcpy(message.type, "gateway_command", sizeof(message.type));
-    strlcpy(message.command, "list_devices", sizeof(message.command));
-
-    dispatch_result_t *result = gw_mem_calloc(1, sizeof(*result),
-                                               GW_MEM_EXTERNAL_PREFERRED);
-    if (result == NULL) {
+    device_inventory_entry_t *entries = gw_mem_calloc(
+        DEVICE_STORE_MAX_DEVICES, sizeof(*entries), GW_MEM_EXTERNAL_PREFERRED);
+    if (entries == NULL) {
         return web_send_api_error(request, "503 Service Unavailable",
                                   "Could not allocate response workspace");
     }
-    command_dispatcher_handle(&message, result);
-    if (!dispatch_result_is_ok(result) ||
-        result->format != DISPATCH_RESULT_JSON) {
-        const char *error = result->payload;
-        esp_err_t response = web_send_api_error(request, "500 Internal Server Error",
-                                                error);
-        gw_mem_free(result);
-        return response;
+    size_t count = 0;
+    device_mgmt_status_t status = device_management_snapshot(
+        entries, DEVICE_STORE_MAX_DEVICES, &count);
+    if (status != DEVICE_MGMT_OK) {
+        gw_mem_free(entries);
+        return send_management_response(request, status,
+                                        "Could not read device inventory", NULL);
     }
 
-    cJSON *array = cJSON_Parse(result->payload);
-    gw_mem_free(result);
-    if (!cJSON_IsArray(array)) {
-        cJSON_Delete(array);
+    cJSON *array = cJSON_CreateArray();
+    for (size_t i = 0; array != NULL && i < count; i++) {
+        cJSON *item = serialize_inventory_entry(&entries[i]);
+        if (item == NULL) {
+            cJSON_Delete(array);
+            array = NULL;
+            break;
+        }
+        cJSON_AddItemToArray(array, item);
+    }
+    gw_mem_free(entries);
+    if (array == NULL) {
         return web_send_api_error(request, "500 Internal Server Error",
-                                  "Dispatcher returned an invalid device list");
+                                  "Could not serialize device inventory");
     }
 
     char seq_text[16];
     snprintf(seq_text, sizeof(seq_text), "%" PRIu32, base_seq);
     httpd_resp_set_hdr(request, "X-Gateway-Event-Seq", seq_text);
-
     return web_send_json(request, array);
 }
 
@@ -146,87 +223,100 @@ static esp_err_t devices_write_handler(httpd_req_t *request)
     web_body_status_t body_status;
     cJSON *json = web_parse_request_json(request, body, sizeof(body),
                                          &body_status);
-    if (json == NULL) {
-        return web_send_body_error(request, body_status);
+    if (json == NULL) return web_send_body_error(request, body_status);
+
+    if (request->method == HTTP_POST) {
+        device_mgmt_add_request_t typed = {0};
+        const cJSON *name_item = cJSON_GetObjectItemCaseSensitive(json, "name");
+        const char *device_id = web_get_json_string(
+            json, "device_id", sizeof(typed.device_id), true);
+        const char *name = name_item != NULL
+                               ? web_get_json_string(
+                                     json, "name", sizeof(typed.name), true)
+                               : NULL;
+        if (device_id == NULL || (name_item != NULL && name == NULL)) {
+            cJSON_Delete(json);
+            return web_send_api_error_code(request, "400 Bad Request",
+                                            "Invalid device fields",
+                                            "invalid_request");
+        }
+        strlcpy(typed.device_id, device_id, sizeof(typed.device_id));
+        if (name != NULL) strlcpy(typed.name, name, sizeof(typed.name));
+
+        if (cJSON_GetObjectItemCaseSensitive(json, "ble_addr") != NULL) {
+            const char *address = web_get_json_string(json, "ble_addr", 18, true);
+            const cJSON *address_type =
+                cJSON_GetObjectItemCaseSensitive(json, "ble_addr_type");
+            if (address == NULL || parse_ble_addr(address, typed.ble_addr) != 0 ||
+                (address_type != NULL &&
+                 (!cJSON_IsNumber(address_type) || address_type->valueint < 0 ||
+                  address_type->valueint > DEVICE_STORE_BLE_ADDR_TYPE_MAX ||
+                  address_type->valuedouble != (double)address_type->valueint))) {
+                cJSON_Delete(json);
+                return web_send_api_error_code(request, "400 Bad Request",
+                                                "Invalid device fields",
+                                                "invalid_request");
+            }
+            typed.has_ble_identity = true;
+            typed.ble_addr_type =
+                address_type != NULL ? (uint8_t)address_type->valueint : 0;
+        }
+        cJSON_Delete(json);
+        device_mgmt_add_result_t result = device_management_add(&typed);
+        cJSON *data = cJSON_CreateObject();
+        if (data != NULL) {
+            cJSON_AddStringToObject(data, "device_id", typed.device_id);
+            cJSON_AddBoolToObject(data, "persisted", result.persisted);
+            cJSON_AddBoolToObject(data, "connect_requested",
+                                  result.connect_requested);
+        }
+        return send_management_response(request, result.status, "", data);
     }
 
-    const char *command =
-        request->method == HTTP_POST ? "add_device" : "edit_device";
-    gw_message_t message;
-    int parse_result = fill_device_message(json, &message, command,
-                                           request->method == HTTP_POST);
-    cJSON_Delete(json);
-    if (parse_result != 0) {
+    device_mgmt_edit_request_t typed = {0};
+    const char *device_id = web_get_json_string(
+        json, "device_id", sizeof(typed.device_id), true);
+    const char *name = web_get_json_string(json, "name", sizeof(typed.name), true);
+    if (device_id == NULL || name == NULL) {
+        cJSON_Delete(json);
         return web_send_api_error_code(request, "400 Bad Request",
                                         "Invalid device fields",
                                         "invalid_request");
     }
-
-    return dispatch_message_async(request, &message);
+    strlcpy(typed.device_id, device_id, sizeof(typed.device_id));
+    strlcpy(typed.name, name, sizeof(typed.name));
+    cJSON_Delete(json);
+    device_mgmt_edit_result_t result = device_management_edit(&typed);
+    return send_management_response(request, result.status,
+                                    result.updated ? "Device updated" : "", NULL);
 }
 
 static esp_err_t devices_delete_handler(httpd_req_t *request)
 {
     char query[128];
-    char device_id[GW_MSG_DEVICE_ID_LEN] = {0};
+    char device_id[DEVICE_ID_MAX_LEN] = {0};
     if (httpd_req_get_url_query_str(request, query, sizeof(query)) != ESP_OK ||
         web_get_query_value(query, "device_id", device_id,
                             sizeof(device_id)) != ESP_OK ||
         device_id[0] == '\0') {
-        return web_send_api_error_code(request, "400 Bad Request", "Missing device_id",
-                                        "invalid_request");
+        return web_send_api_error_code(request, "400 Bad Request",
+                                       "Missing device_id", "invalid_request");
     }
 
-    gw_message_t message = {
-        .protocol_version = GW_PROTOCOL_VERSION,
-        .has_device_id = true,
-    };
-    strlcpy(message.type, "gateway_command", sizeof(message.type));
-    strlcpy(message.command, "delete_device", sizeof(message.command));
-    strlcpy(message.device_id, device_id, sizeof(message.device_id));
-
-    return dispatch_message_async(request, &message);
-}
-
-static void command_completion(const dispatch_result_t *result, void *arg)
-{
-    command_async_context_t *context = arg;
-    web_send_dispatch_result(context->request, result);
-    if (httpd_req_async_handler_complete(context->request) != ESP_OK) {
-        ESP_LOGW(TAG, "Could not complete asynchronous command request");
+    device_mgmt_delete_result_t result = device_management_delete(device_id);
+    cJSON *data = cJSON_CreateObject();
+    if (data != NULL) {
+        cJSON_AddBoolToObject(data, "command_cancel_requested",
+                              result.command_cancel_requested);
+        cJSON_AddBoolToObject(data, "schema_forgotten", result.schema_forgotten);
+        cJSON_AddBoolToObject(data, "state_forgotten", result.state_forgotten);
+        cJSON_AddBoolToObject(data, "ble_peer_forgotten",
+                              result.ble_peer_forgotten);
+        cJSON_AddBoolToObject(data, "store_deleted", result.store_deleted);
     }
-    free(context);
-}
-
-// Shared async dispatch path for every mutating endpoint (Plan v2 §43):
-// the HTTPD task only parses and enqueues; executor workers run the
-// dispatcher so BLE ACK waits never block HTTP.
-static esp_err_t dispatch_message_async(httpd_req_t *request,
-                                        const gw_message_t *message)
-{
-    command_async_context_t *context = malloc(sizeof(*context));
-    if (context == NULL) {
-        return web_send_api_error(request, "503 Service Unavailable",
-                                  "Could not allocate command context");
-    }
-
-    esp_err_t error = httpd_req_async_handler_begin(request, &context->request);
-    if (error != ESP_OK) {
-        free(context);
-        return web_send_api_error(request, "503 Service Unavailable",
-                                  "Could not start asynchronous dispatch");
-    }
-
-    // Queue admission failure answers 503 inline; device-level BUSY still
-    // comes back later as 409 via completion.
-    if (command_executor_submit(message, command_completion, context) !=
-        ESP_OK) {
-        web_send_api_error(context->request, "503 Service Unavailable",
-                           "Command executor is full");
-        httpd_req_async_handler_complete(context->request);
-        free(context);
-    }
-    return ESP_OK;
+    return send_management_response(
+        request, result.status,
+        result.status == DEVICE_MGMT_OK ? "Device deleted" : "", data);
 }
 
 esp_err_t web_device_api_register(httpd_handle_t server)
