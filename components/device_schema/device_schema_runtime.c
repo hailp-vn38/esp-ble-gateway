@@ -4,12 +4,9 @@
 #include <string.h>
 
 #include "device_store.h"
-#include "esp_log.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/semphr.h"
 #include "memory_policy.h"
-
-static const char *TAG = "schema";
 
 /* ── Runtime context (singleton) ────────────────────────────────────── */
 

@@ -2,8 +2,6 @@
 
 #include "cbor_codec.h"
 
-static const char *TAG = "device_template";
-
 /* ── Static template registry ───────────────────────────────────────── */
 
 static const device_template_t s_templates[] = {

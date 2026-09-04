@@ -143,8 +143,6 @@ static esp_err_t exposure_put_handler(httpd_req_t *request)
                                        "Missing device_id", "invalid_request");
     }
 
-    // Single command mode.
-    const cJSON *command_item = cJSON_GetObjectItemCaseSensitive(json, "command");
     const cJSON *feature_item = cJSON_GetObjectItemCaseSensitive(json, "feature_id");
 
     /* Compact mode: accept feature_id + enabled */

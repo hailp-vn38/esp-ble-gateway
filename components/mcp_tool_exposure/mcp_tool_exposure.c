@@ -86,14 +86,6 @@ static size_t find_persisted(const char *device_id, const char *command)
     return s_persisted_count;
 }
 
-static size_t find_enabled(const char *tool_name)
-{
-    for (size_t i = 0; i < s_enabled_count; i++) {
-        if (strcmp(s_enabled[i].tool_name, tool_name) == 0) return i;
-    }
-    return s_enabled_count;
-}
-
 static size_t find_persisted_by_feature(const char *device_id,
                                          const char *feature_id)
 {
@@ -118,19 +110,6 @@ static esp_err_t persist_save_locked(void)
         s_dirty = false;
     }
     return err;
-}
-
-static void add_enabled_locked(const char *tool_name, const char *device_id,
-                               const char *command,
-                               const uint8_t digest[MCP_CAPABILITY_DIGEST_LEN])
-{
-    if (s_enabled_count >= CONFIG_MCP_DYNAMIC_TOOL_MAX_ENABLED) return;
-    enabled_entry_t *e = &s_enabled[s_enabled_count];
-    strlcpy(e->tool_name, tool_name, sizeof(e->tool_name));
-    strlcpy(e->device_id, device_id, sizeof(e->device_id));
-    strlcpy(e->command, command, sizeof(e->command));
-    memcpy(e->capability_digest, digest, MCP_CAPABILITY_DIGEST_LEN);
-    s_enabled_count++;
 }
 
 static void remove_enabled_locked(size_t idx)

@@ -5,8 +5,6 @@
 #include <string.h>
 
 #include "cJSON.h"
-#include "esp_log.h"
-
 #include "ble_central.h"
 #include "cbor_codec.h"
 #include "device_schema.h"
@@ -14,8 +12,6 @@
 #include "device_template.h"
 #include "gateway_events.h"
 #include "web_http.h"
-
-static const char *TAG = "web_schema_api";
 
 /* ── Helpers ────────────────────────────────────────────────────────── */
 
