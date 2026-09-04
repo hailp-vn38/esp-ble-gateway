@@ -874,7 +874,7 @@ Expected: no match.
 
 ---
 
-# PHASE 6 - Introduce Shared MCP Semantic-Control Helper
+# PHASE 6 - Introduce Shared MCP Semantic-Control Helper ✅ DONE (2026-09-04)
 
 ## Tổng quan
 
@@ -997,13 +997,13 @@ truncation deterministic
 
 ## Checklist
 
-- [ ] Resolver/policy logic không duplicate ở 2 MCP handlers
-- [ ] Exact IDs ưu tiên
-- [ ] Ambiguity fail closed
-- [ ] Hints không raw command/tool name
-- [ ] INT hint có range/step
-- [ ] Controls bounded/truncatable
-- [ ] MCP semantic helper tests pass
+- [x] Resolver/policy logic không duplicate ở 2 MCP handlers
+- [x] Exact IDs ưu tiên
+- [x] Ambiguity fail closed
+- [x] Hints không raw command/tool name
+- [x] INT hint có range/step
+- [x] Controls bounded/truncatable
+- [x] MCP semantic helper tests pass
 
 ---
 

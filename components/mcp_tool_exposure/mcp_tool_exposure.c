@@ -2,6 +2,7 @@
 #include <stddef.h>
 #include <string.h>
 
+#include "cJSON.h"
 #include "esp_log.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
@@ -1441,6 +1442,37 @@ esp_err_t mcp_semantic_control_get_hints(
             hint->step = tool->step;
         }
         (*out_count)++;
+    }
+    return ESP_OK;
+}
+
+esp_err_t mcp_semantic_control_serialize_hints(cJSON *array,
+                                               const mcp_control_hint_t *hints,
+                                               size_t count)
+{
+    if (array == NULL || hints == NULL) return ESP_ERR_INVALID_ARG;
+
+    for (size_t i = 0; i < count; ++i) {
+        cJSON *control = cJSON_CreateObject();
+        if (control == NULL) return ESP_ERR_NO_MEM;
+
+        cJSON_AddStringToObject(control, "feature_id", hints[i].feature_id);
+        cJSON_AddStringToObject(control, "semantic_name",
+                                hints[i].semantic_name);
+        cJSON_AddStringToObject(control, "property", hints[i].property_name);
+        cJSON_AddStringToObject(
+            control, "value_type",
+            hints[i].value_type == DEVICE_TEMPLATE_VALUE_BOOL ? "bool" : "int");
+        cJSON_AddBoolToObject(control, "writable", true);
+
+        if (hints[i].has_min)
+            cJSON_AddNumberToObject(control, "minimum", hints[i].min_value);
+        if (hints[i].has_max)
+            cJSON_AddNumberToObject(control, "maximum", hints[i].max_value);
+        if (hints[i].has_step)
+            cJSON_AddNumberToObject(control, "step", hints[i].step);
+
+        cJSON_AddItemToArray(array, control);
     }
     return ESP_OK;
 }

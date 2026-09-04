@@ -5,6 +5,7 @@
 #include <stddef.h>
 #include <stdint.h>
 
+#include "cJSON.h"
 #include "device_schema.h"
 #include "esp_err.h"
 
@@ -159,6 +160,13 @@ esp_err_t mcp_semantic_control_get_hints(
     size_t capacity,
     size_t *out_count,
     bool *out_truncated);
+
+// Serialize a hint array into a cJSON array. Each hint becomes an object with
+// feature_id, semantic_name, property, value_type, writable, and optional
+// minimum/maximum/step for INT types. Returns ESP_ERR_NO_MEM on OOM.
+esp_err_t mcp_semantic_control_serialize_hints(cJSON *array,
+                                               const mcp_control_hint_t *hints,
+                                               size_t count);
 
 #ifdef __cplusplus
 }

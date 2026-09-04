@@ -3,6 +3,7 @@ idf_component_register(
          "test_mcp_conformance.c"
          "test_mcp_stress.c"
          "test_mcp_xiaozhi.c"
+         "test_mcp_semantic_control.c"
     REQUIRES unity mcp_endpoint cbor_codec command_dispatcher command_executor
-             espressif__cjson
+             device_store device_template espressif__cjson mcp_tool_exposure
 )

@@ -141,28 +141,9 @@ static cJSON *serialize_inventory_entry(const device_inventory_entry_t *entry)
         mcp_semantic_control_get_hints(
             entry->device_id, hints, MCP_SEMANTIC_CONTROL_HINT_MAX,
             &hint_count, &controls_truncated) == ESP_OK) {
-        for (size_t i = 0; i < hint_count; i++) {
-            cJSON *control = cJSON_CreateObject();
-            if (control == NULL) {
-                controls_truncated = true;
-                break;
-            }
-            cJSON_AddStringToObject(control, "feature_id", hints[i].feature_id);
-            cJSON_AddStringToObject(control, "semantic_name",
-                                    hints[i].semantic_name);
-            cJSON_AddStringToObject(control, "property", hints[i].property_name);
-            cJSON_AddStringToObject(
-                control, "value_type",
-                hints[i].value_type == DEVICE_TEMPLATE_VALUE_BOOL ? "bool" : "int");
-            cJSON_AddBoolToObject(control, "writable", true);
-            if (hints[i].has_min)
-                cJSON_AddNumberToObject(control, "minimum", hints[i].min_value);
-            if (hints[i].has_max)
-                cJSON_AddNumberToObject(control, "maximum", hints[i].max_value);
-            if (hints[i].has_step)
-                cJSON_AddNumberToObject(control, "step", hints[i].step);
-            cJSON_AddItemToArray(controls, control);
-        }
+        if (mcp_semantic_control_serialize_hints(controls, hints,
+                                                hint_count) != ESP_OK)
+            controls_truncated = true;
     }
     if (controls_truncated)
         cJSON_AddBoolToObject(item, "controls_truncated", true);
