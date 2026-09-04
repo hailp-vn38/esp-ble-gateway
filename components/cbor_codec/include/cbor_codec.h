@@ -5,14 +5,16 @@
 #include <stdint.h>
 #include <stddef.h>
 
+#include "device_types.h"
+
 #define GW_MSG_MAX_LEN         256
 #define GW_MSG_TYPE_LEN         24
-#define GW_MSG_DEVICE_ID_LEN    32
-#define GW_MSG_COMMAND_LEN      32
-#define GW_MSG_NAME_LEN         32
+#define GW_MSG_DEVICE_ID_LEN    DEVICE_ID_MAX_LEN
+#define GW_MSG_COMMAND_LEN      DEVICE_COMMAND_MAX_LEN
+#define GW_MSG_NAME_LEN         DEVICE_NAME_MAX_LEN
 #define GW_MSG_CAP_LABEL_LEN     32
 #define GW_MSG_CAP_UNIT_LEN      12
-#define GW_FEATURE_ID_LEN        32
+#define GW_FEATURE_ID_LEN        DEVICE_FEATURE_ID_MAX_LEN
 #define GW_PROTOCOL_VERSION      4
 
 /* Semantic feature types (wire contract v4, must match the Device's

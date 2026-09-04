@@ -6,6 +6,7 @@
 #include <stdint.h>
 
 #include "cbor_codec.h"
+#include "device_types.h"
 #include "esp_err.h"
 
 #define DEVICE_SCHEMA_MAX_TOOLS     12
@@ -15,7 +16,7 @@
 /* ── Tool (command capability) ──────────────────────────────────────── */
 
 typedef struct {
-    char command[GW_MSG_COMMAND_LEN];
+    device_command_t command;
     char label[GW_MSG_CAP_LABEL_LEN];
     char unit[GW_MSG_CAP_UNIT_LEN];
     uint8_t value_type;   /* gw_feature_property_t range */
@@ -33,7 +34,7 @@ enum {
 /* ── Feature ────────────────────────────────────────────────────────── */
 
 typedef struct {
-    char feature_id[GW_FEATURE_ID_LEN];
+    device_feature_id_t feature_id;
     uint8_t feature_type;
     uint16_t feature_schema_version;
     uint16_t feature_flags;
@@ -56,7 +57,7 @@ typedef enum {
 /* ── Committed schema snapshot ──────────────────────────────────────── */
 
 typedef struct {
-    char device_id[GW_MSG_DEVICE_ID_LEN];
+    device_id_t device_id;
     device_schema_state_t state;
     bool has_committed;
     uint32_t revision;

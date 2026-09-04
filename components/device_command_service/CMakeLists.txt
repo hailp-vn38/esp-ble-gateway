@@ -4,6 +4,6 @@ idf_component_register(
          "device_command_pending.c"
          "device_command_worker.c"
     INCLUDE_DIRS "include"
-    REQUIRES cbor_codec memory_policy device_schema
+    REQUIRES cbor_codec device_types memory_policy device_schema
     PRIV_REQUIRES esp_timer freertos
 )

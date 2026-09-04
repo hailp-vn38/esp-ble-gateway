@@ -4,5 +4,5 @@ idf_component_register(
          "device_store_migration.c"
          "device_store_nvs.c"
     INCLUDE_DIRS "include"
-    REQUIRES nvs_flash
+    REQUIRES nvs_flash device_types
 )

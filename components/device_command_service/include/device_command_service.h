@@ -5,6 +5,7 @@
 #include <stdint.h>
 
 #include "cbor_codec.h"
+#include "device_types.h"
 #include "esp_err.h"
 
 /* ── Origin types ────────────────────────────────────────────────────── */
@@ -20,8 +21,8 @@ typedef enum {
 typedef struct {
     device_command_origin_t origin;
 
-    char device_id[GW_MSG_DEVICE_ID_LEN];
-    char command[GW_MSG_COMMAND_LEN];
+    device_id_t device_id;
+    device_command_t command;
 
     bool has_bool_value;
     bool bool_value;
@@ -30,7 +31,7 @@ typedef struct {
     int32_t int_value;
 
     bool has_feature_id;
-    char feature_id[GW_FEATURE_ID_LEN];
+    device_feature_id_t feature_id;
 
     bool has_property_id;
     uint8_t property_id;

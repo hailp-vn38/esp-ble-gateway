@@ -36,3 +36,32 @@ Characterization coverage:
   device command: ACK success, reject, timeout, disconnect
   delete semantics: exposure -> schema -> state -> BLE peer -> store
   delete degradation: exposure/BLE/store failures continue; schema failure aborts
+
+Phase 1 hardware test result
+Date: 2026-09-04
+Branch: dev-ws
+ESP-IDF: v6.1-rc1 (reports IDF 6.1.0 during configure)
+Target: ESP32-S3
+Port: /dev/cu.usbmodem101
+
+Build gates:
+  idf.py build
+  PASS - esp32-ble-gateway.bin = 0x16c540 bytes
+  PASS - OTA partition free = 0x393ac0 bytes (72%)
+
+  cd test
+  idf.py fullclean
+  idf.py build
+  PASS - esp32_ble_gateway_tests.bin = 0xa2230 bytes
+  PASS - app partition free = 0x5ddd0 bytes (37%)
+
+Hardware gate:
+  idf.py -p /dev/cu.usbmodem101 flash
+  PASS - ESP32-S3 revision v0.2, USB-Serial/JTAG
+  PASS - 354 Tests, 0 Failures, 0 Ignored
+
+Phase 1 coverage:
+  shared device limits remain 32 bytes to preserve protocol layout
+  protocol constants alias protocol-independent domain limits
+  compile-time assertions cover limits, aliases, and gw_message_t field sizes
+  CBOR and device store/schema/state regression suites pass

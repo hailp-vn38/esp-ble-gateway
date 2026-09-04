@@ -277,7 +277,7 @@ memory/task baseline recorded
 
 ---
 
-# PHASE 1 - Introduce Protocol-Independent Shared Device Types
+# PHASE 1 - Introduce Protocol-Independent Shared Device Types ✅ DONE (2026-09-04)
 
 ## Tổng quan
 
@@ -336,12 +336,12 @@ Không đổi layout/wire behavior trong phase này.
 
 ## Checklist
 
-- [ ] Domain public headers không include `cbor_codec.h` chỉ để lấy length constants
-- [ ] Protocol wire size không thay đổi
-- [ ] CBOR tests pass
-- [ ] Device store/schema/state tests pass
-- [ ] Không có new dynamic allocation
-- [ ] Build clean
+- [x] Domain public headers không include `cbor_codec.h` chỉ để lấy length constants
+- [x] Protocol wire size không thay đổi
+- [x] CBOR tests pass
+- [x] Device store/schema/state tests pass
+- [x] Không có new dynamic allocation
+- [x] Build clean
 
 ---
 

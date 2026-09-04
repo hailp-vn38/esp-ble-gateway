@@ -5,9 +5,9 @@
 #include <stdint.h>
 #include <stdbool.h>
 
+#include "device_types.h"
+
 #define DEVICE_STORE_MAX_DEVICES   16
-#define DEVICE_ID_MAX_LEN          32
-#define DEVICE_NAME_MAX_LEN        32
 #define DEVICE_STORE_SCHEMA_VERSION 3
 
 // Highest BLE address type accepted by the store (NimBLE: 0=public,
@@ -36,8 +36,8 @@ typedef enum {
 // it carries no runtime state (connection, GATT handles, MTU live in
 // ble_central) and is never returned as a pointer into internal storage.
 typedef struct {
-    char device_id[DEVICE_ID_MAX_LEN];
-    char name[DEVICE_NAME_MAX_LEN];
+    device_id_t device_id;
+    device_name_t name;
 
     uint8_t ble_addr[6];
     uint8_t ble_addr_type;

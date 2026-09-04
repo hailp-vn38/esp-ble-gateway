@@ -5,6 +5,7 @@
 #include <stdint.h>
 
 #include "cbor_codec.h"
+#include "device_types.h"
 #include "esp_err.h"
 
 #define DEVICE_STATE_MAX_ENTRIES 96
@@ -13,8 +14,8 @@
 /* ── State entry ────────────────────────────────────────────────────── */
 
 typedef struct {
-    char device_id[GW_MSG_DEVICE_ID_LEN];
-    char feature_id[GW_FEATURE_ID_LEN];
+    device_id_t device_id;
+    device_feature_id_t feature_id;
     uint8_t property_id;
     bool value_bool;
     int32_t value_int;
