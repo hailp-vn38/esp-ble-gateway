@@ -2044,7 +2044,7 @@ GET /api/mcp/exposures
 
 ---
 
-# 21. Phase 12 — Generated Web UI source of truth
+# 21. Phase 12 — Generated Web UI source of truth ✅ DONE (2026-09-04)
 
 Current firmware build source is:
 
@@ -2089,10 +2089,14 @@ command.tool_name
 
 ## Checklist
 
-- [ ] `www_src` is the only edited source of Web UI behavior.
-- [ ] Generated dashboard rebuilt.
-- [ ] Firmware embeds the rebuilt gzip.
-- [ ] No stale browser asset from previous firmware.
+- [x] `www_src` is the only edited source of Web UI behavior.
+- [x] Generated dashboard rebuilt.
+- [x] Firmware embeds the rebuilt gzip.
+- [x] No stale browser asset from previous firmware.
+
+> Firmware build passed. Generated dashboard was 176674 bytes, contained
+> `AI / MCP Control` and `mcp-feature-controls`, and contained none of the
+> removed MCP capacity/command UI markers.
 
 ---
 
