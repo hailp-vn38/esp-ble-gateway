@@ -1,6 +1,6 @@
 // --- Connected Devices Logic ---
 const devices = {
-    schemaLoadId: 0,
+    detailLoadId: 0,
     currentSchemaState: 'unknown',
     currentFeatures: [],
     loadPromise: null,
@@ -131,19 +131,6 @@ const devices = {
         if (typeof scanner !== 'undefined' && scanner.reconcileManagedDevices) {
             scanner.reconcileManagedDevices();
         }
-    },
-
-    _applySchemaSnapshot(schema) {
-        if (!schema) return;
-        const selectedId = state.selectedDeviceDetail?.id ?? null;
-        if (!selectedId || schema.device_id !== selectedId) return;
-
-        this.renderSchemaState(schema.state);
-        const features = Array.isArray(schema.features) ? schema.features : [];
-        const tools = Array.isArray(schema.tools) ? schema.tools : [];
-        this.currentFeatures = features;
-        this.currentFeatures = this.normalizeSchemaFeatures(features, tools);
-        this.renderFeatures(this.currentFeatures, state.selectedDeviceDetail);
     },
 
     _reconcileFeatureCacheAfterSnapshot(deviceId, snapshotSeq) {
@@ -552,7 +539,7 @@ const devices = {
         this._pendingSchemaRefresh = device.id;
         try {
             await api.refreshDeviceSchema(device.id);
-            // device.schema WS event will trigger loadSchema; wait for event
+            // device.schema WS event will trigger one coalesced detail reload; wait for event
             // delivery with a UX-only timeout, not a polling fallback.
             const timeoutPromise = new Promise(resolve => setTimeout(resolve, 15000));
             const schemaPromise = new Promise(resolve => {
@@ -588,38 +575,8 @@ const devices = {
         }
     },
 
-    async loadSchema(device, syncMcpAfterLoad = false) {
-        const loadId = ++this.schemaLoadId;
-        const container = document.getElementById('feature-cards');
-        this.currentFeatures = [];
-        container.replaceChildren();
-        this.renderSchemaState('loading');
-        this.renderFeaturesLoading(container);
-        try {
-            const result = await api.getDeviceSchemaSnapshot(device.id);
-            const snapshot = result.schema;
-            if (loadId !== this.schemaLoadId ||
-                state.selectedDeviceDetail?.id !== device.id) return;
-            this.renderSchemaState(snapshot.state);
-            const features = Array.isArray(snapshot.features) ? snapshot.features : [];
-            const tools = Array.isArray(snapshot.tools) ? snapshot.tools : [];
-            this.currentFeatures = this.normalizeSchemaFeatures(features, tools);
-            this.renderFeatures(this.currentFeatures, device);
-            // Reconcile cached feature events newer than schema snapshot cursor
-            this._reconcileFeatureCacheAfterSnapshot(device.id, result.eventSeq);
-            return true;
-        } catch (error) {
-            if (loadId !== this.schemaLoadId ||
-                state.selectedDeviceDetail?.id !== device.id) return;
-            this.renderSchemaState('error');
-            this.currentFeatures = [];
-            this.renderFeaturesError(container, error, device);
-            return false;
-        }
-    },
-
     async loadDetail(device) {
-        const loadId = ++this.schemaLoadId;
+        const loadId = ++this.detailLoadId;
         const container = document.getElementById('feature-cards');
         container.replaceChildren();
         this.renderSchemaState('loading');
@@ -627,7 +584,7 @@ const devices = {
         try {
             const result = await api.getDeviceDetailSnapshot(device.id);
             const detail = result.detail;
-            if (loadId !== this.schemaLoadId || state.selectedDeviceDetail?.id !== device.id) return;
+            if (loadId !== this.detailLoadId || state.selectedDeviceDetail?.id !== device.id) return;
             const features = Array.isArray(detail.features) ? detail.features : [];
             this.renderSchemaState(detail.schema?.state || 'unknown');
             this.currentFeatures = features;
@@ -641,7 +598,7 @@ const devices = {
             })));
             return true;
         } catch (error) {
-            if (loadId !== this.schemaLoadId || state.selectedDeviceDetail?.id !== device.id) return;
+            if (loadId !== this.detailLoadId || state.selectedDeviceDetail?.id !== device.id) return;
             this.renderSchemaState('error');
             this.currentFeatures = [];
             this.renderFeaturesError(container, error, device);
@@ -804,7 +761,7 @@ const devices = {
         const retry = document.createElement('button');
         retry.className = 'mt-3 px-3 py-2 bg-white border border-red-200 text-red-700 rounded-lg hover:bg-red-100 text-sm font-medium';
         retry.textContent = i18n.t('device_detail.retry');
-        retry.onclick = () => this.loadSchema(device);
+        retry.onclick = () => this.loadDetail(device);
         failure.append(title, message, retry);
         container.appendChild(failure);
     },

@@ -131,15 +131,6 @@ const api = {
             })
         });
     },
-    getDeviceSchema(deviceId) {
-        return this.request(`/api/devices/schema?device_id=${encodeURIComponent(deviceId)}`);
-    },
-    async getDeviceSchemaSnapshot(deviceId) {
-        const { data, eventSeq } = await this.requestWithMeta(
-            `/api/devices/schema?device_id=${encodeURIComponent(deviceId)}`
-        );
-        return { schema: data, eventSeq };
-    },
     refreshDeviceSchema(deviceId) {
         return this.request('/api/devices/schema/refresh', {
             method: 'POST',

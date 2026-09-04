@@ -1948,7 +1948,7 @@ PUT consumer is expected.
 
 ---
 
-# 20. Phase 11 — Remove old schema-detail frontend path
+# 20. Phase 11 — Remove old schema-detail frontend path ✅ DONE (2026-09-04)
 
 The schema API can remain a backend diagnostics API and refresh trigger, but the Device Detail renderer must stop depending on GET schema.
 
@@ -2033,10 +2033,14 @@ GET /api/mcp/exposures
 
 ## Checklist
 
-- [ ] GET schema no longer drives Device Detail.
-- [ ] Refresh POST remains.
-- [ ] Refresh completion is event-driven.
-- [ ] No polling introduced.
+- [x] GET schema no longer drives Device Detail.
+- [x] Refresh POST remains.
+- [x] Refresh completion is event-driven.
+- [x] No polling introduced.
+
+> Zero-reference search removed the old frontend schema GET methods, loader,
+> schema cursor owner, and tool-array state. Backend schema GET remains for
+> diagnostics/compatibility and refresh trigger.
 
 ---
 
