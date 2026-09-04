@@ -2102,6 +2102,28 @@ command.tool_name
 
 # 22. Phase 13 — Test matrix
 
+## 22.0 Regression checkpoint — Device Detail semantic control (2026-09-05)
+
+- [x] Fixed exposure PUT request ownership: `device_id` and `feature_id` are
+      copied before the parsed cJSON request is released.
+- [x] Added a regression test using `AC:27:6E:CC:F2:26` and `led_main`; the
+      copied IDs remain valid after `cJSON_Delete()`.
+- [x] Fixed feature-card rendering to consume normalized `feature.semantic`
+      and `feature.control` instead of the removed `feature.template` shape.
+- [x] Modular JavaScript and the assembled inline dashboard script parse.
+- [x] Generated dashboard gzip validates and contains no `feature.template`
+      Device Detail dependency.
+- [x] Targeted ESP32-S3 test passed: `1 Tests 0 Failures 0 Ignored`.
+- [x] Standard all-tests configuration restored and test project builds.
+- [x] Production firmware builds, flashes, and boots on ESP32-S3.
+- [ ] Full `test/run_tests.sh` Unity summary captured. The run reached the
+      existing Web device CRUD baseline after all previously emitted tests
+      passed, then stopped producing serial output and did not reach a Unity
+      summary.
+- [ ] Browser visual/interactivity verified. No browser instance was available;
+      after the hardware tests erased NVS, the flashed gateway booted into
+      provisioning mode, so the STA Device Detail route was not reachable.
+
 ## 22.1 Backend detail API
 
 Required tests:

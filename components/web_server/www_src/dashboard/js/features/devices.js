@@ -638,10 +638,12 @@ const devices = {
         featureId.textContent = feature.feature_id;
         titleGroup.appendChild(featureId);
 
-        if (feature.template && feature.template.semantic_name) {
+        const semantic = feature.semantic;
+        const semanticSupported = semantic?.name && semantic.name !== 'unknown';
+        if (semanticSupported) {
             const badge = document.createElement('span');
             badge.className = 'inline-flex items-center rounded-full bg-blue-100 px-2 py-0.5 text-xs font-semibold text-blue-700';
-            badge.textContent = feature.template.semantic_name;
+            badge.textContent = semantic.name;
             titleGroup.appendChild(badge);
         } else {
             const badge = document.createElement('span');
@@ -664,9 +666,8 @@ const devices = {
         const control = document.createElement('div');
         control.className = 'flex flex-col sm:flex-row gap-2';
 
-        if (feature.template && feature.control?.writable && feature.control.write_command) {
-            const tpl = feature.template;
-            if (tpl.primary_property === 1) {
+        if (semanticSupported && feature.control?.writable && feature.control.write_command) {
+            if (semantic.primary_property === 1) {
                 /* ON/OFF property → toggle button */
                 const isOn = feature.state && feature.state.valid && feature.state.value_bool;
                 const toggleBtn = document.createElement('button');
@@ -678,7 +679,7 @@ const devices = {
                 toggleBtn.textContent = isOn ? i18n.t('device_detail.turn_off') : i18n.t('device_detail.turn_on');
                 toggleBtn.onclick = () => this.sendToggle(feature);
                 control.appendChild(toggleBtn);
-            } else if (tpl.primary_property === 2) {
+            } else if (semantic.primary_property === 2) {
                 /* LEVEL property → slider or integer input */
                 const min = feature.control.minimum ?? 0;
                 const max = feature.control.maximum ?? 100;

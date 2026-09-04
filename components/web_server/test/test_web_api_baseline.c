@@ -10,6 +10,7 @@
 #include "freertos/task.h"
 #include "gateway_events.h"
 #include "unity.h"
+#include "web_exposure_api_internal.h"
 #include "web_modules.h"
 
 
@@ -474,4 +475,22 @@ TEST_CASE("Web command does not use legacy dispatcher or executor",
     TEST_ASSERT_NOT_NULL(strstr(response, "HTTP/1.1 400"));
 
     stop_api_server(server);
+}
+
+TEST_CASE("Web exposure request owns IDs after JSON is released",
+          "[web_server][exposure]")
+{
+    cJSON *json = cJSON_Parse(
+        "{\"device_id\":\"AC:27:6E:CC:F2:26\","
+        "\"feature_id\":\"led_main\",\"enabled\":false}");
+    TEST_ASSERT_NOT_NULL(json);
+
+    web_exposure_update_request_t update = {0};
+    TEST_ASSERT_EQUAL(WEB_EXPOSURE_PARSE_OK,
+                      web_exposure_parse_update_request(json, &update));
+    cJSON_Delete(json);
+
+    TEST_ASSERT_EQUAL_STRING("AC:27:6E:CC:F2:26", update.device_id);
+    TEST_ASSERT_EQUAL_STRING("led_main", update.feature_id);
+    TEST_ASSERT_FALSE(update.enabled);
 }

@@ -11,6 +11,7 @@
 #include "device_store.h"
 #include "device_template.h"
 #include "mcp_tool_exposure.h"
+#include "web_exposure_api_internal.h"
 #include "web_http.h"
 
 // ---------------------------------------------------------------------------
@@ -125,6 +126,40 @@ static esp_err_t exposure_get_handler(httpd_req_t *request)
 // PUT /api/mcp/exposures — admin-protected, single/bulk (§27.4)
 // ---------------------------------------------------------------------------
 
+web_exposure_parse_status_t web_exposure_parse_update_request(
+    const cJSON *json, web_exposure_update_request_t *out)
+{
+    if (json == NULL || out == NULL) {
+        return WEB_EXPOSURE_PARSE_INVALID_ARGUMENT;
+    }
+
+    const char *device_id = web_get_json_string(
+        json, "device_id", GW_MSG_DEVICE_ID_LEN, true);
+    if (device_id == NULL) {
+        return WEB_EXPOSURE_PARSE_MISSING_DEVICE_ID;
+    }
+
+    const cJSON *feature_item =
+        cJSON_GetObjectItemCaseSensitive(json, "feature_id");
+    const char *feature_id = cJSON_GetStringValue(feature_item);
+    if (feature_id == NULL || feature_id[0] == '\0' ||
+        strnlen(feature_id, GW_FEATURE_ID_LEN) >= GW_FEATURE_ID_LEN) {
+        return WEB_EXPOSURE_PARSE_INVALID_FEATURE_ID;
+    }
+
+    const cJSON *enabled_item =
+        cJSON_GetObjectItemCaseSensitive(json, "enabled");
+    if (!cJSON_IsBool(enabled_item)) {
+        return WEB_EXPOSURE_PARSE_INVALID_ENABLED;
+    }
+
+    memset(out, 0, sizeof(*out));
+    strlcpy(out->device_id, device_id, sizeof(out->device_id));
+    strlcpy(out->feature_id, feature_id, sizeof(out->feature_id));
+    out->enabled = cJSON_IsTrue(enabled_item);
+    return WEB_EXPOSURE_PARSE_OK;
+}
+
 static esp_err_t exposure_put_handler(httpd_req_t *request)
 {
     char body[WEB_COMMAND_BODY_MAX_LEN];
@@ -135,36 +170,33 @@ static esp_err_t exposure_put_handler(httpd_req_t *request)
         return web_send_body_error(request, body_status);
     }
 
-    const char *device_id = web_get_json_string(
-        json, "device_id", GW_MSG_DEVICE_ID_LEN, true);
-    if (device_id == NULL) {
+    web_exposure_update_request_t update = {0};
+    web_exposure_parse_status_t parse_status =
+        web_exposure_parse_update_request(json, &update);
+    if (parse_status == WEB_EXPOSURE_PARSE_MISSING_DEVICE_ID) {
         cJSON_Delete(json);
         return web_send_api_error_code(request, "400 Bad Request",
                                        "Missing device_id", "invalid_request");
     }
 
-    const cJSON *feature_item = cJSON_GetObjectItemCaseSensitive(json, "feature_id");
+    if (parse_status == WEB_EXPOSURE_PARSE_INVALID_FEATURE_ID) {
+        cJSON_Delete(json);
+        return web_send_api_error_code(request, "400 Bad Request",
+                                       "Invalid feature_id",
+                                       "invalid_request");
+    }
+    if (parse_status == WEB_EXPOSURE_PARSE_INVALID_ENABLED) {
+        cJSON_Delete(json);
+        return web_send_api_error_code(request, "400 Bad Request",
+                                       "enabled must be boolean",
+                                       "invalid_request");
+    }
 
-    /* Compact mode: accept feature_id + enabled */
-    if (feature_item != NULL && cJSON_IsString(feature_item)) {
-        const char *feature_id = cJSON_GetStringValue(feature_item);
-        if (feature_id == NULL || feature_id[0] == '\0') {
-            cJSON_Delete(json);
-            return web_send_api_error_code(request, "400 Bad Request",
-                                           "Invalid feature_id",
-                                           "invalid_request");
-        }
-
-        const cJSON *enabled_item =
-            cJSON_GetObjectItemCaseSensitive(json, "enabled");
-        if (!cJSON_IsBool(enabled_item)) {
-            cJSON_Delete(json);
-            return web_send_api_error_code(request, "400 Bad Request",
-                                           "enabled must be boolean",
-                                           "invalid_request");
-        }
-
-        bool enabled = cJSON_IsTrue(enabled_item);
+    /* Compact mode: accept feature_id + enabled. */
+    if (parse_status == WEB_EXPOSURE_PARSE_OK) {
+        const char *device_id = update.device_id;
+        const char *feature_id = update.feature_id;
+        bool enabled = update.enabled;
 
         /* Validate that this is a writable committed semantic feature. */
         device_schema_snapshot_t cap;

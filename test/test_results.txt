@@ -1,23 +1,8 @@
 
   Component                  PASS  FAIL  Total  Status
   ───────────────────────────────────────────────────────
-  ble_central                  30     0     30  [32mALL PASS[0m
-  board_io                     64     0     64  [32mALL PASS[0m
-  cbor_codec                    9     0      9  [32mALL PASS[0m
-  device_command_service       28     0     28  [32mALL PASS[0m
-  device_management             9     0      9  [32mALL PASS[0m
-  device_schema                22     0     22  [32mALL PASS[0m
-  device_state                 19     0     19  [32mALL PASS[0m
-  device_store                 10     0     10  [32mALL PASS[0m
-  device_template               7     0      7  [32mALL PASS[0m
-  device_types                  1     0      1  [32mALL PASS[0m
-  gateway_events               10     0     10  [32mALL PASS[0m
-  mcp_endpoint                110     0    110  [32mALL PASS[0m
-  mcp_tool_exposure             2     0      2  [32mALL PASS[0m
-  mcp_ws_bridge                18     0     18  [32mALL PASS[0m
-  memory_policy                 4     0      4  [32mALL PASS[0m
-  web_server                    4     0      4  [32mALL PASS[0m
+  web_server                    1     0      1  [32mALL PASS[0m
   ───────────────────────────────────────────────────────
-  [31mTOTAL                       347     0    347[0m
+  [31mTOTAL                         1     0      1[0m
 
-  [31mUnity summary missing: test suite did not finish.[0m
+  Unity summary: 1 Tests 0 Failures 0 Ignored
