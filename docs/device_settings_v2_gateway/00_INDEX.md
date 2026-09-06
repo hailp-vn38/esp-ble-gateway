@@ -35,8 +35,8 @@ Device implementation details không nằm trong bộ này; gateway chỉ dựa 
 
 | Phase | File | Exit gate |
 |---|---|---|
-| G0 | `GATEWAY_PHASE_0_PROTOCOL_ALIGNMENT.md` | compatibility/golden vectors pass |
-| G1 | `GATEWAY_PHASE_1_SETTINGS_CORE_MEMORY_MODEL.md` | component + PSRAM/lifetime tests pass |
+| G0 | `GATEWAY_PHASE_0_PROTOCOL_ALIGNMENT.md` | ✅ DONE (2026-09-06) |
+| G1 | `GATEWAY_PHASE_1_SETTINGS_CORE_MEMORY_MODEL.md` | ✅ DONE (2026-09-06) |
 | G2 | `GATEWAY_PHASE_2_BLE_DISCOVERY_SNAPSHOTS.md` | repeated discovery stable |
 | G3 | `GATEWAY_PHASE_3_TRANSACTION_SERVICE.md` | atomic update orchestration pass |
 | G4 | `GATEWAY_PHASE_4_REBOOT_RECONCILIATION.md` | ACK-loss/reconnect pass |

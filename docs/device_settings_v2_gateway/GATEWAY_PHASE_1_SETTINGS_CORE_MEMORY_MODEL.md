@@ -1,4 +1,4 @@
-# Gateway Phase G1 — Settings Core, PSRAM Memory Model & Snapshot Lifetime
+# Gateway Phase G1 — Settings Core, PSRAM Memory Model & Snapshot Lifetime ✅ DONE (2026-09-06)
 
 
 **Repo:** `hailp-vn38/esp-ble-gateway`  
@@ -126,34 +126,34 @@ Do not store fixed `settings[MAX]` here.
 ## Tests
 
 ### Allocation
-- [ ] external-required success places object in PSRAM-capable memory.
-- [ ] forced PSRAM allocation failure returns error.
-- [ ] no fallback to internal heap.
+- [x] external-required success places object in PSRAM-capable memory.
+- [x] forced PSRAM allocation failure returns error.
+- [x] no fallback to internal heap.
 
 ### Builder
-- [ ] compact strings deduplicated optionally or at least contiguous.
-- [ ] offset overflow detected.
-- [ ] max schema rejects safely if size representation exceeded.
+- [x] compact strings deduplicated optionally or at least contiguous.
+- [x] offset overflow detected.
+- [x] max schema rejects safely if size representation exceeded.
 
 ### Lifetime/concurrency
-- [ ] acquire/release normal.
-- [ ] swap with one reader.
-- [ ] swap with many readers.
-- [ ] deferred free only after last release.
-- [ ] failed staging leaves committed untouched.
+- [x] acquire/release normal.
+- [x] swap with one reader.
+- [x] swap with many readers.
+- [x] deferred free only after last release.
+- [x] failed staging leaves committed untouched.
 
 ### Footprint
-- [ ] persistent internal control metadata measured <= target.
-- [ ] `sizeof` queue/pending structs static_assert/CI check where practical.
+- [x] persistent internal control metadata measured <= target.
+- [x] `sizeof` queue/pending structs static_assert/CI check where practical.
 
 ## Checklist
 
-- [ ] No fixed-size strings per setting in internal record.
-- [ ] Schema/value separate.
-- [ ] Long-lived allocations external-required.
-- [ ] No use-after-free window.
-- [ ] Failed PSRAM allocation changes only Settings state/error.
-- [ ] Wi-Fi/BLE core remains alive.
+- [x] No fixed-size strings per setting in internal record.
+- [x] Schema/value separate.
+- [x] Long-lived allocations external-required.
+- [x] No use-after-free window.
+- [x] Failed PSRAM allocation changes only Settings state/error.
+- [x] Wi-Fi/BLE core remains alive.
 
 ## Exit gate
 

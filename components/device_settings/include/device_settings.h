@@ -1,0 +1,275 @@
+#ifndef DEVICE_SETTINGS_H
+#define DEVICE_SETTINGS_H
+
+#include <stdbool.h>
+#include <stddef.h>
+#include <stdint.h>
+
+#include "cbor_codec.h"
+#include "device_types.h"
+#include "esp_err.h"
+
+#ifdef __cplusplus
+extern "C" {
+#endif
+
+/* ── Limits ────────────────────────────────────────────────────────── */
+
+#define DEVICE_SETTINGS_MAX_SETTINGS    16
+#define DEVICE_SETTINGS_MAX_ENUM_OPTS   16
+#define DEVICE_SETTINGS_MAX_STRING_POOL 512
+#define DEVICE_SETTINGS_MAX_DEVICES     16
+
+/* ── Setting value types (wire contract) ────────────────────────────── */
+
+enum {
+    DS_TYPE_NONE   = 0,
+    DS_TYPE_BOOL   = 1,
+    DS_TYPE_INT    = 2,
+    DS_TYPE_FLOAT  = 3,
+    DS_TYPE_STRING = 4,
+    DS_TYPE_ENUM   = 5,
+};
+
+/* ── Setting flags ─────────────────────────────────────────────────── */
+
+enum {
+    DS_FLAG_WRITABLE = 1u << 0,
+    DS_FLAG_SECRET   = 1u << 1,
+};
+
+/* ── Schema states ─────────────────────────────────────────────────── */
+
+typedef enum {
+    DS_SCHEMA_UNKNOWN = 0,
+    DS_SCHEMA_DISCOVERING,
+    DS_SCHEMA_READY,
+    DS_SCHEMA_UNSUPPORTED,
+    DS_SCHEMA_ERROR,
+} ds_schema_state_t;
+
+/* ── Operation states ──────────────────────────────────────────────── */
+
+typedef enum {
+    DS_OP_IDLE = 0,
+    DS_OP_QUEUED,
+    DS_OP_RUNNING,
+    DS_OP_WAITING_REBOOT,
+    DS_OP_VERIFYING,
+} ds_op_state_t;
+
+typedef enum {
+    DS_OP_NONE = 0,
+    DS_OP_DESCRIBE,
+    DS_OP_GET,
+    DS_OP_SET,
+    DS_OP_COMMIT,
+} ds_op_kind_t;
+
+typedef enum {
+    DS_OP_RESULT_OK = 0,
+    DS_OP_RESULT_BUSY,
+    DS_OP_RESULT_TIMEOUT,
+    DS_OP_RESULT_NOT_SUPPORTED,
+    DS_OP_RESULT_PROTOCOL_ERROR,
+    DS_OP_RESULT_MEMORY_ERROR,
+    DS_OP_RESULT_INTERNAL,
+} ds_op_result_t;
+
+/* ── Compact setting descriptor ──────────────────────────────────────
+ * All string fields are uint16_t offsets into the schema's string pool.
+ * This avoids fixed-size char arrays and keeps descriptors ~24 bytes. */
+
+typedef struct {
+    uint16_t id_off;         /* offset into string_pool */
+    uint16_t title_off;      /* offset into string_pool */
+    uint16_t group_off;      /* offset into string_pool, 0 = no group */
+    uint16_t unit_off;       /* offset into string_pool, 0 = no unit */
+    int32_t  min_value;
+    int32_t  max_value;
+    int32_t  step;
+    uint16_t flags;          /* DS_FLAG_* */
+    uint8_t  type;           /* DS_TYPE_* */
+    uint8_t  option_count;   /* for DS_TYPE_ENUM */
+    uint16_t option_index;   /* index into enum_option_pool */
+} ds_setting_desc_t;
+
+/* ── Enum option ───────────────────────────────────────────────────── */
+
+typedef struct {
+    int32_t  value;
+    uint16_t label_off;      /* offset into string_pool */
+} ds_enum_option_t;
+
+/* ── String pool ───────────────────────────────────────────────────── */
+
+typedef struct {
+    uint16_t total_size;     /* bytes used in pool[] */
+    uint16_t capacity;       /* bytes allocated for pool[] */
+    char    *pool;           /* contiguous byte buffer (PSRAM) */
+} ds_string_pool_t;
+
+/* ── Schema snapshot (immutable after commit) ──────────────────────── */
+
+typedef struct {
+    uint32_t           schema_revision;
+    uint16_t           setting_count;
+    ds_setting_desc_t  descriptors[DEVICE_SETTINGS_MAX_SETTINGS];
+    ds_enum_option_t   enum_option_pool[DEVICE_SETTINGS_MAX_SETTINGS *
+                                        DEVICE_SETTINGS_MAX_ENUM_OPTS];
+    uint16_t           enum_option_count;
+    ds_string_pool_t   strings;
+} ds_schema_t;
+
+/* ── Value entry ───────────────────────────────────────────────────── */
+
+typedef struct {
+    uint16_t id_off;         /* offset into string_pool (same pool as schema) */
+    uint8_t  type;           /* DS_TYPE_* */
+    bool     has_value;
+    union {
+        bool     bool_val;
+        int32_t  int_val;
+        float    float_val;
+        uint16_t string_off; /* offset into value_string_pool */
+        int32_t  enum_val;
+    };
+} ds_value_entry_t;
+
+/* ── Values snapshot (immutable after commit) ──────────────────────── */
+
+typedef struct {
+    uint32_t           config_revision;
+    uint16_t           value_count;
+    ds_value_entry_t   values[DEVICE_SETTINGS_MAX_SETTINGS];
+    ds_string_pool_t   string_pool;  /* for string-typed values */
+} ds_values_t;
+
+/* ── Per-device control record (internal SRAM) ─────────────────────── */
+
+typedef struct {
+    bool               used;
+    ds_schema_state_t  schema_state;
+    ds_op_state_t      op_state;
+    ds_op_kind_t       op_kind;
+    uint32_t           op_id;
+
+    /* Schema/values ownership — refcounted snapshots (PSRAM). */
+    ds_schema_t       *schema;
+    ds_values_t       *values;
+    uint32_t           schema_rev;  /* last committed schema revision */
+    uint32_t           config_rev;  /* last committed config revision */
+} ds_device_record_t;
+
+/* ── Init / deinit ─────────────────────────────────────────────────── */
+
+esp_err_t device_settings_init(void);
+void      device_settings_deinit(void);
+
+/* ── Schema snapshot lifecycle ────────────────────────────────────────
+ * Acquire returns a refcounted pointer.  The caller MUST call release
+ * when done.  The snapshot is freed only after all readers release. */
+
+const ds_schema_t *device_settings_schema_acquire(const char *device_id);
+void               device_settings_schema_release(const ds_schema_t *schema);
+
+const ds_values_t *device_settings_values_acquire(const char *device_id);
+void               device_settings_values_release(const ds_values_t *values);
+
+/* ── Schema builder (used during discovery) ──────────────────────────
+ * Builds a staging schema in PSRAM, validates, then atomically swaps
+ * into the committed slot.  Old snapshot freed after readers drop. */
+
+typedef struct {
+    ds_string_pool_t  strings;
+    ds_enum_option_t  enum_options[DEVICE_SETTINGS_MAX_SETTINGS *
+                                   DEVICE_SETTINGS_MAX_ENUM_OPTS];
+    uint16_t          enum_option_count;
+    ds_setting_desc_t descriptors[DEVICE_SETTINGS_MAX_SETTINGS];
+    uint16_t          setting_count;
+    uint32_t          schema_revision;
+} ds_schema_builder_t;
+
+esp_err_t ds_schema_builder_init(ds_schema_builder_t *builder);
+void      ds_schema_builder_reset(ds_schema_builder_t *builder);
+esp_err_t ds_schema_builder_add_string(ds_schema_builder_t *builder,
+                                       const char *str, uint16_t *out_off);
+esp_err_t ds_schema_builder_add_setting(ds_schema_builder_t *builder,
+                                        const ds_setting_desc_t *desc);
+esp_err_t ds_schema_builder_add_enum_option(ds_schema_builder_t *builder,
+                                            int32_t value,
+                                            const char *label,
+                                            uint16_t *out_index);
+ds_schema_t *ds_schema_builder_commit(ds_schema_builder_t *builder);
+
+/* ── Values builder ────────────────────────────────────────────────── */
+
+typedef struct {
+    ds_string_pool_t  string_pool;
+    ds_value_entry_t  entries[DEVICE_SETTINGS_MAX_SETTINGS];
+    uint16_t          value_count;
+    uint32_t          config_revision;
+} ds_values_builder_t;
+
+esp_err_t ds_values_builder_init(ds_values_builder_t *builder);
+void      ds_values_builder_reset(ds_values_builder_t *builder);
+esp_err_t ds_values_builder_add(ds_values_builder_t *builder,
+                                const ds_value_entry_t *entry);
+ds_values_t *ds_values_builder_commit(ds_values_builder_t *builder);
+
+/* ── Protocol handler ────────────────────────────────────────────────
+ * Processes settings_begin / settings_item / settings_end messages.
+ * Called from the BLE notify path. */
+
+bool device_settings_on_notify(const char *device_id,
+                               const gw_message_t *message);
+
+/* ── Operation API ─────────────────────────────────────────────────── */
+
+typedef void (*ds_op_completion_fn)(ds_op_result_t result, void *context);
+
+esp_err_t device_settings_describe(const char *device_id,
+                                   ds_op_completion_fn completion,
+                                   void *context);
+esp_err_t device_settings_get(const char *device_id,
+                              ds_op_completion_fn completion,
+                              void *context);
+esp_err_t device_settings_cancel(const char *device_id);
+
+/* ── Query API ─────────────────────────────────────────────────────── */
+
+esp_err_t device_settings_get_state(const char *device_id,
+                                    ds_schema_state_t *out_state);
+esp_err_t device_settings_get_record(const char *device_id,
+                                     ds_device_record_t *out);
+
+/* ── Per-device record access (internal) ───────────────────────────── */
+
+ds_device_record_t *device_settings_find_record(const char *device_id);
+ds_device_record_t *device_settings_find_or_create_record(
+    const char *device_id);
+
+/* ── Memory helpers (exposed for testing) ──────────────────────────── */
+
+void *ds_settings_alloc(size_t size);
+void  ds_settings_free(void *ptr);
+bool  ds_settings_ref_acquire(ds_schema_t *schema);
+void  ds_settings_ref_release(ds_schema_t *schema);
+bool  ds_values_ref_acquire(ds_values_t *values);
+void  ds_values_ref_release(ds_values_t *values);
+
+/* ── String pool helpers ───────────────────────────────────────────── */
+
+const char *ds_string_pool_get(const ds_string_pool_t *pool, uint16_t off);
+esp_err_t   ds_string_pool_add(ds_string_pool_t *pool, const char *str,
+                               uint16_t *out_off);
+
+/* ── Test helpers ──────────────────────────────────────────────────── */
+
+void device_settings_reset_for_test(void);
+
+#ifdef __cplusplus
+}
+#endif
+
+#endif /* DEVICE_SETTINGS_H */

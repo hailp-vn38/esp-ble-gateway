@@ -10,6 +10,7 @@
 #include "device_store.h"
 #include "device_schema.h"
 #include "device_state.h"
+#include "device_settings.h"
 #include "gateway_events.h"
 #include "gateway_ota_validate.h"
 #include "mcp_endpoint.h"
@@ -24,6 +25,7 @@ static const char *TAG = "app_main";
 static void on_device_notify(const char *device_id, const gw_message_t *msg)
 {
     if (device_schema_on_notify(device_id, msg)) return;
+    if (device_settings_on_notify(device_id, msg)) return;
     if (device_state_on_notify(device_id, msg)) return;
     /* Observer: updates cache from structured ACK, does NOT consume it. */
     device_state_on_command_ack(device_id, msg);
@@ -264,6 +266,11 @@ void app_main(void)
         ESP_LOGE(TAG, "Device state initialization failed");
         return;
     }
+    if (device_settings_init() != ESP_OK) {
+        ESP_LOGE(TAG, "Device settings initialization failed");
+        return;
+    }
+    gw_memory_log_checkpoint("device_settings_ready");
     if (mcp_tool_exposure_init() != ESP_OK) {
         ESP_LOGE(TAG, "MCP tool exposure initialization failed");
         return;
