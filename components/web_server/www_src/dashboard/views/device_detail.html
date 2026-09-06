@@ -65,6 +65,33 @@
                     </dl>
                 </section>
 
+                <section id="device-settings-card" class="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden hidden">
+                    <div class="p-5 border-b border-gray-100 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                        <div>
+                            <h3 data-i18n="device_settings.title" class="font-semibold text-gray-900">Device Settings</h3>
+                            <p data-i18n="device_settings.title_desc" class="text-xs text-gray-500 mt-1">Persistent configuration stored on this device.</p>
+                        </div>
+                        <div class="flex items-center gap-3 flex-shrink-0">
+                            <span id="ds-meta" class="text-xs text-gray-400"></span>
+                            <span id="ds-operation-status" class="text-xs font-semibold hidden"></span>
+                        </div>
+                    </div>
+                    <div id="ds-stale-banner" class="hidden px-5 py-3 bg-amber-50 border-b border-amber-200 text-sm text-amber-800">
+                        <i class="ph ph-warning mr-1"></i><span data-i18n="device_settings.stale">Configuration was updated by another process. Refresh to see current values.</span>
+                    </div>
+                    <div id="ds-offline-banner" class="hidden px-5 py-3 bg-gray-50 border-b border-gray-200 text-sm text-gray-600">
+                        <i class="ph ph-wifi-slash mr-1"></i><span data-i18n="device_settings.offline">Device is offline. Changes will be sent when it reconnects.</span>
+                    </div>
+                    <div class="p-5">
+                        <div id="ds-settings-container" class="space-y-2"></div>
+                        <div class="flex justify-end mt-4 pt-3 border-t border-gray-100">
+                            <button id="ds-save-btn" onclick="deviceSettings.save()" disabled class="inline-flex items-center px-4 py-2 bg-brand-600 text-white rounded-lg hover:bg-brand-700 transition-colors text-sm font-medium disabled:opacity-50 disabled:cursor-not-allowed">
+                                <i class="ph ph-floppy-disk mr-1.5"></i><span data-i18n="device_settings.save">Save Settings</span>
+                            </button>
+                        </div>
+                    </div>
+                </section>
+
                 <section id="mcp-control-card" class="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
                     <div class="p-5 border-b border-gray-100"><div><h3 data-i18n="device_detail.mcp_tools" class="font-semibold text-gray-900">AI / MCP Control</h3><p data-i18n="device_detail.mcp_tools_desc" class="text-xs text-gray-500 mt-1">Choose which device features AI clients may control.</p></div></div>
                     <div id="mcp-feature-controls" class="divide-y divide-gray-100" aria-live="polite"><div data-i18n="device_detail.mcp_loading" class="p-5 text-sm text-gray-400">Loading MCP controls…</div></div>

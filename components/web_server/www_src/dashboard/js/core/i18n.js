@@ -262,9 +262,34 @@ const i18n = {
             'settings.checking': 'Checking…',
             'settings.disconnected': 'Disconnected',
             'settings.load_failed': 'Could not load gateway settings',
-            'settings.na': 'N/A'
-        },
-        vi: {
+            'settings.na': 'N/A',
+            'device_settings.title': 'Device Settings',
+            'device_settings.title_desc': 'Persistent configuration stored on this device.',
+            'device_settings.revision': 'Rev. {n}',
+            'device_settings.save': 'Save Settings',
+            'device_settings.saving': 'Saving…',
+            'device_settings.save_queued': 'Settings update queued',
+            'device_settings.save_busy': 'A settings update is already in progress',
+            'device_settings.save_validation': 'Validation failed',
+            'device_settings.save_failed': 'Could not save settings',
+            'device_settings.stale': 'Configuration was updated by another process. Refresh to see current values.',
+            'device_settings.offline': 'Device is offline. Changes will be sent when it reconnects.',
+            'device_settings.unsupported': 'This device does not support settings.',
+            'device_settings.discovering': 'Settings are being discovered…',
+            'device_settings.load_failed': 'Could not load settings',
+            'device_settings.readonly': '(read-only)',
+            'device_settings.secret_replace': 'Replace',
+            'device_settings.secret_clear': 'Clear',
+            'device_settings.secret_new_placeholder': 'Enter new value…',
+            'device_settings.cancel': 'Cancel',
+            'device_settings.op_queued': 'Queued',
+            'device_settings.op_updating': 'Updating…',
+            'device_settings.op_rebooting': 'Rebooting…',
+            'device_settings.op_verifying': 'Verifying…',
+            'device_settings.op_succeeded': 'Settings applied',
+            'device_settings.op_failed': 'Update failed',
+            'device_settings.op_conflict': 'Conflict — revision mismatch',
+            'device_settings.op_unknown': 'Verifying…'
             'device_detail.back': 'Quay lại Thiết bị',
             'device_detail.edit': 'Chỉnh sửa',
             'device_detail.online': 'Đã kết nối',
@@ -524,8 +549,34 @@ const i18n = {
             'settings.checking': 'Đang kiểm tra…',
             'settings.disconnected': 'Mất kết nối',
             'settings.load_failed': 'Không thể tải cài đặt gateway',
-            'settings.na': 'N/A'
-        }
+            'settings.na': 'N/A',
+            'device_settings.title': 'Cài đặt thiết bị',
+            'device_settings.title_desc': 'Cấu hình lưu trữ trên thiết bị.',
+            'device_settings.revision': 'Phiên bản {n}',
+            'device_settings.save': 'Lưu cài đặt',
+            'device_settings.saving': 'Đang lưu…',
+            'device_settings.save_queued': 'Đã gửi yêu cầu cập nhật',
+            'device_settings.save_busy': 'Đang có một yêu cầu cập nhật khác',
+            'device_settings.save_validation': 'Dữ liệu không hợp lệ',
+            'device_settings.save_failed': 'Không thể lưu cài đặt',
+            'device_settings.stale': 'Cấu hình đã được thay đổi bởi quy trình khác. Làm mới để xem giá trị hiện tại.',
+            'device_settings.offline': 'Thiết bị đang ngoại tuyến. Thay đổi sẽ được gửi khi kết nối lại.',
+            'device_settings.unsupported': 'Thiết bị này không hỗ trợ cài đặt.',
+            'device_settings.discovering': 'Đang khám phá cài đặt…',
+            'device_settings.load_failed': 'Không thể tải cài đặt',
+            'device_settings.readonly': '(chỉ đọc)',
+            'device_settings.secret_replace': 'Thay thế',
+            'device_settings.secret_clear': 'Xóa',
+            'device_settings.secret_new_placeholder': 'Nhập giá trị mới…',
+            'device_settings.cancel': 'Hủy',
+            'device_settings.op_queued': 'Đang chờ',
+            'device_settings.op_updating': 'Đang cập nhật…',
+            'device_settings.op_rebooting': 'Đang khởi động lại…',
+            'device_settings.op_verifying': 'Đang xác minh…',
+            'device_settings.op_succeeded': 'Đã áp dụng cài đặt',
+            'device_settings.op_failed': 'Cập nhật thất bại',
+            'device_settings.op_conflict': 'Xung đột — phiên bản không khớp',
+            'device_settings.op_unknown': 'Đang xác minh…'
     },
     t(key) {
         return this.translations[this.currentLang]?.[key] || this.translations.en[key] || key;
@@ -554,6 +605,10 @@ const i18n = {
                 devices.renderFeatures(devices.currentFeatures, state.selectedDeviceDetail);
             }
             if (schemaState !== 'error') {
+            }
+            // Re-render device settings on language change
+            if (typeof deviceSettings !== 'undefined' && deviceSettings._baseline) {
+                deviceSettings.load(state.selectedDeviceDetail.id);
             }
         }
     },

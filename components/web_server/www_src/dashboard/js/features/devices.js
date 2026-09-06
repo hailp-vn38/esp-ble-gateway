@@ -111,6 +111,12 @@ const devices = {
             this._handleSchemaEvent(ev);
         });
 
+        events.on('settings.changed', (ev) => {
+            if (typeof deviceSettings !== 'undefined') {
+                deviceSettings.onSettingsChanged(ev);
+            }
+        });
+
         events.on('resync:required', () => {
             this._syncFromSnapshot('resync');
         });
@@ -273,6 +279,9 @@ const devices = {
                 }
                 document.getElementById('feature-offline-notice').classList.toggle(
                     'hidden', ready);
+                if (typeof deviceSettings !== 'undefined') {
+                    deviceSettings.onConnectionChanged(ready);
+                }
             }
         }
     },
@@ -459,6 +468,11 @@ const devices = {
         nav.switchTab('device-detail', updateRoute);
         this.setDetailTab('control');
         void this._reloadDetailCoalesced('open');
+
+        // Load device settings
+        if (typeof deviceSettings !== 'undefined') {
+            void deviceSettings.load(dev.id);
+        }
     },
 
     async _reloadDetailCoalesced(reason) {
@@ -826,6 +840,9 @@ const devices = {
             // Clear caches for deleted device
             state.featureStateByDevice.delete(deviceId);
             state.schemaRevisionByDevice.delete(deviceId);
+            if (typeof deviceSettings !== 'undefined') {
+                deviceSettings.unload();
+            }
             state.selectedDeviceDetail = null;
             this.currentFeatures = [];
             this._pendingSchemaRefresh = null;

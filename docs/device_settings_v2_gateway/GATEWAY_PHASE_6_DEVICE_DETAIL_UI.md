@@ -1,4 +1,4 @@
-# Gateway Phase G6 — Device Detail Generic Settings UI
+# Gateway Phase G6 — Device Detail Generic Settings UI ✅ DONE (2026-09-06)
 
 
 **Repo:** `hailp-vn38/esp-ble-gateway`  
@@ -98,37 +98,37 @@ Existing `devices.js` only delegates lifecycle/detail-device changes.
 ## Tests
 
 ### Render
-- [ ] each type.
-- [ ] groups/unit/options.
-- [ ] readonly.
-- [ ] unsupported hidden/disabled state.
+- [x] each type.
+- [x] groups/unit/options.
+- [x] readonly.
+- [x] unsupported hidden/disabled state.
 
 ### Dirty
-- [ ] unchanged fields not sent.
-- [ ] revert to original removes dirty.
-- [ ] revision update blocks stale save.
+- [x] unchanged fields not sent.
+- [x] revert to original removes dirty.
+- [x] revision update blocks stale save.
 
 ### Lifecycle
-- [ ] 202 queued.
-- [ ] busy/conflict.
-- [ ] expected reboot disconnect doesn't show generic fatal error.
-- [ ] reconnect refresh.
-- [ ] OUTCOME_UNKNOWN shows verifying, then resolves.
+- [x] 202 queued.
+- [x] busy/conflict.
+- [x] expected reboot disconnect doesn't show generic fatal error.
+- [x] reconnect refresh.
+- [x] OUTCOME_UNKNOWN shows verifying, then resolves.
 
 ### Secret
-- [ ] existing secret not injected into DOM as plaintext.
-- [ ] KEEP sends no replacement value.
-- [ ] CLEAR explicit.
-- [ ] SET only new value.
+- [x] existing secret not injected into DOM as plaintext.
+- [x] KEEP sends no replacement value.
+- [x] CLEAR explicit.
+- [x] SET only new value.
 
 ## Checklist
 
-- [ ] No setting IDs hardcoded.
-- [ ] New module, not further bloating `devices.js`.
-- [ ] Accessible labels/units.
-- [ ] Save disabled when no dirty changes.
-- [ ] Device offline state handled.
-- [ ] Operation survives page refresh via operation status endpoint where possible.
+- [x] No setting IDs hardcoded.
+- [x] New module, not further bloating `devices.js`.
+- [x] Accessible labels/units.
+- [x] Save disabled when no dirty changes.
+- [x] Device offline state handled.
+- [x] Operation survives page refresh via operation status endpoint where possible.
 
 ## Exit gate
 

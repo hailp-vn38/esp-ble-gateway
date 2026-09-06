@@ -150,5 +150,22 @@ const api = {
     },
     restart() {
         return this.request('/api/restart', {method: 'POST'});
+    },
+    async getDeviceSettings(deviceId) {
+        return this.request(`/api/devices/settings?device_id=${encodeURIComponent(deviceId)}`);
+    },
+    async saveDeviceSettings(deviceId, expectedRevision, changes) {
+        return this.request('/api/devices/settings', {
+            method: 'PUT',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({
+                device_id: deviceId,
+                expected_revision: expectedRevision,
+                changes
+            })
+        });
+    },
+    async getDeviceSettingsOperation(deviceId) {
+        return this.request(`/api/devices/settings/operations?device_id=${encodeURIComponent(deviceId)}`);
     }
 };
