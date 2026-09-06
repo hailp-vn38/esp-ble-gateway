@@ -155,7 +155,8 @@ static void handle_feature_item(const char *device_id,
 {
     if (!message_device_matches(device_id, message) ||
         !message->has_snapshot_id || !message->has_feature_id ||
-        !message->has_feature_type || !message->has_property_id) {
+        !message->has_feature_type || !message->has_property_id ||
+        !message->has_value_type) {
         return;
     }
 
@@ -170,8 +171,7 @@ static void handle_feature_item(const char *device_id,
                              ? message->feature_flags
                              : 0,
         .property_id = message->property_id,
-        .value_type = (uint8_t)device_template_property_value_type(
-            message->property_id),
+        .value_type = message->value_type,
         .decimals = message->has_feature_decimals
                         ? message->feature_decimals
                         : 0,

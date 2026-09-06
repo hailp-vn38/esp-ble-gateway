@@ -94,6 +94,11 @@ static gw_message_t make_feature_item(const char *device_id,
     msg.feature_type = feature_type;
     msg.has_property_id = 1;
     msg.property_id = property_id;
+    msg.has_value_type = 1;
+    msg.value_type = (property_id == GW_PROP_ON_OFF ||
+                      property_id == GW_PROP_CONTACT) ? 1 : 2;
+    msg.has_feature_schema_version = 1;
+    msg.feature_schema_version = 1;
     if (feature_tool != NULL && feature_tool[0] != '\0') {
         msg.has_feature_tool = 1;
         strlcpy(msg.feature_tool, feature_tool, sizeof(msg.feature_tool));
@@ -194,6 +199,29 @@ TEST_CASE("valid_feature_id validates", "[device_schema]")
 {
     TEST_ASSERT_TRUE(schema_valid_feature_id("light_state"));
     TEST_ASSERT_FALSE(schema_valid_feature_id(""));
+}
+
+TEST_CASE("semantic feature validation requires the wire value type",
+          "[device_schema][gateway_v2]")
+{
+    device_schema_feature_t generic = {
+        .feature_type = GW_FEATURE_GENERIC_VALUE,
+        .feature_schema_version = 1,
+        .property_id = GW_PROP_VALUE,
+        .value_type = 2,
+    };
+    TEST_ASSERT_TRUE(schema_feature_matches_template(&generic));
+
+    generic.value_type = 1;
+    TEST_ASSERT_FALSE(schema_feature_matches_template(&generic));
+
+    device_schema_feature_t fan = {
+        .feature_type = GW_FEATURE_FAN,
+        .feature_schema_version = 1,
+        .property_id = GW_PROP_ON_OFF,
+        .value_type = 1,
+    };
+    TEST_ASSERT_FALSE(schema_feature_matches_template(&fan));
 }
 
 TEST_CASE("resolve_writable_tool finds matching command", "[device_schema]")
@@ -340,6 +368,9 @@ TEST_CASE("discovery: begin → tool_item → feature_item → end commits",
     TEST_ASSERT_EQUAL_STRING("light_state", snap.features[0].feature_id);
     TEST_ASSERT_EQUAL_INT(GW_FEATURE_ON_OFF_LIGHT,
                           snap.features[0].feature_type);
+    TEST_ASSERT_EQUAL_INT(1, snap.features[0].value_type);
+    TEST_ASSERT_EQUAL_INT(0, snap.features[0].decimals);
+    TEST_ASSERT_EQUAL_STRING("light_state", snap.features[0].title);
     TEST_ASSERT_EQUAL_INT(0, snap.features[0].writable_tool_index);
 
     /* Validate command after commit. */
@@ -494,6 +525,56 @@ TEST_CASE("discovery: feature with non-existent tool breaks staging",
     TEST_ASSERT_FALSE(snap.has_committed);
 }
 
+TEST_CASE("discovery: generic value preserves wire display metadata",
+          "[device_schema][gateway_v2]")
+{
+    reset_and_init();
+    device_store_add("v2-meta", "V2 metadata");
+    device_schema_set_submitter(test_submitter);
+    s_submit_called = false;
+
+    TEST_ASSERT_EQUAL_INT(ESP_OK, device_schema_on_ready("v2-meta"));
+    vTaskDelay(pdMS_TO_TICKS(200));
+
+    gw_message_t begin = make_begin("v2-meta", 801, 1, 1, 2);
+    TEST_ASSERT_TRUE(device_schema_on_notify("v2-meta", &begin));
+    vTaskDelay(pdMS_TO_TICKS(50));
+
+    gw_message_t tool = make_tool_item("v2-meta", 801, 0, "set_temp", 2,
+                                       0, 300, 1000, 5);
+    strlcpy(tool.capability_unit, "C", sizeof(tool.capability_unit));
+    TEST_ASSERT_TRUE(device_schema_on_notify("v2-meta", &tool));
+    vTaskDelay(pdMS_TO_TICKS(50));
+
+    gw_message_t feature = make_feature_item("v2-meta", 801, 1,
+                                              "dryer_temperature",
+                                              GW_FEATURE_GENERIC_VALUE,
+                                              GW_PROP_VALUE, "set_temp");
+    strlcpy(feature.capability_label, "Dryer temperature",
+            sizeof(feature.capability_label));
+    strlcpy(feature.capability_unit, "C", sizeof(feature.capability_unit));
+    feature.has_feature_decimals = 1;
+    feature.feature_decimals = 1;
+    TEST_ASSERT_TRUE(device_schema_on_notify("v2-meta", &feature));
+    vTaskDelay(pdMS_TO_TICKS(50));
+
+    gw_message_t end = make_end("v2-meta", 801, 1);
+    TEST_ASSERT_TRUE(device_schema_on_notify("v2-meta", &end));
+    vTaskDelay(pdMS_TO_TICKS(200));
+    complete_discovery();
+    vTaskDelay(pdMS_TO_TICKS(200));
+
+    device_schema_snapshot_t snap = {0};
+    TEST_ASSERT_EQUAL_INT(ESP_OK, device_schema_get("v2-meta", &snap));
+    TEST_ASSERT_TRUE(snap.has_committed);
+    TEST_ASSERT_EQUAL_UINT8(GW_PROP_VALUE, snap.features[0].property_id);
+    TEST_ASSERT_EQUAL_UINT8(2, snap.features[0].value_type);
+    TEST_ASSERT_EQUAL_UINT8(1, snap.features[0].decimals);
+    TEST_ASSERT_EQUAL_STRING("Dryer temperature", snap.features[0].title);
+    TEST_ASSERT_EQUAL_STRING("C", snap.features[0].unit);
+    TEST_ASSERT_EQUAL_INT(0, snap.features[0].writable_tool_index);
+}
+
 /* ── Forget test ────────────────────────────────────────────────────── */
 
 TEST_CASE("forget clears committed schema", "[device_schema]")
@@ -619,6 +700,29 @@ TEST_CASE("corrupt dev_schema blob ignored safely", "[device_schema]")
     device_schema_snapshot_t snap = {0};
     TEST_ASSERT_EQUAL_INT(ESP_ERR_NOT_FOUND,
                           device_schema_get("nonexistent", &snap));
+}
+
+TEST_CASE("v1 dev_schema blob is erased instead of reinterpreted",
+          "[device_schema][gateway_v2]")
+{
+    nvs_handle_t handle;
+    uint8_t v1_blob = 1;
+    TEST_ASSERT_EQUAL_INT(ESP_OK,
+        nvs_open("dev_schema", NVS_READWRITE, &handle));
+    TEST_ASSERT_EQUAL_INT(ESP_OK,
+        nvs_set_blob(handle, "sch15", &v1_blob, sizeof(v1_blob)));
+    TEST_ASSERT_EQUAL_INT(ESP_OK, nvs_commit(handle));
+    nvs_close(handle);
+
+    device_schema_reset_for_test();
+    TEST_ASSERT_EQUAL_INT(ESP_OK, device_schema_init());
+
+    TEST_ASSERT_EQUAL_INT(ESP_OK,
+        nvs_open("dev_schema", NVS_READONLY, &handle));
+    size_t length = 0;
+    TEST_ASSERT_EQUAL_INT(ESP_ERR_NVS_NOT_FOUND,
+        nvs_get_blob(handle, "sch15", NULL, &length));
+    nvs_close(handle);
 }
 
 TEST_CASE("legacy dev_caps not loaded into schema", "[device_schema]")

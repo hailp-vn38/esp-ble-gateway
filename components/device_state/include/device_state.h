@@ -8,7 +8,7 @@
 #include "device_types.h"
 #include "esp_err.h"
 
-#define DEVICE_STATE_MAX_ENTRIES 96
+#define DEVICE_STATE_MAX_ENTRIES 192 /* 16 stored devices × 12 features */
 #define DEVICE_STATE_SNAPSHOT_MAX 12  /* matches DEVICE_SCHEMA_MAX_FEATURES */
 
 /* ── State entry ────────────────────────────────────────────────────── */

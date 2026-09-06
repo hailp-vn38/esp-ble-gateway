@@ -66,12 +66,15 @@ int8_t schema_resolve_writable_tool(const device_schema_tool_t *tools,
 
 bool schema_feature_matches_template(const device_schema_feature_t *feature)
 {
+    device_template_value_type_t property_value_type =
+        device_template_property_value_type(feature->property_id);
+    if (feature->value_type != property_value_type) return false;
+
     const device_template_t *template = device_template_resolve(
         feature->feature_type, feature->feature_schema_version);
     if (template == NULL) return true;
     if (feature->property_id != template->primary_property) return false;
-    return feature->value_type == device_template_property_value_type(
-        feature->property_id);
+    return true;
 }
 
 bool schema_validate_feature_tool(const device_schema_feature_t *feature,

@@ -522,3 +522,11 @@ TEST_CASE("P00-T08: snapshot bounded by DEVICE_STATE_SNAPSHOT_MAX",
 
     reset_state();
 }
+
+TEST_CASE("gateway v2 state capacity covers every stored device schema",
+          "[device_state][gateway_v2]")
+{
+    TEST_ASSERT_GREATER_OR_EQUAL(192, DEVICE_STATE_MAX_ENTRIES);
+    TEST_ASSERT_GREATER_OR_EQUAL(DEVICE_STATE_MAX_ENTRIES,
+                                 DEVICE_STATE_SNAPSHOT_MAX);
+}

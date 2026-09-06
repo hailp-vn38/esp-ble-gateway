@@ -67,3 +67,20 @@ TEST_CASE("primary_property helper is NULL-safe", "[device_template]")
 {
     TEST_ASSERT_EQUAL_UINT8(0, device_template_primary_property(NULL));
 }
+
+TEST_CASE("v2 templates use generic numeric, dimmer level and fan setting",
+          "[device_template][gateway_v2]")
+{
+    const device_template_t *generic = device_template_resolve(
+        GW_FEATURE_GENERIC_VALUE, 1);
+    const device_template_t *dimmer = device_template_resolve(
+        GW_FEATURE_DIMMABLE_LIGHT, 1);
+    const device_template_t *fan = device_template_resolve(GW_FEATURE_FAN, 1);
+
+    TEST_ASSERT_NOT_NULL(generic);
+    TEST_ASSERT_EQUAL_UINT8(GW_PROP_VALUE, generic->primary_property);
+    TEST_ASSERT_EQUAL_INT(DEVICE_TEMPLATE_VALUE_INT,
+                          device_template_property_value_type(GW_PROP_VALUE));
+    TEST_ASSERT_EQUAL_UINT8(GW_PROP_LEVEL, dimmer->primary_property);
+    TEST_ASSERT_EQUAL_UINT8(GW_PROP_PERCENT_SETTING, fan->primary_property);
+}
