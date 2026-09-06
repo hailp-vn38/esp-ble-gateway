@@ -34,9 +34,16 @@ void device_settings_deinit(void)
 {
     if (!s_initialized) return;
 
-    /* Release all schema/values snapshots. */
     for (int i = 0; i < DEVICE_SETTINGS_MAX_DEVICES; i++) {
         ds_device_record_t *r = &s_records[i];
+        if (r->staging_schema != NULL) {
+            ds_settings_ref_release(r->staging_schema);
+            r->staging_schema = NULL;
+        }
+        if (r->staging_values != NULL) {
+            ds_values_ref_release(r->staging_values);
+            r->staging_values = NULL;
+        }
         if (r->schema != NULL) {
             ds_settings_ref_release(r->schema);
             r->schema = NULL;
@@ -71,18 +78,10 @@ ds_device_record_t *device_settings_find_record(const char *device_id)
     if (device_id == NULL || device_id[0] == '\0') return NULL;
     for (int i = 0; i < DEVICE_SETTINGS_MAX_DEVICES; i++) {
         if (s_records[i].used &&
-            strncmp(s_records[i].schema ? "" : "", "", 1) == 0) {
-            /* Match by index from device_store. */
-            device_entry_t entry;
-            if (device_store_get(device_id, &entry) == DEVICE_STORE_OK) {
-                /* Find the record whose device_id matches. */
-                /* TODO: store device_id in record for direct match. */
-            }
+            strcmp(s_records[i].device_id, device_id) == 0) {
+            return &s_records[i];
         }
     }
-    /* Simple linear scan — records store no device_id yet, so we use a
-     * different approach: the caller passes device_id and we find by
-     * schema state.  For now, use the device_store index. */
     return NULL;
 }
 
@@ -93,12 +92,9 @@ ds_device_record_t *device_settings_find_or_create_record(
 
     /* First pass: find existing. */
     for (int i = 0; i < DEVICE_SETTINGS_MAX_DEVICES; i++) {
-        if (s_records[i].used) {
-            /* Check device_store for identity. */
-            device_entry_t entry;
-            if (device_store_get(device_id, &entry) == DEVICE_STORE_OK) {
-                return &s_records[i];
-            }
+        if (s_records[i].used &&
+            strcmp(s_records[i].device_id, device_id) == 0) {
+            return &s_records[i];
         }
     }
 
@@ -108,6 +104,8 @@ ds_device_record_t *device_settings_find_or_create_record(
             memset(&s_records[i], 0, sizeof(s_records[i]));
             s_records[i].used = true;
             s_records[i].schema_state = DS_SCHEMA_UNKNOWN;
+            strlcpy(s_records[i].device_id, device_id,
+                    sizeof(s_records[i].device_id));
             return &s_records[i];
         }
     }
@@ -122,14 +120,7 @@ const ds_schema_t *device_settings_schema_acquire(const char *device_id)
     if (device_id == NULL || device_id[0] == '\0') return NULL;
     if (!lock()) return NULL;
 
-    /* Find record by device_store index. */
-    ds_device_record_t *rec = NULL;
-    for (int i = 0; i < DEVICE_SETTINGS_MAX_DEVICES; i++) {
-        if (s_records[i].used && s_records[i].schema != NULL) {
-            rec = &s_records[i];
-            break;
-        }
-    }
+    ds_device_record_t *rec = device_settings_find_record(device_id);
 
     ds_schema_t *schema = NULL;
     if (rec != NULL && rec->schema != NULL) {
@@ -152,13 +143,7 @@ const ds_values_t *device_settings_values_acquire(const char *device_id)
     if (device_id == NULL || device_id[0] == '\0') return NULL;
     if (!lock()) return NULL;
 
-    ds_device_record_t *rec = NULL;
-    for (int i = 0; i < DEVICE_SETTINGS_MAX_DEVICES; i++) {
-        if (s_records[i].used && s_records[i].values != NULL) {
-            rec = &s_records[i];
-            break;
-        }
-    }
+    ds_device_record_t *rec = device_settings_find_record(device_id);
 
     ds_values_t *values = NULL;
     if (rec != NULL && rec->values != NULL) {
@@ -176,6 +161,43 @@ void device_settings_values_release(const ds_values_t *values)
     ds_values_ref_release((ds_values_t *)values);
 }
 
+/* ── Disconnect handler ────────────────────────────────────────────── */
+
+void device_settings_on_disconnect(const char *device_id)
+{
+    if (device_id == NULL || device_id[0] == '\0') return;
+
+    if (!lock()) return;
+
+    ds_device_record_t *rec = device_settings_find_record(device_id);
+    if (rec != NULL) {
+        /* Free staging snapshots — they were being built but not committed. */
+        if (rec->staging_schema != NULL) {
+            ds_settings_ref_release(rec->staging_schema);
+            rec->staging_schema = NULL;
+        }
+        if (rec->staging_values != NULL) {
+            ds_values_ref_release(rec->staging_values);
+            rec->staging_values = NULL;
+        }
+        /* Reset stream state. */
+        rec->schema_stream_active = false;
+        rec->values_stream_active = false;
+        rec->staging_expected_count = 0;
+        rec->staging_received_count = 0;
+        rec->staging_snapshot_id = 0;
+
+        /* Committed snapshots are preserved — they may be stale but remain
+         * valid for the UI until rediscovery on reconnect.  Schema state
+         * remains READY (not UNKNOWN) so the gateway knows this device
+         * previously had settings support. */
+        ESP_LOGI(TAG, "[%s] disconnected: staging freed, committed preserved",
+                 device_id);
+    }
+
+    unlock();
+}
+
 /* ── Query API ─────────────────────────────────────────────────────── */
 
 esp_err_t device_settings_get_state(const char *device_id,
@@ -186,14 +208,7 @@ esp_err_t device_settings_get_state(const char *device_id,
 
     if (!lock()) return ESP_ERR_TIMEOUT;
 
-    ds_device_record_t *rec = NULL;
-    for (int i = 0; i < DEVICE_SETTINGS_MAX_DEVICES; i++) {
-        if (s_records[i].used) {
-            rec = &s_records[i];
-            break;
-        }
-    }
-
+    ds_device_record_t *rec = device_settings_find_record(device_id);
     if (rec != NULL) {
         *out_state = rec->schema_state;
     }
@@ -208,14 +223,7 @@ esp_err_t device_settings_get_record(const char *device_id,
 
     if (!lock()) return ESP_ERR_TIMEOUT;
 
-    ds_device_record_t *rec = NULL;
-    for (int i = 0; i < DEVICE_SETTINGS_MAX_DEVICES; i++) {
-        if (s_records[i].used) {
-            rec = &s_records[i];
-            break;
-        }
-    }
-
+    ds_device_record_t *rec = device_settings_find_record(device_id);
     if (rec != NULL) {
         *out = *rec;
     } else {
@@ -235,6 +243,14 @@ void device_settings_reset_for_test(void)
 
     for (int i = 0; i < DEVICE_SETTINGS_MAX_DEVICES; i++) {
         ds_device_record_t *r = &s_records[i];
+        if (r->staging_schema != NULL) {
+            ds_settings_ref_release(r->staging_schema);
+            r->staging_schema = NULL;
+        }
+        if (r->staging_values != NULL) {
+            ds_values_ref_release(r->staging_values);
+            r->staging_values = NULL;
+        }
         if (r->schema != NULL) {
             ds_settings_ref_release(r->schema);
             r->schema = NULL;

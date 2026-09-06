@@ -264,3 +264,90 @@ int gw_settings_encode_request(const char *command,
 
     return cbor_codec_encode(&msg, out_buf, out_buf_cap);
 }
+
+/* ── Values frame view parser ─────────────────────────────────────── */
+
+int gw_settings_value_frame_view_parse(const gw_settings_frame_view_t *view,
+                                       size_t len,
+                                       gw_settings_value_entry_t *out)
+{
+    if (view == NULL || view->buf == NULL || len == 0 || out == NULL) {
+        return -1;
+    }
+
+    memset(out, 0, sizeof(*out));
+
+    QCBORDecodeContext context;
+    QCBORDecode_Init(&context, (UsefulBufC){view->buf, len},
+                     QCBOR_DECODE_MODE_NORMAL);
+    QCBORDecode_EnterMap(&context, NULL);
+    if (QCBORDecode_GetAndResetError(&context) != QCBOR_SUCCESS) {
+        return -1;
+    }
+
+    /* Setting ID (required). */
+    UsefulBufC text_val;
+    QCBORError err = get_optional_text(&context, GW_SETTINGS_CBOR_KEY_SETTING_ID,
+                                       &text_val);
+    if (err != QCBOR_SUCCESS || text_val.len == 0 ||
+        text_val.len >= GW_SETTINGS_MAX_ID_LEN) {
+        return -1;
+    }
+    out->setting_id = (const char *)text_val.ptr;
+
+    /* Setting type (required). */
+    uint64_t uval = 0;
+    err = get_optional_uint(&context, GW_SETTINGS_CBOR_KEY_SETTING_TYPE, &uval);
+    if (err != QCBOR_SUCCESS || uval > GW_SETTINGS_TYPE_ENUM) {
+        return -1;
+    }
+    out->setting_type = (uint8_t)uval;
+
+    /* Value (required for values stream — each frame carries one value). */
+    int64_t ival = 0;
+    err = get_optional_int(&context, GW_SETTINGS_CBOR_KEY_DEFAULT_VALUE, &ival);
+    if (err == QCBOR_SUCCESS) {
+        out->has_value = true;
+        switch (out->setting_type) {
+        case GW_SETTINGS_TYPE_BOOL:
+            out->bool_val = (ival != 0);
+            break;
+        case GW_SETTINGS_TYPE_INT:
+            if (ival < INT32_MIN || ival > INT32_MAX) return -1;
+            out->int_val = (int32_t)ival;
+            break;
+        case GW_SETTINGS_TYPE_FLOAT: {
+            /* Float values transmitted as integer with implicit decimals. */
+            if (ival < INT32_MIN || ival > INT32_MAX) return -1;
+            out->float_val = (float)ival;
+            break;
+        }
+        case GW_SETTINGS_TYPE_ENUM:
+            if (ival < INT32_MIN || ival > INT32_MAX) return -1;
+            out->enum_val = (int32_t)ival;
+            break;
+        case GW_SETTINGS_TYPE_STRING:
+            /* String values use a separate key in the wire format. */
+            err = get_optional_text(&context, GW_SETTINGS_CBOR_KEY_DEFAULT_VALUE,
+                                    &text_val);
+            if (err == QCBOR_SUCCESS && text_val.len > 0) {
+                out->string_val.str = (const char *)text_val.ptr;
+            }
+            break;
+        default:
+            return -1;
+        }
+    } else if (err == QCBOR_ERR_LABEL_NOT_FOUND) {
+        /* Value key missing — mark as no value. */
+        out->has_value = false;
+    } else {
+        return -1;
+    }
+
+    /* Unknown keys are silently ignored (targeted-lookup pattern). */
+
+    QCBORDecode_ExitMap(&context);
+    if (QCBORDecode_Finish(&context) != QCBOR_SUCCESS) return -1;
+
+    return 0;
+}

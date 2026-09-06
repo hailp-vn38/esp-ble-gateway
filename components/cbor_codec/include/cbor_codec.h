@@ -15,6 +15,7 @@
 #define GW_MSG_CAP_LABEL_LEN     32
 #define GW_MSG_CAP_UNIT_LEN      12
 #define GW_FEATURE_ID_LEN        DEVICE_FEATURE_ID_MAX_LEN
+#define GW_SETTINGS_CBOR_MAX_ID_LEN 32
 #define GW_PROTOCOL_VERSION      4
 
 /* Semantic feature types (wire contract v4, must match the Device's
@@ -109,6 +110,29 @@ typedef struct {
     int has_feature_total;
     uint8_t feature_decimals;
     int has_feature_decimals;
+
+    // Settings v2 protocol fields (keys 32–52, additive extension).
+    // Decoded by cbor_codec_decode(); unknown keys silently ignored.
+    char setting_id[GW_SETTINGS_CBOR_MAX_ID_LEN];
+    int has_setting_id;
+    uint8_t setting_type;
+    int has_setting_type;
+    bool setting_writable;
+    int has_setting_writable;
+    uint32_t config_revision;
+    int has_config_revision;
+    char setting_group[32];
+    int has_setting_group;
+    uint8_t setting_group_order;
+    int has_setting_group_order;
+    uint32_t string_max_len;
+    int has_string_max_len;
+    char dependency_id[GW_SETTINGS_CBOR_MAX_ID_LEN];
+    int has_dependency_id;
+    uint8_t dependency_op;
+    int has_dependency_op;
+    int32_t dependency_val;
+    int has_dependency_val;
 } gw_message_t;
 
 int cbor_codec_decode(const uint8_t *buf, size_t len, gw_message_t *out_msg);

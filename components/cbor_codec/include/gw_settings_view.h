@@ -56,9 +56,12 @@ enum {
 
 /* ── Message type strings for Settings protocol ────────────────────── */
 
-#define GW_SETTINGS_MSG_SETTINGS_BEGIN  "settings_begin"
-#define GW_SETTINGS_MSG_SETTINGS_ITEM   "settings_item"
-#define GW_SETTINGS_MSG_SETTINGS_END    "settings_end"
+#define GW_SETTINGS_MSG_SETTINGS_BEGIN       "settings_begin"
+#define GW_SETTINGS_MSG_SETTINGS_ITEM        "settings_item"
+#define GW_SETTINGS_MSG_SETTINGS_END         "settings_end"
+#define GW_SETTINGS_MSG_SETTINGS_VALUES_BEGIN "settings_values_begin"
+#define GW_SETTINGS_MSG_SETTINGS_VALUES_VALUE "settings_values_value"
+#define GW_SETTINGS_MSG_SETTINGS_VALUES_END   "settings_values_end"
 
 /* ── Command strings for Settings requests ─────────────────────────── */
 
@@ -128,6 +131,32 @@ typedef struct {
     gw_settings_entry_t entries[GW_SETTINGS_MAX_ENTRIES];
 } gw_settings_snapshot_t;
 
+/* ── Values entry (parsed from settings_values_value frame) ──────── */
+
+typedef struct {
+    const char *setting_id;
+    uint8_t setting_type;
+    bool has_value;
+
+    union {
+        bool bool_val;
+        int32_t int_val;
+        float float_val;
+        struct {
+            const char *str;
+        } string_val;
+        int32_t enum_val;
+    };
+} gw_settings_value_entry_t;
+
+/* ── Values snapshot (built incrementally across frames) ─────────── */
+
+typedef struct {
+    uint32_t config_revision;
+    uint16_t settings_count;
+    gw_settings_value_entry_t entries[GW_SETTINGS_MAX_ENTRIES];
+} gw_settings_values_snapshot_t;
+
 /* ── API ────────────────────────────────────────────────────────────── */
 
 /**
@@ -161,6 +190,20 @@ int gw_settings_encode_request(const char *command,
                                const char *device_id,
                                uint8_t *out_buf,
                                size_t out_buf_cap);
+
+/**
+ * Parse a settings_values_value CBOR frame into a value entry.
+ *
+ * All string pointers reference memory inside the original frame buffer.
+ *
+ * @param view   Pointer to raw CBOR frame.
+ * @param len    Length of frame in bytes.
+ * @param out    Output value entry (zeroed on error).
+ * @return 0 on success, -1 on parse/validation error.
+ */
+int gw_settings_value_frame_view_parse(const gw_settings_frame_view_t *view,
+                                       size_t len,
+                                       gw_settings_value_entry_t *out);
 
 #ifdef __cplusplus
 }

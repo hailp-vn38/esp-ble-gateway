@@ -49,6 +49,29 @@ enum {
     CBOR_KEY_FEATURE_TOOL = 29,
     CBOR_KEY_FEATURE_TOTAL = 30,
     CBOR_KEY_FEATURE_DECIMALS = 31,
+
+    /* Settings v2 protocol keys (additive extension, keys 32–52). */
+    CBOR_KEY_SETTINGS_BEGIN     = 32,
+    CBOR_KEY_SETTINGS_ITEM      = 33,
+    CBOR_KEY_SETTINGS_END       = 34,
+    CBOR_KEY_SETTING_ID         = 35,
+    CBOR_KEY_SETTING_TYPE       = 36,
+    CBOR_KEY_WRITABLE           = 37,
+    CBOR_KEY_ENUM_OPTIONS       = 38,
+    CBOR_KEY_ENUM_VALUE         = 39,
+    CBOR_KEY_ENUM_LABEL         = 40,
+    CBOR_KEY_DEFAULT_VALUE      = 41,
+    CBOR_KEY_MIN_VALUE_S        = 42,  /* Settings-specific min (avoid clash) */
+    CBOR_KEY_MAX_VALUE_S        = 43,
+    CBOR_KEY_STEP_S             = 44,
+    CBOR_KEY_STRING_MAX_LEN     = 45,
+    CBOR_KEY_CONFIG_REVISION    = 46,
+    CBOR_KEY_GROUP              = 47,
+    CBOR_KEY_GROUP_LABEL        = 48,
+    CBOR_KEY_GROUP_ORDER        = 49,
+    CBOR_KEY_DEPENDENCY_ID      = 50,
+    CBOR_KEY_DEPENDENCY_OP      = 51,
+    CBOR_KEY_DEPENDENCY_VAL     = 52,
 };
 
 static bool valid_string(const char *value, size_t capacity, bool allow_empty)
@@ -516,6 +539,82 @@ int cbor_codec_decode(const uint8_t *buf, size_t len, gw_message_t *out_msg)
         if (optional_uint > UINT8_MAX) return -1;
         out_msg->feature_decimals = (uint8_t)optional_uint;
         out_msg->has_feature_decimals = 1;
+    } else if (error != QCBOR_ERR_LABEL_NOT_FOUND) return -1;
+
+    /* Settings v2 protocol fields (keys 32–52).  Unknown settings keys
+     * from older devices are silently ignored by the targeted-lookup
+     * decoder pattern — same as base protocol keys. */
+    error = get_optional_text(&context, CBOR_KEY_SETTING_ID, &optional_value);
+    if (error == QCBOR_SUCCESS) {
+        if (copy_text(optional_value, out_msg->setting_id,
+                      sizeof(out_msg->setting_id), false) != 0) return -1;
+        out_msg->has_setting_id = 1;
+    } else if (error != QCBOR_ERR_LABEL_NOT_FOUND) return -1;
+
+    error = get_optional_uint(&context, CBOR_KEY_SETTING_TYPE, &optional_uint);
+    if (error == QCBOR_SUCCESS) {
+        if (optional_uint > UINT8_MAX) return -1;
+        out_msg->setting_type = (uint8_t)optional_uint;
+        out_msg->has_setting_type = 1;
+    } else if (error != QCBOR_ERR_LABEL_NOT_FOUND) return -1;
+
+    QCBORDecode_GetBoolInMapN(&context, CBOR_KEY_WRITABLE, &optional_bool);
+    error = QCBORDecode_GetAndResetError(&context);
+    if (error == QCBOR_SUCCESS) {
+        out_msg->setting_writable = optional_bool;
+        out_msg->has_setting_writable = 1;
+    } else if (error != QCBOR_ERR_LABEL_NOT_FOUND) return -1;
+
+    error = get_optional_uint(&context, CBOR_KEY_CONFIG_REVISION,
+                              &optional_uint);
+    if (error == QCBOR_SUCCESS) {
+        if (optional_uint > UINT32_MAX) return -1;
+        out_msg->config_revision = (uint32_t)optional_uint;
+        out_msg->has_config_revision = 1;
+    } else if (error != QCBOR_ERR_LABEL_NOT_FOUND) return -1;
+
+    error = get_optional_text(&context, CBOR_KEY_GROUP, &optional_value);
+    if (error == QCBOR_SUCCESS) {
+        if (copy_text(optional_value, out_msg->setting_group,
+                      sizeof(out_msg->setting_group), true) != 0) return -1;
+        out_msg->has_setting_group = 1;
+    } else if (error != QCBOR_ERR_LABEL_NOT_FOUND) return -1;
+
+    error = get_optional_uint(&context, CBOR_KEY_GROUP_ORDER, &optional_uint);
+    if (error == QCBOR_SUCCESS) {
+        if (optional_uint > UINT8_MAX) return -1;
+        out_msg->setting_group_order = (uint8_t)optional_uint;
+        out_msg->has_setting_group_order = 1;
+    } else if (error != QCBOR_ERR_LABEL_NOT_FOUND) return -1;
+
+    error = get_optional_uint(&context, CBOR_KEY_STRING_MAX_LEN,
+                              &optional_uint);
+    if (error == QCBOR_SUCCESS) {
+        if (optional_uint > UINT32_MAX) return -1;
+        out_msg->string_max_len = (uint32_t)optional_uint;
+        out_msg->has_string_max_len = 1;
+    } else if (error != QCBOR_ERR_LABEL_NOT_FOUND) return -1;
+
+    error = get_optional_text(&context, CBOR_KEY_DEPENDENCY_ID,
+                              &optional_value);
+    if (error == QCBOR_SUCCESS) {
+        if (copy_text(optional_value, out_msg->dependency_id,
+                      sizeof(out_msg->dependency_id), false) != 0) return -1;
+        out_msg->has_dependency_id = 1;
+    } else if (error != QCBOR_ERR_LABEL_NOT_FOUND) return -1;
+
+    error = get_optional_uint(&context, CBOR_KEY_DEPENDENCY_OP, &optional_uint);
+    if (error == QCBOR_SUCCESS) {
+        if (optional_uint > UINT8_MAX) return -1;
+        out_msg->dependency_op = (uint8_t)optional_uint;
+        out_msg->has_dependency_op = 1;
+    } else if (error != QCBOR_ERR_LABEL_NOT_FOUND) return -1;
+
+    error = get_optional_int(&context, CBOR_KEY_DEPENDENCY_VAL, &optional_int);
+    if (error == QCBOR_SUCCESS) {
+        if (optional_int < INT32_MIN || optional_int > INT32_MAX) return -1;
+        out_msg->dependency_val = (int32_t)optional_int;
+        out_msg->has_dependency_val = 1;
     } else if (error != QCBOR_ERR_LABEL_NOT_FOUND) return -1;
 
     QCBORDecode_ExitMap(&context);

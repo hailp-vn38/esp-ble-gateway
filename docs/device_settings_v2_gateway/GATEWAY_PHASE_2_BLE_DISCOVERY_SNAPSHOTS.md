@@ -1,4 +1,4 @@
-# Gateway Phase G2 — BLE Discovery, Schema/Values Builders & Cache State
+# Gateway Phase G2 — BLE Discovery, Schema/Values Builders & Cache State ✅ DONE (2026-09-06)
 
 
 **Repo:** `hailp-vn38/esp-ble-gateway`  
@@ -70,27 +70,27 @@ Do not inject all values into existing `/api/devices/detail` response.
 ## Tests
 
 ### Parser/build
-- [ ] zero settings.
-- [ ] all 4 types.
-- [ ] enum options.
-- [ ] duplicate id reject.
-- [ ] mismatched total reject.
-- [ ] missing end reject.
-- [ ] invalid value type reject.
-- [ ] secret plaintext ignored/rejected by contract.
+- [x] zero settings.
+- [x] all 4 types.
+- [x] enum options.
+- [x] duplicate id reject.
+- [x] mismatched total reject.
+- [x] missing end reject.
+- [x] invalid value type reject.
+- [x] secret plaintext ignored/rejected by contract.
 
 ### Disconnect
-- [ ] disconnect mid-schema => staging free, committed unchanged.
-- [ ] disconnect mid-values => staging values free, committed unchanged.
-- [ ] reconnect => clean rediscovery.
+- [x] disconnect mid-schema => staging free, committed unchanged.
+- [x] disconnect mid-values => staging values free, committed unchanged.
+- [x] reconnect => clean rediscovery.
 
 ### PSRAM fail
 Inject fail at each builder growth step:
 
-- [ ] state becomes ERROR/appropriate failure.
-- [ ] old committed snapshot preserved.
-- [ ] no internal fallback.
-- [ ] command/features path still works.
+- [x] state becomes ERROR/appropriate failure.
+- [x] old committed snapshot preserved.
+- [x] no internal fallback.
+- [x] command/features path still works.
 
 ### 100-cycle discovery
 Measure before/after:
@@ -107,11 +107,11 @@ No monotonic leak trend.
 
 ## Checklist
 
-- [ ] Discovery uses settings-specific codec, not expanded `gw_message_t`.
-- [ ] Snapshot commit is all-or-nothing.
-- [ ] HTTP reader lifetime API used everywhere.
-- [ ] Device unsupported path sends no settings commands.
-- [ ] Values are not gateway-NVS persisted.
+- [x] Discovery uses settings-specific codec, not expanded `gw_message_t`.
+- [x] Snapshot commit is all-or-nothing.
+- [x] HTTP reader lifetime API used everywhere.
+- [x] Device unsupported path sends no settings commands.
+- [x] Values are not gateway-NVS persisted.
 
 ## Exit gate
 

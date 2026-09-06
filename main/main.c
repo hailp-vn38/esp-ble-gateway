@@ -55,6 +55,7 @@ static void on_device_disconnect(const char *device_id)
     gateway_events_publish(&ev);
 
     device_schema_on_disconnect(device_id);
+    device_settings_on_disconnect(device_id);
     device_state_forget(device_id);
     device_command_service_on_disconnect(device_id);
 }

@@ -149,16 +149,28 @@ typedef struct {
 
 typedef struct {
     bool               used;
+    char               device_id[32]; /* device_store identity */
     ds_schema_state_t  schema_state;
     ds_op_state_t      op_state;
     ds_op_kind_t       op_kind;
     uint32_t           op_id;
+
+    /* Staging area — built during discovery, committed atomically. */
+    ds_schema_t       *staging_schema;
+    ds_values_t       *staging_values;
 
     /* Schema/values ownership — refcounted snapshots (PSRAM). */
     ds_schema_t       *schema;
     ds_values_t       *values;
     uint32_t           schema_rev;  /* last committed schema revision */
     uint32_t           config_rev;  /* last committed config revision */
+
+    /* Discovery stream state. */
+    uint16_t           staging_expected_count;  /* from settings_begin total */
+    uint16_t           staging_received_count;  /* items received so far */
+    uint32_t           staging_snapshot_id;
+    bool               schema_stream_active;
+    bool               values_stream_active;
 } ds_device_record_t;
 
 /* ── Init / deinit ─────────────────────────────────────────────────── */
@@ -223,6 +235,12 @@ ds_values_t *ds_values_builder_commit(ds_values_builder_t *builder);
 
 bool device_settings_on_notify(const char *device_id,
                                const gw_message_t *message);
+
+/* ── Disconnect handler ────────────────────────────────────────────
+ * Called when a BLE device disconnects.  Frees staging state; preserved
+ * committed snapshots remain valid (but may be marked stale). */
+
+void device_settings_on_disconnect(const char *device_id);
 
 /* ── Operation API ─────────────────────────────────────────────────── */
 
