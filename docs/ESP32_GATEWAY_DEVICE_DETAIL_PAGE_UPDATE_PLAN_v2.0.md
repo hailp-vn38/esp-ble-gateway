@@ -2148,6 +2148,27 @@ command.tool_name
       available in this session and the test-erased gateway is in provisioning
       mode.
 
+## 22.0.2 Regression checkpoint — Realtime Feature state rendering (2026-09-05)
+
+- [x] Identified the renderer bug: valid BOOL `false` and INT `0` used a
+      truthiness fallback, so the visible state label was rendered as an empty
+      string even after the WebSocket delta updated `currentFeatures`.
+- [x] BOOL feature state now renders explicitly as `ON` or `OFF`; INT state
+      renders finite values including `0`.
+- [x] Frontend regression harness passed for WebSocket BOOL transitions in
+      both directions, button label changes, and INT zero rendering.
+- [x] Feature state deltas still issue zero REST requests and retain the
+      existing in-memory cache/update path.
+- [x] Modular JavaScript, assembled dashboard JavaScript, generated gzip, and
+      the production ESP32-S3 firmware build passed.
+- [x] Firmware flashed and booted on `/dev/cu.usbmodem101`; Wi-Fi, Web server,
+      BLE READY, and `/ws/events` registration succeeded.
+- [x] Live gateway test passed with ordered `feature.state` events
+      `OFF -> ON -> OFF` for `AC:27:6E:CC:F2:26 / led_main`, and the final
+      detail snapshot reported `value_bool=false`.
+- [ ] Browser visual/interactivity verified. Browser automation reported no
+      available browser instance, so direct visual QA remains unverified.
+
 ## 22.1 Backend detail API
 
 Required tests:

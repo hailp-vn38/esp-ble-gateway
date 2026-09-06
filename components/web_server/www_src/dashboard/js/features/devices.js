@@ -666,7 +666,12 @@ const devices = {
         if (feature.state && feature.state.valid) {
             const stateText = document.createElement('span');
             stateText.className = 'text-xs text-gray-500 font-mono';
-            stateText.textContent = feature.state.value_bool ? 'ON' : (feature.state.value_int || '');
+            if (semantic?.value_type === 'bool') {
+                stateText.textContent = feature.state.value_bool ? 'ON' : 'OFF';
+            } else if (semantic?.value_type === 'int' &&
+                       Number.isFinite(feature.state.value_int)) {
+                stateText.textContent = String(feature.state.value_int);
+            }
             header.appendChild(stateText);
         }
         card.appendChild(header);
