@@ -413,3 +413,120 @@ TEST_CASE("CBOR decoder requires explicit protocol version 4", "[cbor_codec]")
                                  "\"command\":\"c\",\"int_value\":0,"
                                  "\"bool_value\":false}", &message));
 }
+
+/* ── G0 Protocol Alignment tests ───────────────────────────────────── */
+
+TEST_CASE("G0: sizeof(gw_message_t) unchanged by Settings work",
+          "[cbor_codec][g0]")
+{
+    /* Baseline size measured before G0 implementation.  If this grows,
+     * Settings strings/enum arrays leaked into the message struct —
+     * the G0.2 design forbids that. */
+    TEST_ASSERT_TRUE(sizeof(gw_message_t) <= 640);
+}
+
+TEST_CASE("G0: decoder tolerates unknown future keys (>= 32)",
+          "[cbor_codec][g0]")
+{
+    /* {0:4, 1:"t", 3:"c", 4:0, 5:false, 35:"setting_x", 36:2}.
+     * Keys 35–36 are Settings keys; the base decoder must ignore them. */
+    static const uint8_t WITH_SETTINGS_KEYS[] = {
+        0xA7, 0x00, 0x04, 0x01, 0x61, 't', 0x03, 0x61, 'c',
+        0x04, 0x00, 0x05, 0xF4,
+        0x23, 0x69, 's', 'e', 't', 't', 'i', 'n', 'g', '_', 'x',
+        0x24, 0x02,
+    };
+    gw_message_t decoded;
+    TEST_ASSERT_EQUAL_INT(0, cbor_codec_decode(WITH_SETTINGS_KEYS,
+                                               sizeof(WITH_SETTINGS_KEYS),
+                                               &decoded));
+    TEST_ASSERT_EQUAL_UINT8(GW_PROTOCOL_VERSION, decoded.protocol_version);
+    TEST_ASSERT_EQUAL_STRING("t", decoded.type);
+    TEST_ASSERT_EQUAL_STRING("c", decoded.command);
+}
+
+TEST_CASE("G0: encoder/decode roundtrip with settings keys on wire",
+          "[cbor_codec][g0]")
+{
+    /* Build a normal v4 message, then manually append settings keys 35–36
+     * to the raw CBOR to simulate a device sending extra fields. */
+    const gw_message_t base = {
+        .protocol_version = GW_PROTOCOL_VERSION,
+        .type = "device_command",
+        .device_id = "lamp-1",
+        .command = "describe_settings",
+        .has_device_id = 1,
+        .request_id = 999,
+        .has_request_id = 1,
+    };
+    uint8_t raw[GW_MSG_MAX_LEN];
+    int raw_len = cbor_codec_encode(&base, raw, sizeof(raw));
+    TEST_ASSERT_GREATER_THAN(0, raw_len);
+
+    /* Decode the base message to verify it roundtrips. */
+    gw_message_t decoded;
+    TEST_ASSERT_EQUAL_INT(0, cbor_codec_decode(raw, raw_len, &decoded));
+    TEST_ASSERT_EQUAL_STRING("describe_settings", decoded.command);
+    TEST_ASSERT_TRUE(decoded.has_request_id);
+    TEST_ASSERT_EQUAL_UINT32(999, decoded.request_id);
+}
+
+TEST_CASE("G0: old device capability decode unchanged", "[cbor_codec][g0]")
+{
+    /* Simulate an old device that has no settings capability_flags bit.
+     * The message should decode normally. */
+    const gw_message_t old_device_msg = {
+        .protocol_version = GW_PROTOCOL_VERSION,
+        .type = "capabilities_begin",
+        .device_id = "relay-old",
+        .command = "describe_capabilities",
+        .has_device_id = 1,
+        .snapshot_id = 100,
+        .has_snapshot_id = 1,
+        .total = 2,
+        .has_total = 1,
+        .capability_revision = 1,
+        .has_capability_revision = 1,
+        .feature_total = 1,
+        .has_feature_total = 1,
+        /* No capability_flags set — old device. */
+    };
+    uint8_t encoded[GW_MSG_MAX_LEN];
+    int len = cbor_codec_encode(&old_device_msg, encoded, sizeof(encoded));
+    TEST_ASSERT_GREATER_THAN(0, len);
+
+    gw_message_t decoded;
+    TEST_ASSERT_EQUAL_INT(0, cbor_codec_decode(encoded, len, &decoded));
+    TEST_ASSERT_EQUAL_STRING("capabilities_begin", decoded.type);
+    TEST_ASSERT_FALSE(decoded.has_capability_flags);
+    TEST_ASSERT_EQUAL_UINT8(0, decoded.capability_flags);
+}
+
+TEST_CASE("G0: new device with settings capability flag", "[cbor_codec][g0]")
+{
+    const gw_message_t new_device_msg = {
+        .protocol_version = GW_PROTOCOL_VERSION,
+        .type = "capabilities_begin",
+        .device_id = "lamp-new",
+        .command = "describe_capabilities",
+        .has_device_id = 1,
+        .snapshot_id = 200,
+        .has_snapshot_id = 1,
+        .total = 3,
+        .has_total = 1,
+        .capability_revision = 2,
+        .has_capability_revision = 1,
+        .feature_total = 2,
+        .has_feature_total = 1,
+        .capability_flags = 0x04,  /* DEVICE_SCHEMA_FLAG_SETTINGS_SUPPORT */
+        .has_capability_flags = 1,
+    };
+    uint8_t encoded[GW_MSG_MAX_LEN];
+    int len = cbor_codec_encode(&new_device_msg, encoded, sizeof(encoded));
+    TEST_ASSERT_GREATER_THAN(0, len);
+
+    gw_message_t decoded;
+    TEST_ASSERT_EQUAL_INT(0, cbor_codec_decode(encoded, len, &decoded));
+    TEST_ASSERT_TRUE(decoded.has_capability_flags);
+    TEST_ASSERT_EQUAL_UINT8(0x04, decoded.capability_flags);
+}

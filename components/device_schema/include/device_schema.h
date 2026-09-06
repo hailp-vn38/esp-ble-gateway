@@ -27,8 +27,9 @@ typedef struct {
 } device_schema_tool_t;
 
 enum {
-    DEVICE_SCHEMA_FLAG_IDEMPOTENT  = 1u << 0,
-    DEVICE_SCHEMA_FLAG_DESTRUCTIVE = 1u << 1,
+    DEVICE_SCHEMA_FLAG_IDEMPOTENT       = 1u << 0,
+    DEVICE_SCHEMA_FLAG_DESTRUCTIVE      = 1u << 1,
+    DEVICE_SCHEMA_FLAG_SETTINGS_SUPPORT = 1u << 2,
 };
 
 /* ── Feature ────────────────────────────────────────────────────────── */
@@ -56,6 +57,14 @@ typedef enum {
     DEVICE_SCHEMA_STATE_ERROR,
 } device_schema_state_t;
 
+/* ── Settings support state ────────────────────────────────────────── */
+
+typedef enum {
+    DEVICE_SETTINGS_STATE_UNKNOWN = 0,
+    DEVICE_SETTINGS_STATE_UNSUPPORTED,
+    DEVICE_SETTINGS_STATE_READY,
+} device_settings_state_t;
+
 /* ── Committed schema snapshot ──────────────────────────────────────── */
 
 typedef struct {
@@ -69,6 +78,7 @@ typedef struct {
     size_t feature_count;
     device_schema_tool_t tools[DEVICE_SCHEMA_MAX_TOOLS];
     device_schema_feature_t features[DEVICE_SCHEMA_MAX_FEATURES];
+    device_settings_state_t settings_state;
 } device_schema_snapshot_t;
 
 /* ── Validation result ──────────────────────────────────────────────── */
@@ -191,6 +201,13 @@ esp_err_t device_schema_forget(const char *device_id);
 const char *device_schema_state_name(device_schema_state_t state);
 const char *device_schema_refresh_result_name(
     device_schema_refresh_result_t result);
+const char *device_schema_settings_state_name(
+    device_settings_state_t state);
+
+esp_err_t device_schema_describe_settings(const char *device_id,
+                                          device_settings_state_t *out_state);
+esp_err_t device_schema_get_settings_state(const char *device_id,
+                                           device_settings_state_t *out_state);
 
 void device_schema_reset_for_test(void);
 

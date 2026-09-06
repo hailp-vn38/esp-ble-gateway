@@ -70,6 +70,16 @@ static void handle_begin(const char *device_id, const gw_message_t *message)
         record->staging_expected_tools = message->total;
         record->staging_expected_features =
             message->has_feature_total ? message->feature_total : 0;
+        /* Settings capability gate: check device capability_flags for
+         * SETTINGS_SUPPORT bit.  Old devices without this flag will have
+         * settings_state UNSUPPORTED — gateway will not send
+         * describe_settings to them. */
+        if (message->has_capability_flags &&
+            (message->capability_flags & DEVICE_SCHEMA_FLAG_SETTINGS_SUPPORT)) {
+            record->staging.settings_state = DEVICE_SETTINGS_STATE_READY;
+        } else {
+            record->staging.settings_state = DEVICE_SETTINGS_STATE_UNSUPPORTED;
+        }
         record->staging_active = true;
         ESP_LOGI(TAG, "[%s] SCHEMA_BEGIN snapshot=%lu tools=%u features=%u rev=%lu",
                  device_id, (unsigned long)message->snapshot_id,

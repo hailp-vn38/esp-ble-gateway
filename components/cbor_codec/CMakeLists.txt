@@ -1,5 +1,5 @@
 idf_component_register(
-    SRCS "cbor_codec.c"
+    SRCS "cbor_codec.c" "gw_settings_view.c"
     INCLUDE_DIRS "include"
     REQUIRES qcbor_lib espressif__cjson device_types
 )

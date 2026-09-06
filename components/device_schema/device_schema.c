@@ -350,6 +350,17 @@ const char *device_schema_state_name(device_schema_state_t state)
     }
 }
 
+const char *device_schema_settings_state_name(
+    device_settings_state_t state)
+{
+    switch (state) {
+    case DEVICE_SETTINGS_STATE_UNKNOWN: return "unknown";
+    case DEVICE_SETTINGS_STATE_UNSUPPORTED: return "unsupported";
+    case DEVICE_SETTINGS_STATE_READY: return "ready";
+    default: return "unknown";
+    }
+}
+
 const char *device_schema_refresh_result_name(
     device_schema_refresh_result_t result)
 {
@@ -367,6 +378,32 @@ const char *device_schema_refresh_result_name(
     case DEVICE_SCHEMA_REFRESH_RESULT_INTERNAL_ERROR: return "internal_error";
     default: return "unknown";
     }
+}
+
+esp_err_t device_schema_describe_settings(const char *device_id,
+                                          device_settings_state_t *out_state)
+{
+    if (device_id == NULL || device_id[0] == '\0' ||
+        out_state == NULL) {
+        return ESP_ERR_INVALID_ARG;
+    }
+    *out_state = DEVICE_SETTINGS_STATE_UNKNOWN;
+
+    if (!schema_runtime_lock()) return ESP_ERR_TIMEOUT;
+    schema_record_t *record = schema_runtime_find_locked(device_id);
+    if (record == NULL || !record->has_committed) {
+        schema_runtime_unlock();
+        return ESP_ERR_NOT_FOUND;
+    }
+    *out_state = record->committed.settings_state;
+    schema_runtime_unlock();
+    return ESP_OK;
+}
+
+esp_err_t device_schema_get_settings_state(const char *device_id,
+                                           device_settings_state_t *out_state)
+{
+    return device_schema_describe_settings(device_id, out_state);
 }
 
 void device_schema_reset_for_test(void)

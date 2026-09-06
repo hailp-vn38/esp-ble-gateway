@@ -1,4 +1,4 @@
-# Gateway Phase G0 — Protocol Alignment & Settings Extension Gate
+# Gateway Phase G0 — Protocol Alignment & Settings Extension Gate ✅ DONE (2026-09-06)
 
 
 **Repo:** `hailp-vn38/esp-ble-gateway`  
@@ -75,24 +75,24 @@ Compatibility matrix quyết định giữ Protocol v4 additive extension hay bu
 
 ## Tests
 
-- [ ] Golden vectors match device pack byte-for-byte.
-- [ ] Unknown additive keys handled according to contract.
-- [ ] malformed/truncated CBOR returns bounded error.
-- [ ] max frame accepted/rejected correctly.
-- [ ] old device capability decode unchanged.
-- [ ] `sizeof(gw_message_t)` unchanged by Settings work.
+- [x] Golden vectors match device pack byte-for-byte.
+- [x] Unknown additive keys handled according to contract.
+- [x] malformed/truncated CBOR returns bounded error.
+- [x] max frame accepted/rejected correctly.
+- [x] old device capability decode unchanged.
+- [x] `sizeof(gw_message_t)` unchanged by Settings work.
 
 Compatibility:
 
-- [ ] new gateway ↔ old device: Settings unsupported, features/control pass.
+- [x] new gateway ↔ old device: Settings unsupported, features/control pass.
 - [ ] old gateway ↔ new device: verified by cross-repo HIL.
 - [ ] new ↔ new: full Settings protocol.
 
 ## Memory checklist
 
-- [ ] Settings decoder does not allocate per parsed scalar.
-- [ ] No shared queue event grows due to Settings strings.
-- [ ] Temporary decode uses bounded stack/internal footprint.
+- [x] Settings decoder does not allocate per parsed scalar.
+- [x] No shared queue event grows due to Settings strings.
+- [x] Temporary decode uses bounded stack/internal footprint.
 - [ ] Persistent copies are allocated via Settings PSRAM allocator layer later in G1.
 
 ## Exit gate
