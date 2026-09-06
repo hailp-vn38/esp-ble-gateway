@@ -39,7 +39,8 @@ Device Detail
 │   ├── BLE address
 │   └── connection state
 │
-├── Summary                        luôn visible
+├── Identity and status card       luôn visible
+│   ├── Device name / BLE address
 │   ├── Connection
 │   └── Schema
 │
@@ -157,12 +158,12 @@ inner tab state
 
 ## 5.1. Những gì luôn visible
 
-Giữ ngoài tab:
+Giữ ngoài tab, trong một card compact:
 
 ```text
 Back to Devices
-Device Header
-Connection / Schema summary
+Device identity: name + BLE address
+Connection / Schema status
 Tab bar
 ```
 
@@ -171,6 +172,7 @@ Lý do:
 - khi đang ở Settings vẫn phải thấy device identity;
 - connection state là global device state;
 - schema state liên quan cả Control và Settings;
+- gộp identity và trạng thái tránh hai summary card chiếm thêm một hàng;
 - không duplicate DOM giữa hai tab.
 
 ## 5.2. Tab `Control`
@@ -262,8 +264,6 @@ Target:
 
     detail-header
 
-    detail-summary
-
     detail-tabs
 
     detail-panel-control
@@ -315,7 +315,7 @@ Không bắt buộc move Edit trong commit tab đầu tiên.
 Chèn ngay sau:
 
 ```html
-<div id="detail-summary">...</div>
+<div id="detail-header">...</div>
 ```
 
 Target markup:
@@ -1409,7 +1409,7 @@ remain Settings
 
 connection event
    ↓
-header/summary/control state update
+identity-status-card/control state update
    ↓
 remain Settings
 
@@ -1433,8 +1433,7 @@ Expected:
 ```text
 Control active
 Settings hidden
-header visible
-summary visible
+identity and status card visible
 ```
 
 ARIA:
@@ -1487,7 +1486,7 @@ Expected:
 stay Settings
 hidden features reload
 MCP reload
-summary update
+schema status update
 ```
 
 ## T6 — Feature WS event while Settings active
@@ -1502,7 +1501,7 @@ Expected:
 
 ```text
 header offline
-summary offline
+connection status offline
 hidden feature controls disabled
 Settings remains active
 ```
@@ -1612,7 +1611,7 @@ incremental card update only
 
 # 25. Implementation phases
 
-## Phase TAB-0 — HTML
+## Phase TAB-0 — HTML ✅ DONE (2026-09-06)
 
 ### File
 
@@ -1629,15 +1628,15 @@ device_detail.html
 
 ### Checklist
 
-- [ ] no duplicate IDs.
-- [ ] Control default.
-- [ ] Settings hidden.
-- [ ] header outside.
-- [ ] summary outside.
-- [ ] Feature card moved, not duplicated.
-- [ ] MCP moved, not duplicated.
-- [ ] Advanced moved.
-- [ ] Management moved.
+- [x] no duplicate IDs.
+- [x] Control default.
+- [x] Settings hidden.
+- [x] header outside.
+- [x] identity and status card outside.
+- [x] Feature card moved, not duplicated.
+- [x] MCP moved, not duplicated.
+- [x] Advanced moved.
+- [x] Management moved.
 
 ### Exit
 
@@ -1645,7 +1644,7 @@ Static layout correct.
 
 ---
 
-## Phase TAB-1 — JS
+## Phase TAB-1 — JS ✅ DONE (2026-09-06)
 
 ### File
 
@@ -1671,15 +1670,15 @@ openDetailView
 
 ### Checklist
 
-- [ ] no API call in setDetailTab.
-- [ ] no feature render in setDetailTab.
-- [ ] no WS subscription change.
-- [ ] schema reload preserves tab.
-- [ ] new device resets Control.
+- [x] no API call in setDetailTab.
+- [x] no feature render in setDetailTab.
+- [x] no WS subscription change.
+- [x] schema reload preserves tab.
+- [x] new device resets Control.
 
 ---
 
-## Phase TAB-2 — i18n
+## Phase TAB-2 — i18n ✅ DONE (2026-09-06)
 
 ### File
 
@@ -1699,23 +1698,23 @@ EN/VI.
 
 ---
 
-## Phase TAB-3 — Accessibility
+## Phase TAB-3 — Accessibility ✅ DONE (2026-09-06)
 
 Verify:
 
-- [ ] role tablist.
-- [ ] role tab.
-- [ ] role tabpanel.
-- [ ] aria-selected.
-- [ ] aria-controls.
-- [ ] tabindex.
-- [ ] Arrow.
-- [ ] Home/End.
-- [ ] focus visible.
+- [x] role tablist.
+- [x] role tab.
+- [x] role tabpanel.
+- [x] aria-selected.
+- [x] aria-controls.
+- [x] tabindex.
+- [x] Arrow.
+- [x] Home/End.
+- [x] focus visible.
 
 ---
 
-## Phase TAB-4 — Regression
+## Phase TAB-4 — Regression ✅ DONE (2026-09-06)
 
 Test:
 
@@ -1765,8 +1764,7 @@ device-management-card
 Outside:
 
 ```text
-detail-header
-detail-summary
+detail-header (identity + connection/schema status)
 ```
 
 ## `devices.js`
@@ -1844,18 +1842,18 @@ Then verify embedded CSS classes.
 
 # 29. Browser smoke checklist
 
-- [ ] detail opens.
-- [ ] Control active.
-- [ ] features visible.
-- [ ] Settings hidden.
-- [ ] Settings click instant.
-- [ ] Device Info visible.
-- [ ] MCP visible.
-- [ ] Advanced visible.
-- [ ] Danger Zone visible.
-- [ ] Control return instant.
-- [ ] no network request on tab switch.
-- [ ] realtime values fresh.
+- [x] detail opens.
+- [x] Control active.
+- [x] features visible.
+- [x] Settings hidden.
+- [x] Settings click instant.
+- [x] Device Info visible.
+- [x] MCP visible.
+- [x] Advanced visible.
+- [x] Danger Zone visible.
+- [x] Control return instant.
+- [x] no network request on tab switch.
+- [x] realtime values fresh.
 
 ---
 
@@ -1881,7 +1879,7 @@ Không mix feature renderer changes vào commit tabs.
 # 31. Definition of Done
 
 1. Device Detail có đúng 2 inner tabs.
-2. Header và summary luôn visible.
+2. Identity, connection, and schema status card luôn visible.
 3. Control là default.
 4. Control chỉ chứa feature runtime dashboard.
 5. Settings chứa Device Info/MCP/Advanced/Danger Zone.

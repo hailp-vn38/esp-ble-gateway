@@ -39,8 +39,8 @@ const scanner = {
                         resultsContainer.innerHTML = `
                             <div class="absolute inset-0 flex flex-col items-center justify-center text-gray-500 p-8 text-center bg-gray-50/50">
                                 <i class="ph ph-mask-sad text-4xl mb-3 opacity-50"></i>
-                                <p class="text-sm">No BLE devices found nearby.</p>
-                                <p class="text-xs mt-1">Make sure devices are powered on and in pairing mode.</p>
+                                <p class="text-sm">${i18n.t('scanner.empty_title')}</p>
+                                <p class="text-xs mt-1">${i18n.t('scanner.empty_desc')}</p>
                             </div>
                         `;
                     }
@@ -58,7 +58,7 @@ const scanner = {
             }, 8000);
 
         } catch(e) {
-            ui.showToast(`Failed to start scanner: ${e.message}`, "error");
+            ui.showToast(`${i18n.t('scanner.start_failed')}: ${e.message}`, "error");
             this.stopScan(true);
         }
     },
@@ -138,7 +138,7 @@ const scanner = {
                     <h4 class="font-medium text-gray-900 leading-tight">${safeName}</h4>
                     <div class="flex items-center mt-1 space-x-3 text-xs text-gray-500">
                         <span class="font-mono bg-gray-100 px-1.5 py-0.5 rounded text-[10px]">${safeMac}</span>
-                        <span class="flex items-center" title="Signal Strength">
+                        <span class="flex items-center" title="${i18n.t('scanner.signal_strength')}">
                             <i class="ph ${signalIcon} mr-1"></i>
                             <span class="rssi-val">${device.rssi} dBm</span>
                         </span>
@@ -146,7 +146,7 @@ const scanner = {
                 </div>
             </div>
             <button class="opacity-100 sm:opacity-0 sm:group-hover:opacity-100 transition-opacity px-4 py-1.5 bg-white border border-gray-200 text-brand-600 rounded shadow-sm hover:bg-brand-50 hover:border-brand-200 text-sm font-medium flex items-center">
-                Select <i class="ph ph-arrow-right ml-1"></i>
+                ${i18n.t('scanner.select')} <i class="ph ph-arrow-right ml-1"></i>
             </button>
         `;
         
@@ -175,18 +175,18 @@ const scanner = {
         const radarFill = document.getElementById('scan-radar');
 
         if (state.isScanning) {
-            btnText.innerText = "Stop Scan";
+            btnText.innerText = i18n.t('scanner.stop');
             btnIcon.className = "ph ph-stop-circle mr-2 text-lg text-red-100";
             btn.className = "w-full sm:w-auto px-6 py-2.5 bg-red-500 text-white rounded-lg hover:bg-red-600 transition-colors shadow-sm font-medium flex items-center justify-center";
-            statusText.innerText = "Scanning nearby...";
+            statusText.innerText = i18n.t('scanner.scanning_nearby');
             radarRing.classList.remove('hidden');
             radarFill.classList.remove('hidden');
             radarRing.classList.add('animate-radar');
         } else {
-            btnText.innerText = "Start Scan";
+            btnText.innerText = i18n.t('scanner.start');
             btnIcon.className = "ph ph-play-circle mr-2 text-lg";
             btn.className = "w-full sm:w-auto px-6 py-2.5 bg-brand-600 text-white rounded-lg hover:bg-brand-700 transition-colors shadow-sm font-medium flex items-center justify-center";
-            statusText.innerText = "Ready to scan";
+            statusText.innerText = i18n.t('scanner.ready');
             radarRing.classList.add('hidden');
             radarFill.classList.add('hidden');
             radarRing.classList.remove('animate-radar');

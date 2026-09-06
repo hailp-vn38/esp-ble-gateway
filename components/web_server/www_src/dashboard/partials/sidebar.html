@@ -9,13 +9,13 @@
         <!-- Navigation Links -->
         <nav class="flex-1 px-4 py-6 space-y-2 overflow-y-auto">
             <button onclick="nav.switchTab('devices')" id="nav-devices" class="w-full flex items-center px-4 py-3 text-sm font-medium rounded-lg transition-colors hover:bg-dark-surface hover:text-white text-gray-300">
-                <i class="ph ph-devices text-lg mr-3"></i> My Devices
+                <i class="ph ph-devices text-lg mr-3"></i><span data-i18n="nav.devices">My Devices</span>
             </button>
             <button onclick="nav.switchTab('scanner')" id="nav-scanner" class="w-full flex items-center px-4 py-3 text-sm font-medium rounded-lg transition-colors hover:bg-dark-surface hover:text-white text-gray-300">
-                <i class="ph ph-broadcast text-lg mr-3"></i> Add Device
+                <i class="ph ph-broadcast text-lg mr-3"></i><span data-i18n="nav.add_device">Add Device</span>
             </button>
             <button onclick="nav.switchTab('settings')" id="nav-settings" class="w-full flex items-center px-4 py-3 text-sm font-medium rounded-lg transition-colors hover:bg-dark-surface hover:text-white text-gray-300">
-                <i class="ph ph-gear text-lg mr-3"></i> Gateway Settings
+                <i class="ph ph-gear text-lg mr-3"></i><span data-i18n="nav.settings">Gateway Settings</span>
             </button>
         </nav>
 
@@ -24,7 +24,7 @@
             <div class="flex items-center justify-between text-xs">
                 <span class="flex items-center">
                     <span id="sidebar-status-dot" class="w-2 h-2 rounded-full bg-gray-500 mr-2"></span>
-                    <span id="sidebar-status-text">Checking gateway…</span>
+                    <span id="sidebar-status-text" data-i18n="nav.gateway_checking">Checking gateway…</span>
                 </span>
                 <span id="sidebar-ip" class="text-gray-500 font-mono">0.0.0.0</span>
             </div>

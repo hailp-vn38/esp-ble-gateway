@@ -4,13 +4,13 @@ const ui = {
         state.selectedDeviceForAdd = deviceInfo;
         
         // Populate modal data
-        document.getElementById('modal-dev-name').innerText = deviceInfo.name || 'Unknown Device';
+        document.getElementById('modal-dev-name').innerText = deviceInfo.name || i18n.t('scanner.unknown_device');
         document.getElementById('modal-dev-mac').innerText = deviceInfo.mac;
         document.getElementById('modal-dev-rssi').innerText = deviceInfo.rssi + ' dBm';
         
         // Pre-fill input
         const input = document.getElementById('input-custom-name');
-        input.value = deviceInfo.name !== 'Unknown Device' ? deviceInfo.name : '';
+        input.value = deviceInfo.name || '';
         
         const modal = document.getElementById('modal-add-device');
         const backdrop = document.getElementById('modal-backdrop');

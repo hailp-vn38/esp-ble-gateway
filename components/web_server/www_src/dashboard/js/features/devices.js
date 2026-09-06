@@ -3,6 +3,7 @@ const devices = {
     detailLoadId: 0,
     currentSchemaState: 'unknown',
     currentFeatures: [],
+    currentDetailTab: 'control',
     loadPromise: null,
     _eventsInitialized: false,
     _deviceResyncTimer: null,
@@ -28,6 +29,66 @@ const devices = {
         const decimals = Math.max(0, Number(feature?.decimals) || 0);
         const display = this.rawToDisplay(feature, raw);
         return `${display.toFixed(decimals)}${feature?.unit ? ` ${feature.unit}` : ''}`;
+    },
+
+    _detailTabElements() {
+        return {
+            controlTab: document.getElementById('detail-tab-control'),
+            settingsTab: document.getElementById('detail-tab-settings'),
+            controlPanel: document.getElementById('detail-panel-control'),
+            settingsPanel: document.getElementById('detail-panel-settings')
+        };
+    },
+
+    _updateDetailTabButton(button, active) {
+        button.setAttribute('aria-selected', active ? 'true' : 'false');
+        button.tabIndex = active ? 0 : -1;
+        button.classList.toggle('bg-white', active);
+        button.classList.toggle('shadow-sm', active);
+        button.classList.toggle('text-brand-600', active);
+        button.classList.toggle('text-gray-500', !active);
+        button.classList.toggle('hover:text-gray-700', !active);
+        button.classList.toggle('hover:bg-white', !active);
+    },
+
+    setDetailTab(tab, options = {}) {
+        const normalized = tab === 'settings' ? 'settings' : 'control';
+        const { focus = false } = options;
+
+        const { controlTab, settingsTab, controlPanel, settingsPanel } = this._detailTabElements();
+        if (!controlTab || !settingsTab || !controlPanel || !settingsPanel) return;
+
+        this.currentDetailTab = normalized;
+        const controlActive = normalized === 'control';
+
+        controlPanel.classList.toggle('hidden', !controlActive);
+        settingsPanel.classList.toggle('hidden', controlActive);
+
+        this._updateDetailTabButton(controlTab, controlActive);
+        this._updateDetailTabButton(settingsTab, !controlActive);
+
+        if (focus) {
+            (controlActive ? controlTab : settingsTab).focus();
+        }
+    },
+
+    handleDetailTabKeydown(event) {
+        if (!event) return;
+        if (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight' &&
+            event.key !== 'Home' && event.key !== 'End') {
+            return;
+        }
+        event.preventDefault();
+
+        let next;
+        if (event.key === 'Home') {
+            next = 'control';
+        } else if (event.key === 'End') {
+            next = 'settings';
+        } else {
+            next = this.currentDetailTab === 'control' ? 'settings' : 'control';
+        }
+        this.setDetailTab(next, { focus: true });
     },
 
     _initEvents() {
@@ -328,9 +389,9 @@ const devices = {
             
             // Status indicator color
             const statusStyles = {
-                online: ['bg-green-500', 'bg-green-400', 'Connected'],
-                connecting: ['bg-yellow-500', 'bg-yellow-400', 'Connecting…'],
-                offline: ['bg-gray-400', 'bg-gray-200', 'Offline']
+                online: ['bg-green-500', 'bg-green-400', 'devices.status_online'],
+                connecting: ['bg-yellow-500', 'bg-yellow-400', 'devices.status_connecting'],
+                offline: ['bg-gray-400', 'bg-gray-200', 'devices.status_offline']
             };
             const st = statusStyles[dev.status] || statusStyles.offline;
             const safeName = escapeHtml(dev.customName);
@@ -360,7 +421,7 @@ const devices = {
                     <div class="flex justify-between items-center text-sm">
                         <span class="flex items-center text-gray-600">
                             <span class="w-2 h-2 rounded-full ${st[0]} mr-2"></span>
-                            ${st[2]}
+                            ${i18n.t(st[2])}
                         </span>
                     </div>
                 </div>
@@ -372,6 +433,7 @@ const devices = {
     openDetailView(dev, updateRoute = true) {
         state.selectedDeviceDetail = dev;
         this.currentFeatures = [];
+        this.currentDetailTab = 'control';
         document.getElementById('device-advanced-section').open = false;
         this.renderDeviceHeader(dev);
 
@@ -395,6 +457,7 @@ const devices = {
 
         i18n.applyTranslations();
         nav.switchTab('device-detail', updateRoute);
+        this.setDetailTab('control');
         void this._reloadDetailCoalesced('open');
     },
 
@@ -429,7 +492,6 @@ const devices = {
         const s = styles[status] || styles.offline;
         const markup = `<span class="w-2.5 h-2.5 rounded-full ${s[0]} mr-2"></span><span class="${s[1]}">${i18n.t(s[2])}</span>`;
         document.getElementById('detail-status').innerHTML = markup;
-        document.getElementById('detail-summary-connection').innerHTML = markup;
     },
 
     renderSchemaState(schemaState) {
@@ -691,14 +753,14 @@ const devices = {
         const btn = document.getElementById('btn-confirm-add');
         
         if(!nameInput) {
-            ui.showToast("Please enter a custom name.", "error");
+            ui.showToast(i18n.t('devices.name_required'), "error");
             document.getElementById('input-custom-name').focus();
             return;
         }
 
         // UI Loading state
         const originalHtml = btn.innerHTML;
-        btn.innerHTML = `<i class="ph ph-spinner animate-spin mr-1.5 text-lg"></i> Provisioning...`;
+        btn.innerHTML = `<i class="ph ph-spinner animate-spin mr-1.5 text-lg"></i> ${i18n.t('devices.provisioning')}`;
         btn.disabled = true;
         btn.classList.add('opacity-80', 'cursor-not-allowed');
 
@@ -712,7 +774,7 @@ const devices = {
         };
 
         try {
-            ui.showToast(`Adding ${newDevice.customName}...`, "info");
+            ui.showToast(i18n.t('devices.adding').replace('{name}', newDevice.customName), "info");
 
             // NimBLE cannot start a connection while discovery is active.
             if (state.isScanning) await scanner.stopScan();
@@ -723,7 +785,7 @@ const devices = {
             // Remove from scan results
             state.scannedDevices = state.scannedDevices.filter(d => d.mac !== newDevice.mac);
             
-            ui.showToast(`Device saved. Connecting...`, "success");
+            ui.showToast(i18n.t('devices.saved_connecting'), "success");
             
             ui.closeModal();
             
@@ -743,7 +805,7 @@ const devices = {
             }
 
         } catch(e) {
-            ui.showToast(`Failed to add device: ${e.message}`, "error");
+            ui.showToast(`${i18n.t('devices.add_failed')}: ${e.message}`, "error");
         } finally {
             // Reset button state
             btn.innerHTML = originalHtml;

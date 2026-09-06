@@ -28,6 +28,14 @@ const settings = {
         return `${(value / 1024).toFixed(1)} KB`;
     },
 
+    renderSidebarStatus(online) {
+        document.getElementById('sidebar-status-text').textContent = i18n.t(
+            online ? 'nav.gateway_online' : 'nav.gateway_offline');
+        document.getElementById('sidebar-status-dot').className = online
+            ? 'w-2 h-2 rounded-full bg-green-500 mr-2 animate-pulse'
+            : 'w-2 h-2 rounded-full bg-red-500 mr-2';
+    },
+
     async load() {
         const langSelector = document.getElementById('lang-selector');
         if (langSelector) langSelector.value = i18n.currentLang;
@@ -60,9 +68,7 @@ const settings = {
             document.getElementById('set-mac').textContent =
                 this.networkState.mac || '00:00:00:00:00:00';
             document.getElementById('sidebar-ip').textContent = this.networkState.ip || '0.0.0.0';
-            document.getElementById('sidebar-status-text').textContent = 'Gateway Online';
-            document.getElementById('sidebar-status-dot').className =
-                'w-2 h-2 rounded-full bg-green-500 mr-2 animate-pulse';
+            this.renderSidebarStatus(true);
 
             this.mcpState = data.mcp || this.mcpState;
             this.xiaozhiState = data.xiaozhi || this.xiaozhiState;
@@ -71,9 +77,7 @@ const settings = {
             this.renderMcpTokenStatus();
             this.renderXiaozhiStatus();
         } catch (e) {
-            document.getElementById('sidebar-status-text').textContent = 'Gateway Offline';
-            document.getElementById('sidebar-status-dot').className =
-                'w-2 h-2 rounded-full bg-red-500 mr-2';
+            this.renderSidebarStatus(false);
             this.networkState = { connected: false };
             this.renderNetworkStatus();
             document.getElementById('mcp-auth-text').textContent =

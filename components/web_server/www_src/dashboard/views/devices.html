@@ -2,11 +2,11 @@
             <section id="view-devices" class="max-w-6xl mx-auto hidden pb-20">
                 <div class="flex flex-col sm:flex-row sm:items-center justify-between mb-8 gap-4">
                     <div>
-                        <h2 class="text-2xl font-bold text-gray-900">Managed Devices</h2>
-                        <p class="text-gray-500 text-sm mt-1">Manage BLE devices saved on this gateway.</p>
+                        <h2 data-i18n="devices.title" class="text-2xl font-bold text-gray-900">Managed Devices</h2>
+                        <p data-i18n="devices.subtitle" class="text-gray-500 text-sm mt-1">Manage BLE devices saved on this gateway.</p>
                     </div>
                     <button onclick="nav.switchTab('scanner')" class="inline-flex items-center justify-center px-4 py-2 bg-brand-600 text-white rounded-lg hover:bg-brand-700 transition-colors shadow-sm text-sm font-medium">
-                        <i class="ph ph-plus mr-2"></i> Add New Device
+                        <i class="ph ph-plus mr-2"></i><span data-i18n="devices.add_new">Add New Device</span>
                     </button>
                 </div>
 
@@ -15,10 +15,10 @@
                     <div class="w-16 h-16 bg-gray-100 rounded-full flex items-center justify-center mb-4 text-gray-400">
                         <i class="ph ph-plugs text-3xl"></i>
                     </div>
-                    <h3 class="text-lg font-semibold text-gray-900 mb-2">No devices configured</h3>
-                    <p class="text-gray-500 mb-6 max-w-sm">Scan your surroundings to find BLE devices and add them to your gateway network.</p>
+                    <h3 data-i18n="devices.empty_title" class="text-lg font-semibold text-gray-900 mb-2">No devices configured</h3>
+                    <p data-i18n="devices.empty_desc" class="text-gray-500 mb-6 max-w-sm">Scan your surroundings to find BLE devices and add them to your gateway network.</p>
                     <button onclick="nav.switchTab('scanner')" class="px-5 py-2.5 bg-white border border-gray-300 text-gray-700 font-medium rounded-lg hover:bg-gray-50 transition-colors shadow-sm">
-                        Go to Scanner
+                        <span data-i18n="devices.go_to_scanner">Go to Scanner</span>
                     </button>
                 </div>
 

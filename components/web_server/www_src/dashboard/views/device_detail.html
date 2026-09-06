@@ -4,7 +4,7 @@
                     <button onclick="nav.switchTab('devices')" class="flex items-center text-gray-500 hover:text-brand-600 transition-colors mb-4 text-sm font-medium">
                         <i class="ph ph-arrow-left mr-2"></i><span data-i18n="device_detail.back">Back to Devices</span>
                     </button>
-                    <div id="detail-header" class="flex flex-col sm:flex-row sm:items-center justify-between gap-6 bg-white p-6 rounded-xl border border-gray-200 shadow-sm">
+                    <div id="detail-header" class="flex flex-col sm:flex-row sm:items-center justify-between gap-4 bg-white p-5 rounded-xl border border-gray-200 shadow-sm">
                         <div class="flex items-center min-w-0">
                             <div id="detail-icon" class="w-12 h-12 rounded-lg flex items-center justify-center mr-4 text-2xl flex-shrink-0"></div>
                             <div class="min-w-0">
@@ -12,18 +12,34 @@
                                 <p class="text-gray-500 text-sm mt-1 min-w-0"><span id="detail-mac" class="font-mono break-all">00:00:00:00:00:00</span></p>
                             </div>
                         </div>
-                        <div class="flex flex-col items-stretch sm:items-end gap-3 flex-shrink-0">
-                            <span id="detail-status" class="inline-flex items-center justify-center sm:justify-end text-sm font-semibold"></span>
+                        <div class="flex flex-col items-stretch gap-3 sm:flex-row sm:items-center flex-shrink-0">
+                            <div class="flex items-center justify-between gap-4 sm:justify-end">
+                                <div class="text-left sm:text-right">
+                                    <p data-i18n="device_detail.connection" class="text-xs font-semibold uppercase tracking-wide text-gray-500">Connection</p>
+                                    <div id="detail-status" class="mt-1 inline-flex items-center text-sm font-semibold"></div>
+                                </div>
+                                <div class="border-l border-gray-200 pl-4 text-left sm:text-right">
+                                    <p data-i18n="device_detail.features" class="text-xs font-semibold uppercase tracking-wide text-gray-500">Features</p>
+                                    <div id="detail-summary-schema" class="mt-1 text-sm font-semibold"></div>
+                                </div>
+                            </div>
                             <button onclick="ui.openEditModal()" class="w-full sm:w-auto px-4 py-2 bg-white border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 transition-colors shadow-sm text-sm font-medium flex items-center justify-center"><i class="ph ph-pencil-simple mr-2"></i><span data-i18n="device_detail.edit">Edit</span></button>
                         </div>
                     </div>
                 </div>
 
-                <div id="detail-summary" class="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                    <div class="bg-white p-4 rounded-xl border border-gray-200 shadow-sm"><p data-i18n="device_detail.connection" class="text-xs font-semibold uppercase tracking-wide text-gray-500">Connection</p><div id="detail-summary-connection" class="mt-2 text-sm font-semibold"></div></div>
-                    <div class="bg-white p-4 rounded-xl border border-gray-200 shadow-sm"><p data-i18n="device_detail.features" class="text-xs font-semibold uppercase tracking-wide text-gray-500">Features</p><div id="detail-summary-schema" class="mt-2 text-sm font-semibold"></div></div>
+                <!-- Inner tabs -->
+                <div id="device-detail-tabs" class="inline-flex rounded-lg bg-gray-100 p-1 shadow-sm" role="tablist">
+                    <button id="detail-tab-control" type="button" role="tab" aria-selected="true" aria-controls="detail-panel-control" tabindex="0" onclick="devices.setDetailTab('control')" onkeydown="devices.handleDetailTabKeydown(event)" class="inline-flex items-center justify-center rounded-md bg-white px-4 py-2 text-sm font-semibold text-brand-600 shadow-sm transition-all focus:outline-none focus:ring-2 focus:ring-brand-500">
+                        <i class="ph ph-sliders-horizontal mr-1.5 text-base"></i><span data-i18n="device_detail.tab_control">Control</span>
+                    </button>
+                    <button id="detail-tab-settings" type="button" role="tab" aria-selected="false" aria-controls="detail-panel-settings" tabindex="-1" onclick="devices.setDetailTab('settings')" onkeydown="devices.handleDetailTabKeydown(event)" class="inline-flex items-center justify-center rounded-md px-4 py-2 text-sm font-semibold text-gray-500 transition-all hover:bg-white hover:text-gray-700 focus:outline-none focus:ring-2 focus:ring-brand-500">
+                        <i class="ph ph-gear-six mr-1.5 text-base"></i><span data-i18n="device_detail.tab_settings">Settings</span>
+                    </button>
                 </div>
 
+                <!-- Control panel -->
+                <div id="detail-panel-control" role="tabpanel" aria-labelledby="detail-tab-control" class="space-y-6">
                 <section id="device-controls-card" class="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
                     <div class="flex flex-col sm:flex-row sm:items-start justify-between gap-4 p-5 border-b border-gray-100">
                         <div><h3 data-i18n="device_detail.features" class="font-semibold text-gray-900">Features</h3><p data-i18n="device_detail.features_desc" class="text-xs text-gray-500 mt-1">Semantic features detected from this device's schema.</p></div>
@@ -35,11 +51,10 @@
                         <div id="feature-status" class="sr-only" role="status" aria-live="polite"></div>
                     </div>
                 </section>
+                </div><!-- /detail-panel-control -->
 
-                <section id="mcp-control-card" class="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
-                    <div class="p-5 border-b border-gray-100"><div><h3 data-i18n="device_detail.mcp_tools" class="font-semibold text-gray-900">AI / MCP Control</h3><p data-i18n="device_detail.mcp_tools_desc" class="text-xs text-gray-500 mt-1">Choose which device features AI clients may control.</p></div></div>
-                    <div id="mcp-feature-controls" class="divide-y divide-gray-100" aria-live="polite"><div data-i18n="device_detail.mcp_loading" class="p-5 text-sm text-gray-400">Loading MCP controls…</div></div>
-                </section>
+                <!-- Settings panel -->
+                <div id="detail-panel-settings" role="tabpanel" aria-labelledby="detail-tab-settings" class="hidden space-y-6">
 
                 <section id="device-info-card" class="bg-white p-5 rounded-xl border border-gray-200 shadow-sm">
                     <div class="mb-4 border-b border-gray-100 pb-3"><h3 data-i18n="device_detail.info" class="font-semibold text-gray-900">Device Information</h3><p data-i18n="device_detail.info_desc" class="text-xs text-gray-500 mt-1">Identity and BLE metadata</p></div>
@@ -50,6 +65,10 @@
                     </dl>
                 </section>
 
+                <section id="mcp-control-card" class="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
+                    <div class="p-5 border-b border-gray-100"><div><h3 data-i18n="device_detail.mcp_tools" class="font-semibold text-gray-900">AI / MCP Control</h3><p data-i18n="device_detail.mcp_tools_desc" class="text-xs text-gray-500 mt-1">Choose which device features AI clients may control.</p></div></div>
+                    <div id="mcp-feature-controls" class="divide-y divide-gray-100" aria-live="polite"><div data-i18n="device_detail.mcp_loading" class="p-5 text-sm text-gray-400">Loading MCP controls…</div></div>
+                </section>
                 <details id="device-advanced-section" class="group bg-white rounded-xl border border-gray-200 shadow-sm">
                     <summary class="flex items-center p-5 cursor-pointer list-none text-sm font-semibold text-gray-800 hover:text-brand-600"><i class="ph ph-caret-right mr-2 transition-transform group-open:rotate-90"></i><span data-i18n="device_detail.advanced">Advanced Tools</span></summary>
                     <div class="border-t border-gray-100 p-5">
@@ -64,7 +83,8 @@
                 </details>
 
                 <section id="device-management-card" class="bg-white p-5 rounded-xl border border-red-100 shadow-sm">
-                    <h3 data-i18n="device_detail.management" class="font-semibold text-gray-900">Device Management</h3>
+                    <h3 data-i18n="device_detail.danger_zone" class="font-semibold text-gray-900">Danger Zone</h3>
                     <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mt-4"><div><p data-i18n="device_detail.remove_title" class="text-sm font-medium text-gray-800">Remove this device from the gateway</p><p data-i18n="device_detail.remove_desc" class="text-xs text-gray-500 mt-1">The gateway will remove its configuration and stop reconnecting automatically.</p></div><button onclick="devices.confirmDeleteDetail()" class="w-full sm:w-auto px-4 py-2 bg-white border border-red-200 text-red-600 rounded-lg hover:bg-red-50 transition-colors text-sm font-medium flex items-center justify-center flex-shrink-0"><i class="ph ph-trash mr-2"></i><span data-i18n="device_detail.remove">Remove device</span></button></div>
                 </section>
-            </section>
+                            </div><!-- /detail-panel-settings -->
+</section>
