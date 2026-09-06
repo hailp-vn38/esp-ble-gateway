@@ -3,6 +3,7 @@
 #include <string.h>
 
 #include "device_schema.h"
+#include "gw_settings_view.h"
 
 void dcs_build_wire_message(const device_command_request_t *request,
                             uint32_t request_id, gw_message_t *message)
@@ -80,6 +81,14 @@ device_command_status_t dcs_validate_request(const device_command_request_t *req
         if (!request->has_feature_id || request->feature_id[0] == '\0' ||
             !request->has_property_id) {
             return DEVICE_CMD_STATUS_INVALID_ARGUMENT;
+        }
+        break;
+    case DEVICE_CMD_ORIGIN_SETTINGS:
+        if (strcmp(request->command, GW_SETTINGS_CMD_SET_SETTINGS) != 0 &&
+            strcmp(request->command, GW_SETTINGS_CMD_COMMIT_SETTINGS) != 0 &&
+            strcmp(request->command, GW_SETTINGS_CMD_DESCRIBE_SETTINGS) != 0 &&
+            strcmp(request->command, GW_SETTINGS_CMD_GET_SETTINGS) != 0) {
+            return DEVICE_CMD_STATUS_UNSUPPORTED_COMMAND;
         }
         break;
     default:

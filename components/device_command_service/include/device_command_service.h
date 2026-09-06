@@ -14,6 +14,7 @@ typedef enum {
     DEVICE_CMD_ORIGIN_CONTROL = 0,
     DEVICE_CMD_ORIGIN_SCHEMA_DISCOVERY,
     DEVICE_CMD_ORIGIN_STATE_READ,
+    DEVICE_CMD_ORIGIN_SETTINGS,
 } device_command_origin_t;
 
 /* ── Typed request ───────────────────────────────────────────────────── */

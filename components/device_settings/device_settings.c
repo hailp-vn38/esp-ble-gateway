@@ -265,4 +265,8 @@ void device_settings_reset_for_test(void)
     if (s_mutex != NULL) {
         xSemaphoreGive(s_mutex);
     }
+
+    /* Also reset transaction state. */
+    extern void ds_tx_reset_for_test(void);
+    ds_tx_reset_for_test();
 }

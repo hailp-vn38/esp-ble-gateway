@@ -74,7 +74,86 @@ typedef enum {
     DS_OP_RESULT_PROTOCOL_ERROR,
     DS_OP_RESULT_MEMORY_ERROR,
     DS_OP_RESULT_INTERNAL,
+    DS_OP_RESULT_CONFLICT,
+    DS_OP_RESULT_REJECTED,
+    DS_OP_RESULT_FAILED,
 } ds_op_result_t;
+
+/* ── Transaction change request ───────────────────────────────────────
+ * One setting value change.  Deep-copied into PSRAM on save(). */
+
+typedef struct {
+    char     setting_id[GW_SETTINGS_CBOR_MAX_ID_LEN];
+    uint8_t  type;       /* DS_TYPE_* */
+    union {
+        bool    bool_val;
+        int32_t int_val;
+        float   float_val;
+        int32_t enum_val;
+        struct {
+            char str[128];
+        } string_val;
+    };
+} ds_change_request_t;
+
+/* ── Transaction states ────────────────────────────────────────────── */
+
+typedef enum {
+    DS_TX_IDLE = 0,
+    DS_TX_PREVALIDATING,
+    DS_TX_BEGIN_SENT,
+    DS_TX_SET_SENT,
+    DS_TX_COMMIT_SENT,
+    DS_TX_SUCCEEDED,
+    DS_TX_FAILED,
+    DS_TX_CONFLICT,
+    DS_TX_CANCELLED,
+} ds_tx_state_t;
+
+/* ── Transaction result ─────────────────────────────────────────────── */
+
+typedef enum {
+    DS_TX_RESULT_OK = 0,
+    DS_TX_RESULT_BUSY,
+    DS_TX_RESULT_VALIDATION_FAILED,
+    DS_TX_RESULT_MEMORY_ERROR,
+    DS_TX_RESULT_DEVICE_CONFLICT,
+    DS_TX_RESULT_DEVICE_REJECTED,
+    DS_TX_RESULT_TIMEOUT,
+    DS_TX_RESULT_DISCONNECTED,
+    DS_TX_RESULT_CANCELLED,
+    DS_TX_RESULT_INTERNAL,
+} ds_tx_result_t;
+
+/* ── Transaction completion callback ────────────────────────────────── */
+
+typedef void (*ds_tx_completion_fn)(ds_tx_result_t result, void *context);
+
+/* ── Transaction object (internal) ────────────────────────────────────
+ * One per device.  All variable data lives in PSRAM. */
+
+#define DS_TX_MAX_CHANGES  16
+
+typedef struct {
+    bool                active;
+    char                device_id[32];
+    ds_tx_state_t       state;
+
+    /* Changes — PSRAM-allocated array, deep-copied from caller. */
+    ds_change_request_t *changes;
+    uint16_t            change_count;
+    uint16_t            next_change_index;
+
+    /* Expected config revision from caller's snapshot. */
+    uint32_t            expected_config_rev;
+
+    /* New revision from device COMMIT ACK. */
+    uint32_t            new_config_rev;
+
+    /* Completion. */
+    ds_tx_completion_fn completion;
+    void               *context;
+} ds_transaction_t;
 
 /* ── Compact setting descriptor ──────────────────────────────────────
  * All string fields are uint16_t offsets into the schema's string pool.
@@ -253,6 +332,26 @@ esp_err_t device_settings_get(const char *device_id,
                               ds_op_completion_fn completion,
                               void *context);
 esp_err_t device_settings_cancel(const char *device_id);
+
+/* ── Transaction API (G3) ────────────────────────────────────────────
+ * Orchestrates BEGIN → SET → COMMIT for atomic settings update.
+ * Changes are deep-copied into PSRAM; caller retains ownership. */
+
+esp_err_t device_settings_save(const char *device_id,
+                               const ds_change_request_t *changes,
+                               uint16_t change_count,
+                               uint32_t expected_config_rev,
+                               ds_tx_completion_fn completion,
+                               void *context);
+
+esp_err_t device_settings_tx_cancel(const char *device_id);
+
+/* ── Transaction internals (exposed for testing) ─────────────────── */
+
+ds_transaction_t *ds_tx_find(const char *device_id);
+ds_transaction_t *ds_tx_alloc(void);
+void ds_tx_free(ds_transaction_t *tx);
+void ds_tx_reset_for_test(void);
 
 /* ── Query API ─────────────────────────────────────────────────────── */
 

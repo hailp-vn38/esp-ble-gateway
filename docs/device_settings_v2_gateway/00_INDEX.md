@@ -38,7 +38,7 @@ Device implementation details không nằm trong bộ này; gateway chỉ dựa 
 | G0 | `GATEWAY_PHASE_0_PROTOCOL_ALIGNMENT.md` | ✅ DONE (2026-09-06) |
 | G1 | `GATEWAY_PHASE_1_SETTINGS_CORE_MEMORY_MODEL.md` | ✅ DONE (2026-09-06) |
 | G2 | `GATEWAY_PHASE_2_BLE_DISCOVERY_SNAPSHOTS.md` | ✅ DONE (2026-09-06) |
-| G3 | `GATEWAY_PHASE_3_TRANSACTION_SERVICE.md` | atomic update orchestration pass |
+| G3 | `GATEWAY_PHASE_3_TRANSACTION_SERVICE.md` | ✅ DONE (2026-09-06) |
 | G4 | `GATEWAY_PHASE_4_REBOOT_RECONCILIATION.md` | ACK-loss/reconnect pass |
 | G5 | `GATEWAY_PHASE_5_WEB_API.md` | REST/WS deterministic + secret-safe |
 | G6 | `GATEWAY_PHASE_6_DEVICE_DETAIL_UI.md` | generic UI E2E pass |

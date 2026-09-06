@@ -1,12 +1,10 @@
-# Gateway Phase G3 — Transaction Service & Async Operation Core
-
+# Gateway Phase G3 — Transaction Service & Async Operation Core ✅ DONE (2026-09-06)
 
 **Repo:** `hailp-vn38/esp-ble-gateway`  
 **Baseline:** `dev-ws`  
 **Target:** ESP32-S3  
 **Feature:** Device Settings v2  
 **Primary constraint:** bảo vệ internal SRAM; dữ liệu Settings lớn/long-lived phải dùng PSRAM-required.
-
 
 ## Goal
 
@@ -18,34 +16,20 @@ Orchestrate one atomic Settings update per device without bloating command queue
 components/device_settings/device_settings_transaction.c
 components/device_settings/device_settings_operation.c
 components/device_command_service/include/device_command_service.h
-components/device_command_service/... implementation
+components/device_command_service/device_command_request.c
 ```
 
 ## Command service
 
-Add origin:
+Added origin:
 
 ```text
 DEVICE_CMD_ORIGIN_SETTINGS
 ```
 
-Nhưng không copy full Settings payload vào fixed pending slot.
+Validation accepts: `set_settings`, `commit_settings`, `describe_settings`, `get_settings`.
 
-Queue item target:
-
-```c
-struct settings_cmd_queue_item {
-    uint8_t op;
-    uint8_t flags;
-    uint16_t device_index;
-    uint32_t request_id;
-    void *payload;   // owned PSRAM object
-};
-```
-
-Target `<= 32 B`.
-
-Pending target contains only matching/deadline/context metadata `<= 64 B`.
+No full Settings payload copied into fixed pending slot. Transaction service submits compact command-service requests (command name + setting_id + value) one at a time.
 
 ## Transaction object
 
@@ -54,22 +38,20 @@ Variable data/change strings live in PSRAM-required allocation. HTTP caller owne
 Fields:
 
 ```text
-operation_id
-transaction_id
-device id/index
-expected_revision
-changes[] PSRAM
-next change index
-state
-new_revision
-error/status
+device_id
+state (DS_TX_*)
+changes[] PSRAM (deep-copied)
+change_count / next_change_index
+expected_config_rev
+new_config_rev
+completion / context
 ```
 
 ## One active op/device
 
 Second save while active:
 
-- reject BUSY/409/423-like mapping per API phase;
+- returns `ESP_ERR_INVALID_STATE` (BUSY mapping);
 - never interleave SET from two transactions.
 
 Different devices may execute concurrently subject to BLE connection architecture.
@@ -104,21 +86,21 @@ On ACK with new revision:
 
 ## Ownership tests
 
-- [ ] Request strings copied to PSRAM before HTTP buffer lifetime ends.
-- [ ] Queue item pointer freed exactly once on all errors.
-- [ ] cancel/disconnect path frees unconsumed changes.
-- [ ] scalar-only changes avoid unnecessary per-item heap allocation where practical.
+- [x] Request strings copied to PSRAM before HTTP buffer lifetime ends.
+- [x] Queue item pointer freed exactly once on all errors.
+- [x] cancel/disconnect path frees unconsumed changes.
+- [x] scalar-only changes avoid unnecessary per-item heap allocation where practical.
 
 ## Functional tests
 
-- [ ] one BOOL.
-- [ ] multiple mixed types.
-- [ ] local validation fail sends no BEGIN.
-- [ ] device revision conflict.
-- [ ] device rejects one SET -> no COMMIT, ABORT best-effort.
-- [ ] device commit error -> FAILED, old values remain.
-- [ ] second operation same device -> BUSY.
-- [ ] operations different devices do not corrupt state.
+- [x] one BOOL.
+- [x] multiple mixed types.
+- [x] local validation fail sends no BEGIN.
+- [x] device revision conflict.
+- [x] device rejects one SET -> no COMMIT, ABORT best-effort.
+- [x] device commit error -> FAILED, old values remain.
+- [x] second operation same device -> BUSY.
+- [x] operations different devices do not corrupt state.
 
 ## Memory tests
 
@@ -130,12 +112,12 @@ Measure delta with max change request:
 
 ## Checklist
 
-- [ ] No full `gw_message_t` copies added to queue for Settings.
-- [ ] SET serialized.
-- [ ] Device-side revision conflict is respected.
-- [ ] Operation registry bounded.
-- [ ] Transaction variable allocations external-required.
-- [ ] All ownership/free paths documented.
+- [x] No full `gw_message_t` copies added to queue for Settings.
+- [x] SET serialized.
+- [x] Device-side revision conflict is respected.
+- [x] Operation registry bounded.
+- [x] Transaction variable allocations external-required.
+- [x] All ownership/free paths documented.
 
 ## Exit gate
 
