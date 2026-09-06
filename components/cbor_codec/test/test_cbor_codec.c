@@ -206,6 +206,86 @@ TEST_CASE("CBOR v4 preserves semantic feature fields", "[cbor_codec]")
     TEST_ASSERT_EQUAL_INT32(-12000, decoded.feature_value_int);
 }
 
+TEST_CASE("CBOR v4 accepts feature items without v2 decimals", "[cbor_codec]")
+{
+    const gw_message_t old_feature = {
+        .protocol_version = GW_PROTOCOL_VERSION,
+        .type = "feature_item",
+        .command = "describe_capabilities",
+        .int_value = 0,
+        .bool_value = 0,
+        .feature_id = "legacy_level",
+        .has_feature_id = 1,
+        .feature_type = GW_FEATURE_DIMMABLE_LIGHT,
+        .has_feature_type = 1,
+        .property_id = GW_PROP_LEVEL,
+        .has_property_id = 1,
+        .value_type = 2,
+        .has_value_type = 1,
+    };
+    uint8_t encoded[GW_MSG_MAX_LEN];
+    int length = cbor_codec_encode(&old_feature, encoded, sizeof(encoded));
+    TEST_ASSERT_GREATER_THAN(0, length);
+
+    gw_message_t decoded;
+    TEST_ASSERT_EQUAL_INT(0, cbor_codec_decode(encoded, length, &decoded));
+    TEST_ASSERT_FALSE(decoded.has_feature_decimals);
+    TEST_ASSERT_EQUAL_UINT8(0, decoded.feature_decimals);
+    TEST_ASSERT_EQUAL_UINT8(GW_FEATURE_DIMMABLE_LIGHT, decoded.feature_type);
+    TEST_ASSERT_EQUAL_UINT8(GW_PROP_LEVEL, decoded.property_id);
+}
+
+TEST_CASE("CBOR v4 roundtrips generic value feature metadata", "[cbor_codec]")
+{
+    const gw_message_t generic_feature = {
+        .protocol_version = GW_PROTOCOL_VERSION,
+        .type = "feature_item",
+        .command = "describe_capabilities",
+        .int_value = 0,
+        .bool_value = 0,
+        .feature_id = "dryer_temperature",
+        .has_feature_id = 1,
+        .feature_type = GW_FEATURE_GENERIC_VALUE,
+        .has_feature_type = 1,
+        .property_id = GW_PROP_VALUE,
+        .has_property_id = 1,
+        .value_type = 2,
+        .has_value_type = 1,
+        .capability_label = "Dryer temperature",
+        .capability_unit = "C",
+        .feature_decimals = 1,
+        .has_feature_decimals = 1,
+    };
+    uint8_t encoded[GW_MSG_MAX_LEN];
+    int length = cbor_codec_encode(&generic_feature, encoded, sizeof(encoded));
+    TEST_ASSERT_GREATER_THAN(0, length);
+
+    gw_message_t decoded;
+    TEST_ASSERT_EQUAL_INT(0, cbor_codec_decode(encoded, length, &decoded));
+    TEST_ASSERT_EQUAL_UINT8(GW_FEATURE_GENERIC_VALUE, decoded.feature_type);
+    TEST_ASSERT_EQUAL_UINT8(GW_PROP_VALUE, decoded.property_id);
+    TEST_ASSERT_EQUAL_UINT8(2, decoded.value_type);
+    TEST_ASSERT_TRUE(decoded.has_feature_decimals);
+    TEST_ASSERT_EQUAL_UINT8(1, decoded.feature_decimals);
+    TEST_ASSERT_EQUAL_STRING("Dryer temperature", decoded.capability_label);
+    TEST_ASSERT_EQUAL_STRING("C", decoded.capability_unit);
+}
+
+TEST_CASE("CBOR decoder tolerates unknown future keys", "[cbor_codec]")
+{
+    // {0:4, 1:"t", 3:"c", 4:0, 5:false, 32:0}. Key 32 is intentionally
+    // unassigned; targeted lookups must leave it untouched.
+    static const uint8_t WITH_UNKNOWN_KEY[] = {
+        0xA6, 0x00, 0x04, 0x01, 0x61, 't', 0x03, 0x61, 'c',
+        0x04, 0x00, 0x05, 0xF4, 0x18, 0x20, 0x00,
+    };
+    gw_message_t decoded;
+    TEST_ASSERT_EQUAL_INT(0, cbor_codec_decode(WITH_UNKNOWN_KEY,
+                                               sizeof(WITH_UNKNOWN_KEY),
+                                               &decoded));
+    TEST_ASSERT_EQUAL_UINT8(GW_PROTOCOL_VERSION, decoded.protocol_version);
+}
+
 TEST_CASE("CBOR decoder ignores reserved key 7", "[cbor_codec]")
 {
     // {0:4, 1:"t", 3:"c", 4:0, 5:false, 7:"legacy"} — key 7 carries a
