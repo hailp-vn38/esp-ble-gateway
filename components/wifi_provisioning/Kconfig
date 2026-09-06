@@ -32,4 +32,42 @@ config WIFI_PROV_CAPTIVE_DHCP_OPTION_114
     bool "Advertise captive portal URI using DHCP option 114"
     default y
 
+config WIFI_PROV_DEV_DEFAULT_ENABLED
+    bool "Enable development default Wi-Fi fallback"
+    default n
+    help
+        Development-only Wi-Fi fallback.
+
+        When enabled and no valid Wi-Fi credential exists in NVS,
+        the gateway tries WIFI_PROV_DEV_DEFAULT_SSID and
+        WIFI_PROV_DEV_DEFAULT_PASSWORD before starting the
+        provisioning captive portal.
+
+        NVS credentials always have higher priority.
+
+        Do not enable this option in production firmware because
+        credentials are embedded in the firmware image.
+
+if WIFI_PROV_DEV_DEFAULT_ENABLED
+
+config WIFI_PROV_DEV_DEFAULT_SSID
+    string "Development default Wi-Fi SSID"
+    default ""
+    help
+        Development Wi-Fi SSID.
+
+        Maximum Wi-Fi SSID length is 32 bytes.
+
+config WIFI_PROV_DEV_DEFAULT_PASSWORD
+    string "Development default Wi-Fi password"
+    default ""
+    help
+        Development Wi-Fi password.
+
+        The value is compiled into the firmware image.
+        Keep real credentials in sdkconfig.defaults.local and
+        never commit that file to source control.
+
+endif
+
 endmenu

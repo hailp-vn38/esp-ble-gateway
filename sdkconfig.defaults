@@ -64,6 +64,10 @@ CONFIG_BOOTLOADER_APP_ROLLBACK_ENABLE=y
 # ==== Wi-Fi ====
 CONFIG_ESP_WIFI_SOFTAP_SUPPORT=y
 
+# Development Wi-Fi fallback.
+# Keep disabled in committed production defaults.
+CONFIG_WIFI_PROV_DEV_DEFAULT_ENABLED=n
+
 # ==== HTTP server ====
 # WebSocket support: adds is_websocket/handle_ws_control_frames to httpd_uri_t.
 # Required for /ws/events realtime event stream.
@@ -82,7 +86,9 @@ CONFIG_MBEDTLS_CERTIFICATE_BUNDLE_DEFAULT_FULL=y
 CONFIG_MBEDTLS_EXTERNAL_MEM_ALLOC=y
 
 # ==== MCP endpoint ====
-CONFIG_MCP_HOST_ALLOWLIST="gateway.local,192.168.4.1,192.168.1.114"
+# Bearer token is the MCP access-control gate.  Leave the Host allowlist empty
+# so DHCP/mDNS address changes do not reject otherwise authenticated clients.
+CONFIG_MCP_HOST_ALLOWLIST=""
 
 # ==== Web admin auth ====
 CONFIG_WEB_ADMIN_AUTH_TOKEN="gw-admin-token-2026"

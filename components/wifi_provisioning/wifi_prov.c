@@ -65,6 +65,12 @@ static void *s_state_observer_context;
 
 static char s_ap_ssid[33];
 
+typedef enum {
+    WIFI_CREDENTIAL_SOURCE_NONE = 0,
+    WIFI_CREDENTIAL_SOURCE_NVS,
+    WIFI_CREDENTIAL_SOURCE_DEV_DEFAULT,
+} wifi_credential_source_t;
+
 /* ------------------------------------------------------------------ */
 /* State helpers                                                       */
 /* ------------------------------------------------------------------ */
@@ -194,6 +200,58 @@ esp_err_t wifi_prov_clear_credentials(void)
 }
 
 /* ------------------------------------------------------------------ */
+/* Boot credential helpers                                             */
+/* ------------------------------------------------------------------ */
+
+static bool load_dev_default_credentials(char *ssid, size_t ssid_len,
+                                         char *password,
+                                         size_t password_len)
+{
+#if CONFIG_WIFI_PROV_DEV_DEFAULT_ENABLED
+    const char *dev_ssid = CONFIG_WIFI_PROV_DEV_DEFAULT_SSID;
+    const char *dev_password = CONFIG_WIFI_PROV_DEV_DEFAULT_PASSWORD;
+
+    if (dev_ssid[0] == '\0') {
+        return false;
+    }
+
+    strlcpy(ssid, dev_ssid, ssid_len);
+    strlcpy(password, dev_password, password_len);
+    return true;
+#else
+    (void)ssid;
+    (void)ssid_len;
+    (void)password;
+    (void)password_len;
+    return false;
+#endif
+}
+
+static wifi_credential_source_t resolve_boot_credentials(
+    char *ssid,
+    size_t ssid_len,
+    char *password,
+    size_t password_len)
+{
+    esp_err_t error =
+        load_wifi_credentials(ssid, ssid_len, password, password_len);
+
+    if (error == ESP_OK && ssid[0] != '\0') {
+        return WIFI_CREDENTIAL_SOURCE_NVS;
+    }
+
+    memset(ssid, 0, ssid_len);
+    memset(password, 0, password_len);
+
+    if (load_dev_default_credentials(ssid, ssid_len,
+                                     password, password_len)) {
+        return WIFI_CREDENTIAL_SOURCE_DEV_DEFAULT;
+    }
+
+    return WIFI_CREDENTIAL_SOURCE_NONE;
+}
+
+/* ------------------------------------------------------------------ */
 /* Config helpers                                                      */
 /* ------------------------------------------------------------------ */
 
@@ -223,6 +281,27 @@ static esp_err_t validate_config(void)
                  "or 8..63 characters for WPA2");
         return ESP_ERR_INVALID_ARG;
     }
+
+#if CONFIG_WIFI_PROV_DEV_DEFAULT_ENABLED
+    const char *dev_ssid = CONFIG_WIFI_PROV_DEV_DEFAULT_SSID;
+    const char *dev_password = CONFIG_WIFI_PROV_DEV_DEFAULT_PASSWORD;
+
+    size_t dev_ssid_len = strlen(dev_ssid);
+    size_t dev_password_len = strlen(dev_password);
+
+    if (dev_ssid_len == 0 || dev_ssid_len > 32) {
+        ESP_LOGE(TAG,
+                 "Development Wi-Fi SSID must contain 1..32 bytes");
+        return ESP_ERR_INVALID_ARG;
+    }
+
+    if (dev_password_len > 64) {
+        ESP_LOGE(TAG,
+                 "Development Wi-Fi password exceeds 64 bytes");
+        return ESP_ERR_INVALID_ARG;
+    }
+#endif
+
     return ESP_OK;
 }
 
@@ -758,47 +837,91 @@ int wifi_prov_init(void)
     generate_ap_ssid();
 
     char ssid[33] = {0};
-    char saved_password[65] = {0};
+    char password[65] = {0};
+
+    wifi_credential_source_t credential_source =
+        resolve_boot_credentials(ssid, sizeof(ssid),
+                                 password, sizeof(password));
+
     bool has_credentials =
-        load_wifi_credentials(ssid, sizeof(ssid), saved_password,
-                              sizeof(saved_password)) == ESP_OK &&
-        ssid[0] != '\0';
+        credential_source != WIFI_CREDENTIAL_SOURCE_NONE;
+
+    if (credential_source == WIFI_CREDENTIAL_SOURCE_NVS) {
+        ESP_LOGI(TAG,
+                 "Trying saved Wi-Fi credentials (SSID=%s)",
+                 ssid);
+    } else if (credential_source ==
+               WIFI_CREDENTIAL_SOURCE_DEV_DEFAULT) {
+        ESP_LOGW(TAG,
+                 "No saved Wi-Fi; trying development default SSID=%s",
+                 ssid);
+    }
 
     if (has_credentials) {
-        ESP_LOGI(TAG, "Trying saved Wi-Fi credentials (SSID=%s)", ssid);
         if (esp_wifi_set_mode(WIFI_MODE_STA) != ESP_OK) goto fail;
         if (esp_wifi_start() != ESP_OK) goto fail;
+
         s_wifi_started = true;
         apply_power_save_policy();
         set_state(WIFI_PROV_STATE_BOOT_CONNECTING);
 
-        if (start_sta_attempt(ssid, saved_password) != ESP_OK) {
+        if (start_sta_attempt(ssid, password) != ESP_OK) {
             stop_sta_attempt();
+
             if (enter_provisioning() != ESP_OK) goto fail;
+
             return 0;
         }
 
         EventBits_t bits = wait_sta_result(
             pdMS_TO_TICKS(CONFIG_WIFI_PROV_STA_BOOT_TIMEOUT_MS));
+
         if ((bits & PROV_EVT_STA_GOT_IP) != 0) {
-            /* Keep retry enabled: runtime disconnects must trigger bounded
-             * reconnect, never the provisioning portal. */
+            /*
+             * Keep retry enabled: runtime disconnects still use
+             * the existing bounded reconnect behavior.
+             */
             reset_retry();
             set_state(WIFI_PROV_STATE_CONNECTED);
-            ESP_LOGI(TAG, "Saved Wi-Fi verified; running in STA mode");
+
+            if (credential_source == WIFI_CREDENTIAL_SOURCE_NVS) {
+                ESP_LOGI(TAG,
+                         "Saved Wi-Fi verified; running in STA mode");
+            } else {
+                ESP_LOGW(TAG,
+                         "Development default Wi-Fi connected; "
+                         "not persisted to NVS");
+            }
         } else {
-            ESP_LOGW(TAG, "Saved credential boot connect failed; entering "
-                          "provisioning");
+            if (credential_source == WIFI_CREDENTIAL_SOURCE_NVS) {
+                ESP_LOGW(TAG,
+                         "Saved credential boot connect failed; "
+                         "entering provisioning");
+            } else {
+                ESP_LOGW(TAG,
+                         "Development default Wi-Fi connect failed; "
+                         "entering provisioning");
+            }
+
             stop_sta_attempt();
+
             if (enter_provisioning() != ESP_OK) goto fail;
         }
     } else {
-        ESP_LOGI(TAG, "No saved Wi-Fi; entering provisioning mode");
-        if (ensure_apsta_mode() != ESP_OK || configure_softap() != ESP_OK)
+        ESP_LOGI(TAG,
+                 "No boot Wi-Fi credential available; "
+                 "entering provisioning mode");
+
+        if (ensure_apsta_mode() != ESP_OK ||
+            configure_softap() != ESP_OK) {
             goto fail;
+        }
+
         if (esp_wifi_start() != ESP_OK) goto fail;
+
         s_wifi_started = true;
         apply_power_save_policy();
+
         if (enter_provisioning() != ESP_OK) goto fail;
     }
 
