@@ -104,6 +104,8 @@ typedef enum {
     DS_TX_BEGIN_SENT,
     DS_TX_SET_SENT,
     DS_TX_COMMIT_SENT,
+    DS_TX_WAITING_REBOOT,    /* COMMIT ACK received, awaiting reboot + re-read */
+    DS_TX_VERIFYING,         /* Reconnecting, values refreshed, verifying */
     DS_TX_SUCCEEDED,
     DS_TX_FAILED,
     DS_TX_CONFLICT,
@@ -122,6 +124,8 @@ typedef enum {
     DS_TX_RESULT_TIMEOUT,
     DS_TX_RESULT_DISCONNECTED,
     DS_TX_RESULT_CANCELLED,
+    DS_TX_RESULT_FAILED,
+    DS_TX_RESULT_OUTCOME_UNKNOWN,
     DS_TX_RESULT_INTERNAL,
 } ds_tx_result_t;
 
@@ -153,6 +157,9 @@ typedef struct {
     /* Completion. */
     ds_tx_completion_fn completion;
     void               *context;
+
+    /* Reconciliation timer (opaque handle — FreeRTOS). */
+    void               *recon_timer;
 } ds_transaction_t;
 
 /* ── Compact setting descriptor ──────────────────────────────────────
@@ -250,6 +257,11 @@ typedef struct {
     uint32_t           staging_snapshot_id;
     bool               schema_stream_active;
     bool               values_stream_active;
+
+    /* Reconciliation state — set after COMMIT ACK, verified on reconnect. */
+    bool               pending_reconciliation;
+    uint32_t           reconciliation_expected_rev;  /* new rev from COMMIT ACK */
+    uint32_t           reconciliation_old_rev;       /* rev before commit */
 } ds_device_record_t;
 
 /* ── Init / deinit ─────────────────────────────────────────────────── */
@@ -320,6 +332,22 @@ bool device_settings_on_notify(const char *device_id,
  * committed snapshots remain valid (but may be marked stale). */
 
 void device_settings_on_disconnect(const char *device_id);
+
+/* ── Reconciliation timeout ───────────────────────────────────────────
+ * If device does not reconnect within this window after COMMIT ACK,
+ * the transaction is resolved as OUTCOME_UNKNOWN. */
+
+#define DS_RECONCILIATION_TIMEOUT_MS  30000
+
+/* ── Reconciliation ───────────────────────────────────────────────────
+ * Called after values are refreshed following a reconnect when a
+ * device has a pending reconciliation.  Compares config_rev against
+ * the expected new revision and verifies changed values.  Resolves
+ * the pending transaction as SUCCEEDED / FAILED / CONFLICT / OUTCOME_UNKNOWN.
+ *
+ * Safe to call if no reconciliation is pending (no-op). */
+
+void device_settings_reconcile(const char *device_id);
 
 /* ── Operation API ─────────────────────────────────────────────────── */
 

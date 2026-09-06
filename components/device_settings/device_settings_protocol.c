@@ -424,6 +424,11 @@ static void handle_values_end(const char *device_id,
              device_id,
              (unsigned)values->value_count,
              (unsigned long)values->config_revision);
+
+    /* If a reconciliation is pending (post-COMMIT reboot), verify now. */
+    if (rec->pending_reconciliation) {
+        device_settings_reconcile(device_id);
+    }
 }
 
 /* ── Public entry point ────────────────────────────────────────────── */

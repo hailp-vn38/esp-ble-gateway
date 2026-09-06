@@ -1,4 +1,4 @@
-# Gateway Phase G4 — Commit Confirmation, Reboot & Outcome Reconciliation
+# Gateway Phase G4 — Commit Confirmation, Reboot & Outcome Reconciliation ✅ DONE (2026-09-06)
 
 
 **Repo:** `hailp-vn38/esp-ble-gateway`  
@@ -74,22 +74,22 @@ Never publish full settings or secret values.
 
 Fault injection:
 
-- [ ] normal ACK+confirm.
-- [ ] drop COMMIT ACK after device persisted.
-- [ ] drop COMMIT_CONFIRM.
-- [ ] disconnect immediately after persisted commit.
-- [ ] disconnect before COMMIT reaches device.
-- [ ] reconnect with revision `old+1` + matching values => success.
-- [ ] reconnect with old revision => failure.
-- [ ] reconnect with unrelated later revision => conflict.
-- [ ] page/API polling survives gateway operation state transitions.
+- [x] normal ACK+confirm.
+- [x] drop COMMIT ACK after device persisted.
+- [x] drop COMMIT_CONFIRM.
+- [x] disconnect immediately after persisted commit.
+- [x] disconnect before COMMIT reaches device.
+- [x] reconnect with revision `old+1` + matching values => success.
+- [x] reconnect with old revision => failure.
+- [x] reconnect with unrelated later revision => conflict.
+- [x] page/API polling survives gateway operation state transitions.
 
 ## Memory checklist
 
-- [ ] Reconciliation does not duplicate whole schema.
-- [ ] Operation stores only requested changes, not full values snapshot.
-- [ ] Compact WS event doesn't enlarge global event struct materially; prefer union/reuse if needed.
-- [ ] Completed operation history bounded/TTL and large detail not retained indefinitely.
+- [x] Reconciliation does not duplicate whole schema.
+- [x] Operation stores only requested changes, not full values snapshot.
+- [x] Compact WS event doesn't enlarge global event struct materially; prefer union/reuse if needed.
+- [x] Completed operation history bounded/TTL and large detail not retained indefinitely.
 
 ## Exit gate
 

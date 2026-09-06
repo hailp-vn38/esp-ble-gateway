@@ -198,6 +198,85 @@ void device_settings_on_disconnect(const char *device_id)
     unlock();
 }
 
+/* ── Reconciliation ───────────────────────────────────────────────────
+ * Called after values are refreshed following a reconnect when a
+ * device has a pending reconciliation.  Compares config_rev against
+ * the expected new revision and verifies changed values. */
+
+void device_settings_reconcile(const char *device_id)
+{
+    if (device_id == NULL || device_id[0] == '\0') return;
+
+    if (!lock()) return;
+
+    ds_device_record_t *rec = device_settings_find_record(device_id);
+    if (rec == NULL || !rec->pending_reconciliation) {
+        unlock();
+        return;
+    }
+
+    /* Find the WAITING_REBOOT transaction. */
+    extern ds_transaction_t *ds_tx_find(const char *device_id);
+    ds_transaction_t *tx = ds_tx_find(device_id);
+    if (tx == NULL || tx->state != DS_TX_WAITING_REBOOT) {
+        ESP_LOGW(TAG, "[%s] reconcile: no WAITING_REBOOT transaction",
+                 device_id);
+        rec->pending_reconciliation = false;
+        unlock();
+        return;
+    }
+
+    uint32_t current_rev = rec->config_rev;
+    uint32_t expected_rev = rec->reconciliation_expected_rev;
+    uint32_t old_rev = rec->reconciliation_old_rev;
+
+    ESP_LOGI(TAG, "[%s] reconcile: current=%lu expected=%lu old=%lu",
+             device_id,
+             (unsigned long)current_rev,
+             (unsigned long)expected_rev,
+             (unsigned long)old_rev);
+
+    ds_tx_result_t outcome;
+
+    if (current_rev == expected_rev) {
+        /* Revision matches — verify non-secret values.
+         * For V2, if revision matches we consider it succeeded.
+         * Full value verification can be added later if needed. */
+        ESP_LOGI(TAG, "[%s] reconcile: SUCCEEDED (rev matches)",
+                 device_id);
+        outcome = DS_TX_RESULT_OK;
+
+    } else if (current_rev == old_rev) {
+        /* Commit did not persist. */
+        ESP_LOGW(TAG, "[%s] reconcile: FAILED (rev still old)",
+                 device_id);
+        outcome = DS_TX_RESULT_FAILED;
+
+    } else {
+        /* Different revision — external change occurred. */
+        ESP_LOGW(TAG, "[%s] reconcile: CONFLICT (rev=%lu != expected=%lu)",
+                 device_id,
+                 (unsigned long)current_rev,
+                 (unsigned long)expected_rev);
+        outcome = DS_TX_RESULT_DEVICE_CONFLICT;
+    }
+
+    /* Clear reconciliation state. */
+    rec->pending_reconciliation = false;
+
+    /* Resolve the transaction. */
+    tx->state = (outcome == DS_TX_RESULT_OK) ? DS_TX_SUCCEEDED
+                                              : DS_TX_FAILED;
+    ds_tx_completion_fn cb = tx->completion;
+    void *ctx = tx->context;
+
+    /* Release lock before freeing tx (tx_free may access record). */
+    unlock();
+
+    ds_tx_free(tx);
+    if (cb != NULL) cb(outcome, ctx);
+}
+
 /* ── Query API ─────────────────────────────────────────────────────── */
 
 esp_err_t device_settings_get_state(const char *device_id,

@@ -4,6 +4,8 @@
 #include "device_command_service.h"
 #include "esp_log.h"
 #include "esp_timer.h"
+#include "freertos/FreeRTOS.h"
+#include "freertos/timers.h"
 #include "gw_settings_view.h"
 #include "memory_policy.h"
 
@@ -12,6 +14,10 @@ static const char *TAG = "ds_tx";
 /* ── Transaction registry (internal SRAM) ───────────────────────────── */
 
 static ds_transaction_t s_txns[DEVICE_SETTINGS_MAX_DEVICES];
+
+/* ── Forward declarations ───────────────────────────────────────────── */
+
+static void cancel_reconciliation_timer(ds_transaction_t *tx);
 
 /* ── Allocation / lookup ────────────────────────────────────────────── */
 
@@ -42,6 +48,7 @@ ds_transaction_t *ds_tx_alloc(void)
 void ds_tx_free(ds_transaction_t *tx)
 {
     if (tx == NULL) return;
+    cancel_reconciliation_timer(tx);
     if (tx->changes != NULL) {
         ds_settings_free(tx->changes);
         tx->changes = NULL;
@@ -60,6 +67,64 @@ void ds_tx_reset_for_test(void)
 
 static void on_cmd_complete(const device_command_result_t *result,
                             void *context);
+
+/* ── Reconciliation timer ─────────────────────────────────────────────
+ * Fires if device does not reconnect within DS_RECONCILIATION_TIMEOUT_MS
+ * after COMMIT ACK.  Resolves the transaction as OUTCOME_UNKNOWN.
+ * Timer handle is stored on the transaction for direct cleanup. */
+
+static void reconciliation_timeout_cb(TimerHandle_t timer)
+{
+    /* The timer ID is the transaction pointer. */
+    ds_transaction_t *tx = (ds_transaction_t *)pvTimerGetTimerID(timer);
+    if (tx == NULL || !tx->active) return;
+
+    tx->recon_timer = NULL;
+
+    if (tx->state != DS_TX_WAITING_REBOOT) return;
+
+    ESP_LOGW(TAG, "[%s] reconciliation timeout — OUTCOME_UNKNOWN",
+             tx->device_id);
+
+    ds_device_record_t *rec = device_settings_find_record(tx->device_id);
+    if (rec != NULL) {
+        rec->pending_reconciliation = false;
+    }
+
+    tx->state = DS_TX_FAILED;
+    ds_tx_completion_fn cb = tx->completion;
+    void *ctx = tx->context;
+    ds_tx_free(tx);
+    if (cb != NULL) cb(DS_TX_RESULT_OUTCOME_UNKNOWN, ctx);
+}
+
+static void cancel_reconciliation_timer(ds_transaction_t *tx)
+{
+    if (tx == NULL || tx->recon_timer == NULL) return;
+    xTimerDelete((TimerHandle_t)tx->recon_timer, 0);
+    tx->recon_timer = NULL;
+}
+
+static void start_reconciliation_timer(ds_transaction_t *tx)
+{
+    if (tx == NULL) return;
+
+    TimerHandle_t t = xTimerCreate(
+        "ds_recon",
+        pdMS_TO_TICKS(DS_RECONCILIATION_TIMEOUT_MS),
+        pdFALSE,              /* one-shot */
+        (void *)tx,
+        reconciliation_timeout_cb);
+
+    if (t != NULL) {
+        tx->recon_timer = t;
+        if (xTimerStart(t, 0) != pdPASS) {
+            ESP_LOGW(TAG, "[%s] timer start failed", tx->device_id);
+            tx->recon_timer = NULL;
+            xTimerDelete(t, 0);
+        }
+    }
+}
 
 /* ── Prevalidate one change against schema ──────────────────────────── */
 
@@ -220,18 +285,27 @@ static void on_cmd_complete(const device_command_result_t *result,
             tx->next_change_index++;
             submit_next_command(tx);
         } else if (tx->state == DS_TX_COMMIT_SENT) {
-            /* COMMIT succeeded — transaction complete. */
+            /* COMMIT ACK received — transition to WAITING_REBOOT.
+             * Do not fire completion yet; verify after reconnect. */
             if (result->has_int_value) {
                 tx->new_config_rev = (uint32_t)result->int_value;
             }
-            tx->state = DS_TX_SUCCEEDED;
-            ESP_LOGI(TAG, "[%s] SUCCEEDED new_config_rev=%lu",
+            tx->state = DS_TX_WAITING_REBOOT;
+            ESP_LOGI(TAG, "[%s] COMMIT_ACK new_config_rev=%lu — waiting reboot",
                      tx->device_id,
                      (unsigned long)tx->new_config_rev);
-            ds_tx_completion_fn cb = tx->completion;
-            void *ctx = tx->context;
-            ds_tx_free(tx);
-            if (cb != NULL) cb(DS_TX_RESULT_OK, ctx);
+
+            /* Set reconciliation state on device record. */
+            ds_device_record_t *rec =
+                device_settings_find_record(tx->device_id);
+            if (rec != NULL) {
+                rec->pending_reconciliation = true;
+                rec->reconciliation_expected_rev = tx->new_config_rev;
+                rec->reconciliation_old_rev = tx->expected_config_rev;
+            }
+
+            /* Start timeout timer. */
+            start_reconciliation_timer(tx);
         }
         break;
 
@@ -262,26 +336,56 @@ static void on_cmd_complete(const device_command_result_t *result,
 
     case DEVICE_CMD_STATUS_TIMEOUT:
         ESP_LOGW(TAG, "[%s] TIMEOUT in state %d", tx->device_id, tx->state);
-        tx->state = DS_TX_FAILED;
-        {
-            ds_tx_result_t r = DS_TX_RESULT_TIMEOUT;
-            ds_tx_completion_fn cb = tx->completion;
-            void *ctx = tx->context;
-            ds_tx_free(tx);
-            if (cb != NULL) cb(r, ctx);
+        if (tx->state == DS_TX_COMMIT_SENT) {
+            /* Ambiguous — commit may have persisted.  Set up reconciliation. */
+            ESP_LOGW(TAG, "[%s] TIMEOUT during COMMIT — OUTCOME_UNKNOWN",
+                     tx->device_id);
+            tx->state = DS_TX_WAITING_REBOOT;
+            ds_device_record_t *rec =
+                device_settings_find_record(tx->device_id);
+            if (rec != NULL) {
+                rec->pending_reconciliation = true;
+                rec->reconciliation_expected_rev = tx->expected_config_rev + 1;
+                rec->reconciliation_old_rev = tx->expected_config_rev;
+            }
+            start_reconciliation_timer(tx);
+        } else {
+            tx->state = DS_TX_FAILED;
+            {
+                ds_tx_result_t r = DS_TX_RESULT_TIMEOUT;
+                ds_tx_completion_fn cb = tx->completion;
+                void *ctx = tx->context;
+                ds_tx_free(tx);
+                if (cb != NULL) cb(r, ctx);
+            }
         }
         break;
 
     case DEVICE_CMD_STATUS_NOT_CONNECTED:
         ESP_LOGW(TAG, "[%s] DISCONNECTED in state %d",
                  tx->device_id, tx->state);
-        tx->state = DS_TX_FAILED;
-        {
-            ds_tx_result_t r = DS_TX_RESULT_DISCONNECTED;
-            ds_tx_completion_fn cb = tx->completion;
-            void *ctx = tx->context;
-            ds_tx_free(tx);
-            if (cb != NULL) cb(r, ctx);
+        if (tx->state == DS_TX_COMMIT_SENT) {
+            /* Ambiguous — commit may have persisted.  Set up reconciliation. */
+            ESP_LOGW(TAG, "[%s] DISCONNECT during COMMIT — OUTCOME_UNKNOWN",
+                     tx->device_id);
+            tx->state = DS_TX_WAITING_REBOOT;
+            ds_device_record_t *rec =
+                device_settings_find_record(tx->device_id);
+            if (rec != NULL) {
+                rec->pending_reconciliation = true;
+                rec->reconciliation_expected_rev = tx->expected_config_rev + 1;
+                rec->reconciliation_old_rev = tx->expected_config_rev;
+            }
+            start_reconciliation_timer(tx);
+        } else {
+            tx->state = DS_TX_FAILED;
+            {
+                ds_tx_result_t r = DS_TX_RESULT_DISCONNECTED;
+                ds_tx_completion_fn cb = tx->completion;
+                void *ctx = tx->context;
+                ds_tx_free(tx);
+                if (cb != NULL) cb(r, ctx);
+            }
         }
         break;
 
