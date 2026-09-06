@@ -206,7 +206,7 @@ const devices = {
                 state.selectedDeviceDetail.status = dev.status;
                 this.renderConnectionState(state.selectedDeviceDetail);
                 if (this.currentFeatures.length > 0) {
-                    this.renderFeatures(
+                    featureUi.updateConnectionState(
                         this.currentFeatures,
                         state.selectedDeviceDetail);
                 }
@@ -243,7 +243,7 @@ const devices = {
                 if (ev.valueType === 'bool') feat.state.value_bool = ev.value;
                 else if (ev.valueType === 'int') feat.state.value_int = ev.value;
                 feat.state.updated_at_ms = ev.updatedAtMs;
-                this.renderFeatures(this.currentFeatures, state.selectedDeviceDetail);
+                featureUi.updateFeatureState(feat, state.selectedDeviceDetail);
                 break;
             }
         }
@@ -496,10 +496,9 @@ const devices = {
 
     async sendToggle(feature) {
         if (!state.selectedDeviceDetail || !feature) return;
-        const command = feature.control?.write_command || 'toggle';
         const valueType = feature.property_id === 1 ? 'boolean' : 'none';
         const value = feature.state && feature.state.valid ? !feature.state.value_bool : true;
-        await this.sendCommand(command, valueType, value);
+        await this.sendFeatureCommand(feature, valueType, value);
     },
 
     async sendCustomCommand() {
@@ -552,6 +551,41 @@ const devices = {
         } finally {
             controls.forEach(control => control.disabled = false);
         }
+    },
+
+    async sendFeatureCommand(feature, valueType, value) {
+        featureUi.setPending(feature, true);
+        try {
+            const result = await api.sendCommand(
+                state.selectedDeviceDetail.id,
+                feature.control.write_command,
+                valueType,
+                value
+            );
+            // Apply authoritative feature state from HTTP response
+            if (result?.feature_state) {
+                this._applyCommandFeatureState(feature, result.feature_state);
+            }
+            ui.showToast(i18n.t('device_detail.command_completed'), 'success');
+            return result;
+        } catch (error) {
+            ui.showToast(error.message, 'error');
+        } finally {
+            featureUi.setPending(feature, false);
+        }
+    },
+
+    _applyCommandFeatureState(feature, featureState) {
+        if (!feature || !featureState) return;
+        if (!feature.state) feature.state = {};
+        feature.state.valid = true;
+        if (featureState.value_type === 'bool') {
+            feature.state.value_bool = featureState.value_bool;
+        } else if (featureState.value_type === 'int') {
+            feature.state.value_int = featureState.value_int;
+        }
+        feature.state.updated_at_ms = Date.now();
+        featureUi.updateFeatureState(feature, state.selectedDeviceDetail);
     },
 
     async refreshSchema() {
@@ -628,176 +662,26 @@ const devices = {
             if (loadId !== this.detailLoadId || state.selectedDeviceDetail?.id !== device.id) return;
             this.renderSchemaState('error');
             this.currentFeatures = [];
-            this.renderFeaturesError(container, error, device);
+            featureUi.renderError(container, error, device);
             return false;
         }
     },
 
     renderFeaturesLoading(container) {
-        const loading = document.createElement('div');
-        loading.className = 'rounded-lg border border-gray-200 bg-gray-50 p-5 text-sm text-gray-500';
-        loading.innerHTML = `<i class="ph ph-spinner animate-spin mr-2"></i>${i18n.t('device_detail.loading_features')}`;
-        container.appendChild(loading);
+        featureUi.renderLoading(container);
     },
 
     renderFeatures(features, device) {
-        const container = document.getElementById('feature-cards');
-        container.replaceChildren();
-        if (!features.length) {
-            this.renderFeaturesEmptyState(container, device);
-            return;
-        }
-        features.forEach(feature =>
-            container.appendChild(this.renderFeatureCard(feature, device)));
-    },
-
-    renderFeatureCard(feature, device) {
-        const card = document.createElement('div');
-        card.className = 'rounded-lg border border-gray-200 bg-gray-50 p-4';
-
-        const header = document.createElement('div');
-        header.className = 'flex items-center justify-between mb-3';
-        const titleGroup = document.createElement('div');
-        titleGroup.className = 'flex items-center gap-2';
-
-        const featureTitle = document.createElement('span');
-        featureTitle.className = 'text-sm font-semibold text-gray-800';
-        featureTitle.textContent = feature.title || feature.semantic?.name || feature.feature_id;
-        featureTitle.title = feature.feature_id;
-        titleGroup.appendChild(featureTitle);
-
-        const semantic = feature.semantic;
-        const semanticSupported = semantic?.name && semantic.name !== 'unknown';
-        if (semanticSupported) {
-            const badge = document.createElement('span');
-            badge.className = 'inline-flex items-center rounded-full bg-blue-100 px-2 py-0.5 text-xs font-semibold text-blue-700';
-            badge.textContent = semantic.name;
-            titleGroup.appendChild(badge);
-        } else {
-            const badge = document.createElement('span');
-            badge.className = 'inline-flex items-center rounded-full bg-gray-100 px-2 py-0.5 text-xs font-semibold text-gray-500';
-            badge.textContent = i18n.t('device_detail.unsupported');
-            titleGroup.appendChild(badge);
-        }
-        header.appendChild(titleGroup);
-
-        /* Feature state indicator */
-        if (feature.state && feature.state.valid) {
-            const stateText = document.createElement('span');
-            stateText.className = 'text-xs text-gray-500 font-mono';
-            if (semantic?.value_type === 'bool') {
-                stateText.textContent = feature.state.value_bool ? 'ON' : 'OFF';
-            } else if (semantic?.value_type === 'int' &&
-                       Number.isFinite(feature.state.value_int)) {
-                stateText.textContent = this.formatNumeric(feature, feature.state.value_int);
+        featureUi.renderFeatures({
+            container: document.getElementById('feature-cards'),
+            features,
+            device,
+            onToggle: feature => this.sendToggle(feature),
+            onNumericSet: (feature, displayValue) => {
+                const raw = featureUi.displayToRaw(feature, displayValue);
+                return this.sendFeatureCommand(feature, 'integer', raw);
             }
-            header.appendChild(stateText);
-        }
-        card.appendChild(header);
-
-        /* Control area */
-        const control = document.createElement('div');
-        control.className = 'flex flex-col sm:flex-row gap-2';
-
-        if (semanticSupported && feature.control?.writable && feature.control.write_command) {
-            if (feature.value_type === 1) {
-                /* ON/OFF property → toggle button */
-                const isOn = feature.state && feature.state.valid && feature.state.value_bool;
-                const toggleBtn = document.createElement('button');
-                toggleBtn.type = 'button';
-                toggleBtn.disabled = device.status !== 'online';
-                toggleBtn.className = isOn
-                    ? 'px-4 py-2 bg-brand-600 text-white rounded-lg hover:bg-brand-700 transition-colors text-sm font-medium disabled:opacity-50 disabled:cursor-not-allowed'
-                    : 'px-4 py-2 bg-white border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-100 transition-colors text-sm font-medium disabled:opacity-50 disabled:cursor-not-allowed';
-                toggleBtn.textContent = isOn ? i18n.t('device_detail.turn_off') : i18n.t('device_detail.turn_on');
-                toggleBtn.onclick = () => this.sendToggle(feature);
-                control.appendChild(toggleBtn);
-            } else if (feature.value_type === 2 &&
-                       Number.isFinite(feature.control.minimum) &&
-                       Number.isFinite(feature.control.maximum) &&
-                       Number.isFinite(feature.control.step)) {
-                /* Every writable INT feature uses raw tool limits but display scaling. */
-                const min = this.rawToDisplay(feature, feature.control.minimum);
-                const max = this.rawToDisplay(feature, feature.control.maximum);
-                const step = this.rawToDisplay(feature, feature.control.step);
-                const current = feature.state?.valid
-                    ? this.rawToDisplay(feature, feature.state.value_int) : min;
-                const input = document.createElement('input');
-                input.type = 'range';
-                input.min = min;
-                input.max = max;
-                input.step = step;
-                input.value = current;
-                input.disabled = device.status !== 'online';
-                input.className = 'flex-1';
-                const number = document.createElement('input');
-                number.type = 'number';
-                number.min = min;
-                number.max = max;
-                number.step = step;
-                number.value = current;
-                number.disabled = device.status !== 'online';
-                number.className = 'w-24 rounded border border-gray-300 px-2 py-1 text-sm';
-                input.oninput = () => { number.value = input.value; };
-                number.oninput = () => { input.value = number.value; };
-                const applyBtn = document.createElement('button');
-                applyBtn.type = 'button';
-                applyBtn.disabled = device.status !== 'online';
-                applyBtn.className = 'px-4 py-2 bg-brand-600 text-white rounded-lg hover:bg-brand-700 transition-colors text-sm font-medium disabled:opacity-50 disabled:cursor-not-allowed';
-                applyBtn.textContent = i18n.t('device_detail.apply');
-                applyBtn.onclick = () => this.sendCommand(
-                    feature.control.write_command, 'integer',
-                    this.displayToRaw(feature, number.value), [input, number, applyBtn]);
-                control.append(input, number, applyBtn);
-            } else {
-                /* Unknown property → action button */
-                const actionBtn = document.createElement('button');
-                actionBtn.type = 'button';
-                actionBtn.disabled = device.status !== 'online';
-                actionBtn.className = 'w-full sm:w-auto px-4 py-2 bg-brand-600 text-white rounded-lg hover:bg-brand-700 transition-colors text-sm font-medium flex-shrink-0 disabled:opacity-50 disabled:cursor-not-allowed';
-                actionBtn.textContent = i18n.t('device_detail.run');
-                actionBtn.onclick = () => this.sendCommand(feature.control.write_command, 'none', null, [actionBtn]);
-                control.appendChild(actionBtn);
-            }
-        } else {
-            /* No template or no write command → unsupported */
-            const unsupported = document.createElement('span');
-            unsupported.className = 'text-xs text-gray-400';
-            unsupported.textContent = i18n.t('device_detail.no_write_tool');
-            control.appendChild(unsupported);
-        }
-        card.appendChild(control);
-        return card;
-    },
-
-    renderFeaturesEmptyState(container, device) {
-        const empty = document.createElement('div');
-        empty.className = 'rounded-lg border border-dashed border-gray-300 p-6 text-center';
-        empty.innerHTML = `<i class="ph ph-plugs text-2xl text-gray-400"></i><h4 class="mt-2 text-sm font-semibold text-gray-800">${i18n.t('device_detail.no_features')}</h4><p class="mt-1 text-xs text-gray-500">${i18n.t('device_detail.no_features_desc')}</p>`;
-        const retry = document.createElement('button');
-        retry.className = 'mt-4 px-4 py-2 bg-brand-50 text-brand-700 rounded-lg hover:bg-brand-100 text-sm font-medium';
-        retry.textContent = i18n.t('device_detail.refresh_schema');
-        retry.onclick = () => this.refreshSchema(device);
-        empty.appendChild(retry);
-        container.appendChild(empty);
-    },
-
-    renderFeaturesError(container, error, device) {
-        container.replaceChildren();
-        const failure = document.createElement('div');
-        failure.className = 'rounded-lg border border-red-200 bg-red-50 p-5';
-        const title = document.createElement('h4');
-        title.className = 'text-sm font-semibold text-red-800';
-        title.textContent = i18n.t('device_detail.schema_load_error');
-        const message = document.createElement('p');
-        message.className = 'text-xs text-red-700 mt-1 break-words';
-        message.textContent = error.message;
-        const retry = document.createElement('button');
-        retry.className = 'mt-3 px-3 py-2 bg-white border border-red-200 text-red-700 rounded-lg hover:bg-red-100 text-sm font-medium';
-        retry.textContent = i18n.t('device_detail.retry');
-        retry.onclick = () => this.loadDetail(device);
-        failure.append(title, message, retry);
-        container.appendChild(failure);
+        });
     },
 
     async addDeviceFromModal() {

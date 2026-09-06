@@ -44,6 +44,11 @@
             outline: 2px solid #0ea5e9; outline-offset: 2px;
         }
         .settings-switch input:disabled + .settings-switch-track { opacity: 0.55; cursor: not-allowed; }
+        /* Global focus-visible ring for feature controls */
+        button:focus-visible, input:focus-visible, select:focus-visible {
+            outline: 2px solid #0ea5e9;
+            outline-offset: 2px;
+        }
     </style>
 </head>
 <body class="bg-gray-50 text-gray-900 font-sans h-screen flex overflow-hidden selection:bg-brand-500 selection:text-white">
@@ -97,6 +102,7 @@
     <!-- @js core/events.js -->
     <!-- @js core/api.js -->
     <!-- @js core/nav.js -->
+    <!-- @js features/feature_ui.js -->
     <!-- @js features/devices.js -->
     <!-- @js features/scanner.js -->
     <!-- @js features/mcp_exposure.js -->

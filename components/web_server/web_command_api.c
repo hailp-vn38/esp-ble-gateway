@@ -81,6 +81,23 @@ static void device_command_completion(const device_command_result_t *result,
                                         device_error_code(result->status));
             }
         }
+        /* Authoritative feature state from device ACK */
+        if (ok && result->has_feature_value_bool) {
+            cJSON *fs = cJSON_AddObjectToObject(json, "feature_state");
+            if (fs != NULL) {
+                cJSON_AddStringToObject(fs, "value_type", "bool");
+                cJSON_AddBoolToObject(fs, "value_bool",
+                                      result->feature_value_bool);
+            }
+        }
+        if (ok && result->has_feature_value_int) {
+            cJSON *fs = cJSON_AddObjectToObject(json, "feature_state");
+            if (fs != NULL) {
+                cJSON_AddStringToObject(fs, "value_type", "int");
+                cJSON_AddNumberToObject(fs, "value_int",
+                                        (double)result->feature_value_int);
+            }
+        }
     }
     web_send_json(context->request, json);
 
