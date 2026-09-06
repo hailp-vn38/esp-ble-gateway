@@ -178,6 +178,12 @@ static bool validate_content_type(const char *ct)
 // Accept header parser (§12.6)
 // ---------------------------------------------------------------------------
 
+#define MCP_MEDIA_JSON "application/json"
+#define MCP_MEDIA_EVENT_STREAM "text/event-stream"
+
+#define MCP_MEDIA_JSON_LEN (sizeof(MCP_MEDIA_JSON) - 1)
+#define MCP_MEDIA_EVENT_STREAM_LEN (sizeof(MCP_MEDIA_EVENT_STREAM) - 1)
+
 typedef struct {
     bool accepts_json;
     bool accepts_event_stream;
@@ -204,11 +210,13 @@ static void parse_accept_header(const char *accept, mcp_accept_state_t *state)
         size_t len = (size_t)(accept - start);
 
         // Case-insensitive compare
-        if (len == 16 &&
-            strncasecmp(start, "application/json", 16) == 0) {
+        if (len == MCP_MEDIA_JSON_LEN &&
+            strncasecmp(start, MCP_MEDIA_JSON, MCP_MEDIA_JSON_LEN) == 0) {
             state->accepts_json = true;
-        } else if (len == 24 &&
-                   strncasecmp(start, "text/event-stream", 17) == 0) {
+        } else if (len == MCP_MEDIA_EVENT_STREAM_LEN &&
+                   strncasecmp(start,
+                               MCP_MEDIA_EVENT_STREAM,
+                               MCP_MEDIA_EVENT_STREAM_LEN) == 0) {
             state->accepts_event_stream = true;
         }
 

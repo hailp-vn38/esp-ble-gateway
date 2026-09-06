@@ -2,6 +2,7 @@
 #include <string.h>
 
 #include "cJSON.h"
+#include "sdkconfig.h"
 #include "unity.h"
 
 #include "cbor_codec.h"
@@ -315,6 +316,53 @@ TEST_CASE("peer socket error mid-body aborts the read", "[mcp_endpoint]")
 // ---------------------------------------------------------------------------
 // Auth gate
 // ---------------------------------------------------------------------------
+
+static void assert_accept_gate(const char *accept, bool expected_pass)
+{
+    mcp_setup();
+    io_reset("{}");
+    if (accept != NULL) io_set_header("Accept", accept);
+    install_transport();
+    memset(&g_req, 0, sizeof(g_req));
+    g_req.content_len = (int)g_io.body_len;
+
+    TEST_ASSERT_EQUAL_INT(ESP_OK, mcp_handle_request(&g_req));
+    if (expected_pass) {
+        TEST_ASSERT_NOT_EQUAL_INT(0,
+                                  strcmp("406 Not Acceptable", g_io.status_line));
+        TEST_ASSERT_GREATER_THAN_INT(0, g_io.recv_calls);
+    } else {
+        TEST_ASSERT_EQUAL_STRING("406 Not Acceptable", g_io.status_line);
+        TEST_ASSERT_TRUE(g_io.connection_closed);
+        TEST_ASSERT_EQUAL_INT(0, g_io.recv_calls);
+    }
+}
+
+TEST_CASE("standard MCP Accept header passes auth gate", "[mcp_endpoint][accept]")
+{
+    assert_accept_gate("application/json, text/event-stream", true);
+}
+
+TEST_CASE("MCP Accept parser accepts either order and media parameters",
+          "[mcp_endpoint][accept]")
+{
+    assert_accept_gate("text/event-stream, application/json", true);
+    assert_accept_gate("application/json;q=1, text/event-stream;q=0.9", true);
+}
+
+TEST_CASE("MCP Accept parser enforces the configured compatibility policy",
+          "[mcp_endpoint][accept]")
+{
+#if CONFIG_MCP_STRICT_ACCEPT_HEADER
+    assert_accept_gate(NULL, false);
+    assert_accept_gate("application/json", false);
+#else
+    assert_accept_gate(NULL, true);
+    assert_accept_gate("application/json", true);
+#endif
+    assert_accept_gate("text/event-stream", false);
+    assert_accept_gate("text/plain", false);
+}
 
 TEST_CASE("wrong content type is 415 with connection close", "[mcp_endpoint]")
 {
