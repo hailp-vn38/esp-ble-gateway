@@ -68,11 +68,12 @@ idf_component_register(
          "web_ble_api.c"
          "web_mcp_token_api.c"
          "web_settings_api.c"
+         "web_device_settings_api.c"
          "web_event_ws.c"
     INCLUDE_DIRS "include"
     REQUIRES esp_http_server cbor_codec
              device_command_service device_management device_store gateway_status wifi_provisioning
-             ble_central device_schema device_template device_state
+             ble_central device_schema device_template device_state device_settings
              mcp_tool_exposure mcp_ws_bridge gateway_events
              espressif__cjson esp_system esp_timer freertos
              esp_wifi esp_app_format nvs_flash

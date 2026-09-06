@@ -15,6 +15,48 @@ static const char *TAG = "ds_tx";
 
 static ds_transaction_t s_txns[DEVICE_SETTINGS_MAX_DEVICES];
 
+/* ── Result registry — last completed result per device ────────────────
+ * Stores the outcome of the most recent completed transaction so the
+ * web layer can query it after the transaction object is freed. */
+
+typedef struct {
+    bool           used;
+    char           device_id[32];
+    ds_tx_result_t result;
+    uint32_t       config_revision;
+} ds_tx_result_record_t;
+
+static ds_tx_result_record_t s_tx_results[DEVICE_SETTINGS_MAX_DEVICES];
+
+void device_settings_tx_store_result(const char *device_id,
+                                     ds_tx_result_t result,
+                                     uint32_t config_revision)
+{
+    if (device_id == NULL || device_id[0] == '\0') return;
+
+    /* Find existing or allocate new slot. */
+    int free_slot = -1;
+    for (int i = 0; i < DEVICE_SETTINGS_MAX_DEVICES; i++) {
+        if (s_tx_results[i].used &&
+            strcmp(s_tx_results[i].device_id, device_id) == 0) {
+            s_tx_results[i].result = result;
+            s_tx_results[i].config_revision = config_revision;
+            return;
+        }
+        if (!s_tx_results[i].used && free_slot < 0) {
+            free_slot = i;
+        }
+    }
+
+    if (free_slot >= 0) {
+        s_tx_results[free_slot].used = true;
+        strlcpy(s_tx_results[free_slot].device_id, device_id,
+                sizeof(s_tx_results[free_slot].device_id));
+        s_tx_results[free_slot].result = result;
+        s_tx_results[free_slot].config_revision = config_revision;
+    }
+}
+
 /* ── Forward declarations ───────────────────────────────────────────── */
 
 static void cancel_reconciliation_timer(ds_transaction_t *tx);
@@ -56,11 +98,24 @@ void ds_tx_free(ds_transaction_t *tx)
     tx->active = false;
 }
 
+/* Store result in registry, free transaction, and invoke callback. */
+static void ds_tx_complete(ds_transaction_t *tx, ds_tx_result_t result,
+                           uint32_t config_revision)
+{
+    if (tx == NULL) return;
+    device_settings_tx_store_result(tx->device_id, result, config_revision);
+    ds_tx_completion_fn cb = tx->completion;
+    void *ctx = tx->context;
+    ds_tx_free(tx);
+    if (cb != NULL) cb(result, ctx);
+}
+
 void ds_tx_reset_for_test(void)
 {
     for (int i = 0; i < DEVICE_SETTINGS_MAX_DEVICES; i++) {
         ds_tx_free(&s_txns[i]);
     }
+    memset(s_tx_results, 0, sizeof(s_tx_results));
 }
 
 /* ── Command completion callback (runs from command service task) ────── */
@@ -92,10 +147,7 @@ static void reconciliation_timeout_cb(TimerHandle_t timer)
     }
 
     tx->state = DS_TX_FAILED;
-    ds_tx_completion_fn cb = tx->completion;
-    void *ctx = tx->context;
-    ds_tx_free(tx);
-    if (cb != NULL) cb(DS_TX_RESULT_OUTCOME_UNKNOWN, ctx);
+    ds_tx_complete(tx, DS_TX_RESULT_OUTCOME_UNKNOWN, 0);
 }
 
 static void cancel_reconciliation_timer(ds_transaction_t *tx)
@@ -171,11 +223,7 @@ static void submit_next_command(ds_transaction_t *tx)
     if (rec == NULL || rec->schema == NULL) {
         ESP_LOGE(TAG, "[%s] no schema for command dispatch", tx->device_id);
         tx->state = DS_TX_FAILED;
-        ds_tx_result_t r = DS_TX_RESULT_INTERNAL;
-        ds_tx_completion_fn cb = tx->completion;
-        void *ctx = tx->context;
-        ds_tx_free(tx);
-        if (cb != NULL) cb(r, ctx);
+        ds_tx_complete(tx, DS_TX_RESULT_INTERNAL, 0);
         return;
     }
 
@@ -228,11 +276,7 @@ static void submit_next_command(ds_transaction_t *tx)
             ESP_LOGE(TAG, "[%s] SET submit failed: %s",
                      tx->device_id, esp_err_to_name(err));
             tx->state = DS_TX_FAILED;
-            ds_tx_result_t r = DS_TX_RESULT_INTERNAL;
-            ds_tx_completion_fn cb = tx->completion;
-            void *ctx = tx->context;
-            ds_tx_free(tx);
-            if (cb != NULL) cb(r, ctx);
+            ds_tx_complete(tx, DS_TX_RESULT_INTERNAL, 0);
         }
         return;
     }
@@ -252,11 +296,7 @@ static void submit_next_command(ds_transaction_t *tx)
         ESP_LOGE(TAG, "[%s] COMMIT submit failed: %s",
                  tx->device_id, esp_err_to_name(err));
         tx->state = DS_TX_FAILED;
-        ds_tx_result_t r = DS_TX_RESULT_INTERNAL;
-        ds_tx_completion_fn cb = tx->completion;
-        void *ctx = tx->context;
-        ds_tx_free(tx);
-        if (cb != NULL) cb(r, ctx);
+        ds_tx_complete(tx, DS_TX_RESULT_INTERNAL, 0);
     }
 }
 
@@ -271,10 +311,7 @@ static void on_cmd_complete(const device_command_result_t *result,
     if (result == NULL) {
         ESP_LOGE(TAG, "[%s] cmd callback with NULL result", tx->device_id);
         tx->state = DS_TX_FAILED;
-        ds_tx_completion_fn cb = tx->completion;
-        void *ctx = tx->context;
-        ds_tx_free(tx);
-        if (cb != NULL) cb(DS_TX_RESULT_INTERNAL, ctx);
+        ds_tx_complete(tx, DS_TX_RESULT_INTERNAL, 0);
         return;
     }
 
@@ -312,26 +349,14 @@ static void on_cmd_complete(const device_command_result_t *result,
     case DEVICE_CMD_STATUS_REJECTED:
         ESP_LOGW(TAG, "[%s] REJECTED in state %d", tx->device_id, tx->state);
         tx->state = DS_TX_FAILED;
-        {
-            ds_tx_result_t r = DS_TX_RESULT_DEVICE_REJECTED;
-            ds_tx_completion_fn cb = tx->completion;
-            void *ctx = tx->context;
-            ds_tx_free(tx);
-            if (cb != NULL) cb(r, ctx);
-        }
+        ds_tx_complete(tx, DS_TX_RESULT_DEVICE_REJECTED, 0);
         break;
 
     case DEVICE_CMD_STATUS_BUSY:
         /* Device was busy — could retry, but for now fail. */
         ESP_LOGW(TAG, "[%s] BUSY in state %d", tx->device_id, tx->state);
         tx->state = DS_TX_FAILED;
-        {
-            ds_tx_result_t r = DS_TX_RESULT_DEVICE_REJECTED;
-            ds_tx_completion_fn cb = tx->completion;
-            void *ctx = tx->context;
-            ds_tx_free(tx);
-            if (cb != NULL) cb(r, ctx);
-        }
+        ds_tx_complete(tx, DS_TX_RESULT_DEVICE_REJECTED, 0);
         break;
 
     case DEVICE_CMD_STATUS_TIMEOUT:
@@ -351,13 +376,7 @@ static void on_cmd_complete(const device_command_result_t *result,
             start_reconciliation_timer(tx);
         } else {
             tx->state = DS_TX_FAILED;
-            {
-                ds_tx_result_t r = DS_TX_RESULT_TIMEOUT;
-                ds_tx_completion_fn cb = tx->completion;
-                void *ctx = tx->context;
-                ds_tx_free(tx);
-                if (cb != NULL) cb(r, ctx);
-            }
+            ds_tx_complete(tx, DS_TX_RESULT_TIMEOUT, 0);
         }
         break;
 
@@ -379,38 +398,21 @@ static void on_cmd_complete(const device_command_result_t *result,
             start_reconciliation_timer(tx);
         } else {
             tx->state = DS_TX_FAILED;
-            {
-                ds_tx_result_t r = DS_TX_RESULT_DISCONNECTED;
-                ds_tx_completion_fn cb = tx->completion;
-                void *ctx = tx->context;
-                ds_tx_free(tx);
-                if (cb != NULL) cb(r, ctx);
-            }
+            ds_tx_complete(tx, DS_TX_RESULT_DISCONNECTED, 0);
         }
         break;
 
     case DEVICE_CMD_STATUS_CANCELLED:
         ESP_LOGI(TAG, "[%s] CANCELLED", tx->device_id);
         tx->state = DS_TX_CANCELLED;
-        {
-            ds_tx_completion_fn cb = tx->completion;
-            void *ctx = tx->context;
-            ds_tx_free(tx);
-            if (cb != NULL) cb(DS_TX_RESULT_CANCELLED, ctx);
-        }
+        ds_tx_complete(tx, DS_TX_RESULT_CANCELLED, 0);
         break;
 
     default:
         ESP_LOGW(TAG, "[%s] UNEXPECTED status=%d in state %d",
                  tx->device_id, result->status, tx->state);
         tx->state = DS_TX_FAILED;
-        {
-            ds_tx_result_t r = DS_TX_RESULT_INTERNAL;
-            ds_tx_completion_fn cb = tx->completion;
-            void *ctx = tx->context;
-            ds_tx_free(tx);
-            if (cb != NULL) cb(r, ctx);
-        }
+        ds_tx_complete(tx, DS_TX_RESULT_INTERNAL, 0);
         break;
     }
 }
@@ -498,7 +500,7 @@ esp_err_t device_settings_save(const char *device_id,
     if (err != ESP_OK) {
         ESP_LOGE(TAG, "[%s] BEGIN submit failed: %s",
                  device_id, esp_err_to_name(err));
-        ds_tx_free(tx);
+        ds_tx_complete(tx, DS_TX_RESULT_INTERNAL, 0);
         return err;
     }
 
@@ -524,4 +526,37 @@ esp_err_t device_settings_tx_cancel(const char *device_id)
     /* The command service will call our callback with CANCELLED,
      * which will free the transaction. */
     return ESP_OK;
+}
+
+/* ── Public API: transaction status (for web layer) ─────────────────── */
+
+bool device_settings_tx_get_status(const char *device_id,
+                                   bool *out_active,
+                                   ds_tx_state_t *out_state,
+                                   ds_tx_result_t *out_last_result)
+{
+    if (device_id == NULL || device_id[0] == '\0') return false;
+    if (out_active != NULL) *out_active = false;
+    if (out_state != NULL) *out_state = DS_TX_IDLE;
+    if (out_last_result != NULL) *out_last_result = DS_TX_RESULT_OK;
+
+    ds_transaction_t *tx = ds_tx_find(device_id);
+    if (tx != NULL) {
+        if (out_active != NULL) *out_active = true;
+        if (out_state != NULL) *out_state = tx->state;
+        return true;
+    }
+
+    /* No active transaction — return last completed result. */
+    for (int i = 0; i < DEVICE_SETTINGS_MAX_DEVICES; i++) {
+        if (s_tx_results[i].used &&
+            strcmp(s_tx_results[i].device_id, device_id) == 0) {
+            if (out_last_result != NULL) {
+                *out_last_result = s_tx_results[i].result;
+            }
+            return true;
+        }
+    }
+
+    return false;
 }

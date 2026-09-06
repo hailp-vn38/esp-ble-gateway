@@ -20,6 +20,7 @@ typedef enum {
     GW_EVENT_DEVICE_ADDED,
     GW_EVENT_DEVICE_RENAMED,
     GW_EVENT_DEVICE_REMOVED,
+    GW_EVENT_SETTINGS_CHANGED,    /* settings values/state changed */
 } gateway_event_type_t;
 
 typedef enum {
@@ -44,6 +45,7 @@ typedef struct {
     int32_t int_value;
 
     uint32_t schema_revision;
+    uint32_t config_revision;    /* for settings change events */
     int64_t updated_at_ms;
 } gateway_event_t;
 

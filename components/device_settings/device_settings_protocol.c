@@ -4,6 +4,7 @@
 #include "device_store.h"
 #include "esp_log.h"
 #include "esp_timer.h"
+#include "gateway_events.h"
 #include "gw_settings_view.h"
 
 static const char *TAG = "ds_protocol";
@@ -424,6 +425,16 @@ static void handle_values_end(const char *device_id,
              device_id,
              (unsigned)values->value_count,
              (unsigned long)values->config_revision);
+
+    /* Publish settings changed event. */
+    {
+        gateway_event_t ev = {
+            .type = GW_EVENT_SETTINGS_CHANGED,
+            .config_revision = values->config_revision,
+        };
+        strlcpy(ev.device_id, device_id, sizeof(ev.device_id));
+        gateway_events_publish(&ev);
+    }
 
     /* If a reconciliation is pending (post-COMMIT reboot), verify now. */
     if (rec->pending_reconciliation) {

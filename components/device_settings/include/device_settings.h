@@ -380,6 +380,9 @@ ds_transaction_t *ds_tx_find(const char *device_id);
 ds_transaction_t *ds_tx_alloc(void);
 void ds_tx_free(ds_transaction_t *tx);
 void ds_tx_reset_for_test(void);
+void device_settings_tx_store_result(const char *device_id,
+                                     ds_tx_result_t result,
+                                     uint32_t config_revision);
 
 /* ── Query API ─────────────────────────────────────────────────────── */
 
@@ -387,6 +390,24 @@ esp_err_t device_settings_get_state(const char *device_id,
                                     ds_schema_state_t *out_state);
 esp_err_t device_settings_get_record(const char *device_id,
                                      ds_device_record_t *out);
+
+/* ── Transaction status (for web layer) ──────────────────────────────
+ * Returns the current transaction state for a device.  If no transaction
+ * is active, returns the last completed result from the result registry.
+ * out_active: true if a transaction is currently in progress.
+ * out_state: current ds_tx_state_t.
+ * out_last_result: last completed result (valid when !out_active). */
+
+bool device_settings_tx_get_status(const char *device_id,
+                                   bool *out_active,
+                                   ds_tx_state_t *out_state,
+                                   ds_tx_result_t *out_last_result);
+
+/* ── State name helpers ────────────────────────────────────────────── */
+
+const char *device_settings_schema_state_name(ds_schema_state_t state);
+const char *device_settings_tx_state_name(ds_tx_state_t state);
+const char *device_settings_tx_result_name(ds_tx_result_t result);
 
 /* ── Per-device record access (internal) ───────────────────────────── */
 

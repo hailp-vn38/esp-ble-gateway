@@ -7,6 +7,7 @@
 #include "ble_central.h"
 #include "cJSON.h"
 #include "device_schema.h"
+#include "device_settings.h"
 #include "device_state.h"
 #include "device_store.h"
 #include "device_template.h"
@@ -178,6 +179,39 @@ static esp_err_t detail_get_handler(httpd_req_t *request)
     cJSON_AddBoolToObject(schema_json, "has_committed", schema.has_committed);
     cJSON_AddNumberToObject(schema_json, "updated_at_ms", schema.updated_at_ms);
     cJSON_AddItemToObject(root, "schema", schema_json);
+
+    /* Settings summary. */
+    {
+        ds_schema_state_t settings_state;
+        (void)device_settings_get_state(device_id, &settings_state);
+        cJSON *settings_json = cJSON_AddObjectToObject(root, "settings");
+        if (settings_json != NULL) {
+            bool supported = settings_state != DS_SCHEMA_UNSUPPORTED &&
+                             settings_state != DS_SCHEMA_UNKNOWN;
+            cJSON_AddBoolToObject(settings_json, "supported", supported);
+            cJSON_AddStringToObject(
+                settings_json, "state",
+                device_settings_schema_state_name(settings_state));
+            if (supported) {
+                const ds_schema_t *ds_schema =
+                    device_settings_schema_acquire(device_id);
+                if (ds_schema != NULL) {
+                    cJSON_AddNumberToObject(settings_json, "count",
+                                            ds_schema->setting_count);
+                    cJSON_AddNumberToObject(settings_json, "schema_revision",
+                                            ds_schema->schema_revision);
+                    device_settings_schema_release(ds_schema);
+                }
+                const ds_values_t *ds_values =
+                    device_settings_values_acquire(device_id);
+                if (ds_values != NULL) {
+                    cJSON_AddNumberToObject(settings_json, "config_revision",
+                                            ds_values->config_revision);
+                    device_settings_values_release(ds_values);
+                }
+            }
+        }
+    }
 
     if (schema.has_committed) {
         for (size_t i = 0; i < schema.feature_count; i++) {

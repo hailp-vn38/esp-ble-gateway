@@ -40,7 +40,7 @@ Device implementation details không nằm trong bộ này; gateway chỉ dựa 
 | G2 | `GATEWAY_PHASE_2_BLE_DISCOVERY_SNAPSHOTS.md` | ✅ DONE (2026-09-06) |
 | G3 | `GATEWAY_PHASE_3_TRANSACTION_SERVICE.md` | ✅ DONE (2026-09-06) |
 | G4 | `GATEWAY_PHASE_4_REBOOT_RECONCILIATION.md` | ✅ DONE (2026-09-06) |
-| G5 | `GATEWAY_PHASE_5_WEB_API.md` | REST/WS deterministic + secret-safe |
+| G5 | `GATEWAY_PHASE_5_WEB_API.md` | ✅ DONE (2026-09-06) |
 | G6 | `GATEWAY_PHASE_6_DEVICE_DETAIL_UI.md` | generic UI E2E pass |
 | G7 | `GATEWAY_PHASE_7_MEMORY_SOAK_HARDENING.md` | SRAM/PSRAM + soak release gates pass |
 

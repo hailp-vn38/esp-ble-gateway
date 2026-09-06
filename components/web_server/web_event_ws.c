@@ -277,6 +277,12 @@ static int serialize_event(const gateway_event_t *ev, char *buf, size_t len)
                      "{\"seq\":%" PRIu32 ",\"type\":\"resync.required\"}",
                      ev->seq);
         break;
+    case GW_EVENT_SETTINGS_CHANGED:
+        n = snprintf(buf, len,
+                     "{\"seq\":%" PRIu32 ",\"type\":\"settings.changed\""
+                     ",\"deviceId\":%s,\"configRevision\":%" PRIu32 "}",
+                     ev->seq, esc_device, ev->config_revision);
+        break;
     default:
         return -1;
     }

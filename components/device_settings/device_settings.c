@@ -5,6 +5,7 @@
 #include "esp_log.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/semphr.h"
+#include "gateway_events.h"
 
 static const char *TAG = "device_settings";
 
@@ -269,12 +270,29 @@ void device_settings_reconcile(const char *device_id)
                                               : DS_TX_FAILED;
     ds_tx_completion_fn cb = tx->completion;
     void *ctx = tx->context;
+    uint32_t rev = rec->config_rev;
 
     /* Release lock before freeing tx (tx_free may access record). */
     unlock();
 
+    /* Store result in registry and free. */
+    extern void ds_tx_free(ds_transaction_t *tx);
+    extern void device_settings_tx_store_result(const char *device_id,
+                                                ds_tx_result_t result,
+                                                uint32_t config_revision);
+    device_settings_tx_store_result(tx->device_id, outcome, rev);
     ds_tx_free(tx);
     if (cb != NULL) cb(outcome, ctx);
+
+    /* Publish settings changed event after reconciliation. */
+    {
+        gateway_event_t ev = {
+            .type = GW_EVENT_SETTINGS_CHANGED,
+            .config_revision = rev,
+        };
+        strlcpy(ev.device_id, device_id, sizeof(ev.device_id));
+        gateway_events_publish(&ev);
+    }
 }
 
 /* ── Query API ─────────────────────────────────────────────────────── */
@@ -348,4 +366,55 @@ void device_settings_reset_for_test(void)
     /* Also reset transaction state. */
     extern void ds_tx_reset_for_test(void);
     ds_tx_reset_for_test();
+}
+
+/* ── State name helpers ────────────────────────────────────────────── */
+
+const char *device_settings_schema_state_name(ds_schema_state_t state)
+{
+    switch (state) {
+    case DS_SCHEMA_UNKNOWN:     return "unknown";
+    case DS_SCHEMA_DISCOVERING: return "discovering";
+    case DS_SCHEMA_READY:       return "ready";
+    case DS_SCHEMA_UNSUPPORTED: return "unsupported";
+    case DS_SCHEMA_ERROR:       return "error";
+    }
+    return "unknown";
+}
+
+const char *device_settings_tx_state_name(ds_tx_state_t state)
+{
+    switch (state) {
+    case DS_TX_IDLE:            return "idle";
+    case DS_TX_PREVALIDATING:   return "running";
+    case DS_TX_BEGIN_SENT:      return "running";
+    case DS_TX_SET_SENT:        return "running";
+    case DS_TX_COMMIT_SENT:     return "running";
+    case DS_TX_WAITING_REBOOT:  return "waiting_reboot";
+    case DS_TX_VERIFYING:       return "verifying";
+    case DS_TX_SUCCEEDED:       return "succeeded";
+    case DS_TX_FAILED:          return "failed";
+    case DS_TX_CONFLICT:        return "conflict";
+    case DS_TX_CANCELLED:       return "cancelled";
+    }
+    return "unknown";
+}
+
+const char *device_settings_tx_result_name(ds_tx_result_t result)
+{
+    switch (result) {
+    case DS_TX_RESULT_OK:              return NULL;  /* no error */
+    case DS_TX_RESULT_BUSY:            return "busy";
+    case DS_TX_RESULT_VALIDATION_FAILED: return "validation_failed";
+    case DS_TX_RESULT_MEMORY_ERROR:    return "memory_error";
+    case DS_TX_RESULT_DEVICE_CONFLICT: return "conflict";
+    case DS_TX_RESULT_DEVICE_REJECTED: return "rejected";
+    case DS_TX_RESULT_TIMEOUT:         return "timeout";
+    case DS_TX_RESULT_DISCONNECTED:    return "disconnected";
+    case DS_TX_RESULT_CANCELLED:       return "cancelled";
+    case DS_TX_RESULT_FAILED:          return "failed";
+    case DS_TX_RESULT_OUTCOME_UNKNOWN: return "outcome_unknown";
+    case DS_TX_RESULT_INTERNAL:        return "internal_error";
+    }
+    return "internal_error";
 }

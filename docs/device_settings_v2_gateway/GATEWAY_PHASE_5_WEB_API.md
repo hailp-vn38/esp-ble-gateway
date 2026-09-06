@@ -1,4 +1,4 @@
-# Gateway Phase G5 — Web API & WebSocket Contract
+# Gateway Phase G5 — Web API & WebSocket Contract ✅ DONE (2026-09-06)
 
 
 **Repo:** `hailp-vn38/esp-ble-gateway`  
@@ -146,34 +146,34 @@ Event says “settings changed/state changed”; frontend refetches REST. No ful
 ## Tests
 
 ### GET
-- [ ] ready.
-- [ ] unsupported.
-- [ ] offline/stale semantics.
-- [ ] secret redaction.
-- [ ] concurrent snapshot swap no UAF.
+- [x] ready.
+- [x] unsupported.
+- [x] offline/stale semantics.
+- [x] secret redaction.
+- [x] concurrent snapshot swap no UAF.
 
 ### PUT
-- [ ] malformed.
-- [ ] stale revision.
-- [ ] unknown setting.
-- [ ] readonly.
-- [ ] max change count.
-- [ ] secret keep/set/clear.
-- [ ] returns 202 quickly; no blocking through reboot.
+- [x] malformed.
+- [x] stale revision.
+- [x] unknown setting.
+- [x] readonly.
+- [x] max change count.
+- [x] secret keep/set/clear.
+- [x] returns 202 quickly; no blocking through reboot.
 
 ### Memory
-- [ ] max schema GET does not allocate big internal buffer.
-- [ ] 50 repeated GET no internal leak.
-- [ ] PSRAM allocation failure returns bounded error.
+- [x] max schema GET does not allocate big internal buffer.
+- [x] 50 repeated GET no internal leak.
+- [x] PSRAM allocation failure returns bounded error.
 
 ## Security checklist
 
 Current dashboard auth limitations mean sensitive admin settings require caution. Regardless:
 
-- [ ] secret never in logs.
-- [ ] secret never in GET/WS.
-- [ ] blank secret input not interpreted as clear implicitly.
-- [ ] request body lifetime/zeroing considered for secret strings where practical.
+- [x] secret never in logs.
+- [x] secret never in GET/WS.
+- [x] blank secret input not interpreted as clear implicitly.
+- [x] request body lifetime/zeroing considered for secret strings where practical.
 
 ## Exit gate
 
