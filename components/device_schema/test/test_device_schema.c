@@ -323,7 +323,7 @@ TEST_CASE("discovery: begin → tool_item → feature_item → end commits",
     TEST_ASSERT_TRUE(device_schema_on_notify("dev1", &begin));
     vTaskDelay(pdMS_TO_TICKS(50));
 
-    gw_message_t tool0 = make_tool_item("dev1", 100, 0, "toggle", 0, 0x01,
+    gw_message_t tool0 = make_tool_item("dev1", 100, 0, "toggle", 1, 0x01,
                                         0, 0, 0);
     TEST_ASSERT_TRUE(device_schema_on_notify("dev1", &tool0));
     vTaskDelay(pdMS_TO_TICKS(50));
@@ -358,7 +358,7 @@ TEST_CASE("discovery: begin → tool_item → feature_item → end commits",
 
     /* Verify tool content. */
     TEST_ASSERT_EQUAL_STRING("toggle", snap.tools[0].command);
-    TEST_ASSERT_EQUAL_INT(0, snap.tools[0].value_type);
+    TEST_ASSERT_EQUAL_INT(1, snap.tools[0].value_type);
     TEST_ASSERT_EQUAL_STRING("set_level", snap.tools[1].command);
     TEST_ASSERT_EQUAL_INT(2, snap.tools[1].value_type);
     TEST_ASSERT_EQUAL_INT(0, snap.tools[1].min_value);
@@ -379,6 +379,8 @@ TEST_CASE("discovery: begin → tool_item → feature_item → end commits",
     cmd.has_device_id = 1;
     strlcpy(cmd.device_id, "dev1", sizeof(cmd.device_id));
     strlcpy(cmd.command, "toggle", sizeof(cmd.command));
+    cmd.has_bool_value = 1;
+    cmd.bool_value = 1;
     TEST_ASSERT_EQUAL_INT(DEVICE_SCHEMA_VALID,
                           device_schema_validate_command(&cmd, NULL));
 }
@@ -630,7 +632,7 @@ static void commit_schema_for_dev7(void)
     TEST_ASSERT_TRUE(device_schema_on_notify("dev7", &begin));
     vTaskDelay(pdMS_TO_TICKS(50));
 
-    gw_message_t tool0 = make_tool_item("dev7", 700, 0, "toggle", 0, 0,
+    gw_message_t tool0 = make_tool_item("dev7", 700, 0, "toggle", 1, 0,
                                         0, 0, 0);
     TEST_ASSERT_TRUE(device_schema_on_notify("dev7", &tool0));
     vTaskDelay(pdMS_TO_TICKS(50));

@@ -106,11 +106,16 @@ static void seed_typed_schema(const char *device_id, const char *command,
         feature.has_device_id = feature.has_snapshot_id = 1;
         feature.has_sequence = feature.has_feature_id = 1;
         feature.has_feature_type = feature.has_property_id = 1;
+        feature.has_value_type = feature.has_feature_schema_version = 1;
         feature.has_feature_tool = 1;
         feature.snapshot_id = snapshot_id;
         feature.sequence = 1;
         feature.feature_type = GW_FEATURE_GENERIC_RELAY;
         feature.property_id = property_id;
+        feature.value_type = value_type;
+        feature.feature_schema_version = 1;
+        strlcpy(feature.capability_label, feature_id,
+                sizeof(feature.capability_label));
         TEST_ASSERT_TRUE(device_schema_on_notify(device_id, &feature));
     }
 

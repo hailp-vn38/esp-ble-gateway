@@ -54,7 +54,7 @@ static cJSON *read_cached(const char *device_id,
     cJSON_AddStringToObject(payload, "device_id", device_id);
     cJSON_AddStringToObject(payload, "feature_id", feature->feature_id);
     device_template_value_type_t type =
-        device_template_property_value_type(feature->property_id);
+        (device_template_value_type_t)feature->value_type;
     if (type != DEVICE_TEMPLATE_VALUE_BOOL && type != DEVICE_TEMPLATE_VALUE_INT) {
         cJSON_AddStringToObject(payload, "error", "unsupported_property");
         *is_error = true;
@@ -69,9 +69,47 @@ static cJSON *read_cached(const char *device_id,
     }
     if (type == DEVICE_TEMPLATE_VALUE_BOOL)
         cJSON_AddBoolToObject(payload, "value", state.value_bool);
-    else
+    else {
         cJSON_AddNumberToObject(payload, "value", state.value_int);
+        cJSON_AddNumberToObject(payload, "value_raw", state.value_int);
+    }
+    cJSON_AddStringToObject(payload, "title", feature->title);
+    cJSON_AddStringToObject(payload, "unit", feature->unit);
+    cJSON_AddNumberToObject(payload, "decimals", feature->decimals);
     return payload;
+}
+
+static void add_actual_state(cJSON *payload, const char *device_id,
+                             const char *feature_id,
+                             const device_command_result_t *result)
+{
+    device_schema_snapshot_t schema;
+    if (device_schema_get(device_id, &schema) != ESP_OK ||
+        !schema.has_committed) return;
+
+    const device_schema_feature_t *feature = NULL;
+    for (size_t i = 0; i < schema.feature_count; ++i) {
+        if (strcmp(schema.features[i].feature_id, feature_id) == 0) {
+            feature = &schema.features[i];
+            break;
+        }
+    }
+    if (feature == NULL) return;
+
+    cJSON_AddStringToObject(payload, "title", feature->title);
+    cJSON_AddStringToObject(payload, "unit", feature->unit);
+    cJSON_AddNumberToObject(payload, "decimals", feature->decimals);
+
+    device_template_value_type_t type =
+        (device_template_value_type_t)feature->value_type;
+    if (type == DEVICE_TEMPLATE_VALUE_BOOL && result->has_feature_value_bool) {
+        cJSON_AddBoolToObject(payload, "value", result->feature_value_bool);
+    } else if (type == DEVICE_TEMPLATE_VALUE_INT &&
+               result->has_feature_value_int) {
+        cJSON_AddNumberToObject(payload, "value", result->feature_value_int);
+        cJSON_AddNumberToObject(payload, "value_raw",
+                                result->feature_value_int);
+    }
 }
 
 cJSON *mcp_device_control_format_result(const cJSON *payload, bool is_error,
@@ -156,6 +194,10 @@ cJSON *mcp_device_control_format_completion(
         default: break;
         }
         cJSON_AddStringToObject(payload, "error", name);
+    } else {
+        /* ACK feature values are authoritative: a device may clamp the
+         * requested raw setpoint before acknowledging it. */
+        add_actual_state(payload, device_id, feature_id, result);
     }
     cJSON *formatted = mcp_device_control_format_result(payload, !ok, protocol,
                                                          error);
@@ -268,7 +310,7 @@ esp_err_t mcp_device_control_resolve(const cJSON *params,
         return ESP_OK;
     }
     device_template_value_type_t type =
-        device_template_property_value_type(feature.property_id);
+        (device_template_value_type_t)feature.value_type;
     if (type == DEVICE_TEMPLATE_VALUE_BOOL) {
         if (!cJSON_IsBool(bool_value)) {
             out->error = (mcp_rpc_error_t){-32602, "bool_value is required"};

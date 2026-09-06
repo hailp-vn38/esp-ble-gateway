@@ -155,10 +155,13 @@ static esp_err_t schema_get_handler(httpd_req_t *request)
                         entry->property_id ==
                             snapshot.features[i].property_id) {
                         cJSON_AddBoolToObject(state_obj, "valid", entry->valid);
-                        cJSON_AddBoolToObject(state_obj, "value_bool",
-                                              entry->value_bool);
-                        cJSON_AddNumberToObject(state_obj, "value_int",
-                                                entry->value_int);
+                        if (snapshot.features[i].value_type == 1) {
+                            cJSON_AddBoolToObject(state_obj, "value_bool",
+                                                  entry->value_bool);
+                        } else if (snapshot.features[i].value_type == 2) {
+                            cJSON_AddNumberToObject(state_obj, "value_int",
+                                                    entry->value_int);
+                        }
                         cJSON_AddNumberToObject(state_obj, "updated_at_ms",
                                                 entry->updated_at_ms);
                         found = true;
@@ -167,8 +170,6 @@ static esp_err_t schema_get_handler(httpd_req_t *request)
                 }
                 if (!found) {
                     cJSON_AddBoolToObject(state_obj, "valid", false);
-                    cJSON_AddBoolToObject(state_obj, "value_bool", false);
-                    cJSON_AddNumberToObject(state_obj, "value_int", 0);
                     cJSON_AddNumberToObject(state_obj, "updated_at_ms", 0);
                 }
             }

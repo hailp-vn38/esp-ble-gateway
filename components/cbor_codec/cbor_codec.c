@@ -499,7 +499,7 @@ int cbor_codec_decode(const uint8_t *buf, size_t len, gw_message_t *out_msg)
     error = get_optional_text(&context, CBOR_KEY_FEATURE_TOOL, &optional_value);
     if (error == QCBOR_SUCCESS) {
         if (copy_text(optional_value, out_msg->feature_tool,
-                      sizeof(out_msg->feature_tool), false) != 0) return -1;
+                      sizeof(out_msg->feature_tool), true) != 0) return -1;
         out_msg->has_feature_tool = 1;
     } else if (error != QCBOR_ERR_LABEL_NOT_FOUND) return -1;
 

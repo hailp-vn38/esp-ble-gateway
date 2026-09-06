@@ -127,8 +127,11 @@ static gw_message_t make_feature_item(const char *device_id,
     msg.feature_type = feature_type;
     msg.has_property_id = 1;
     msg.property_id = property_id;
+    msg.has_value_type = 1;
+    msg.value_type = device_template_property_value_type(property_id);
     msg.has_feature_schema_version = 1;
     msg.feature_schema_version = 1;
+    strlcpy(msg.capability_label, feature_id, sizeof(msg.capability_label));
     if (feature_tool != NULL && feature_tool[0] != '\0') {
         msg.has_feature_tool = 1;
         strlcpy(msg.feature_tool, feature_tool, sizeof(msg.feature_tool));
@@ -162,9 +165,9 @@ static void feed_schema_discovery(const char *device_id, uint32_t snap_id)
     TEST_ASSERT_TRUE(device_schema_on_notify(device_id, &begin));
     vTaskDelay(pdMS_TO_TICKS(50));
 
-    /* tool 0: toggle (NONE, idempotent) */
+    /* tool 0: toggle (BOOL, idempotent) */
     gw_message_t tool0 = make_tool_item(device_id, snap_id, 0, "toggle",
-                                        0 /* NONE */, 0x01, 0, 0, 0);
+                                        1 /* BOOL */, 0x01, 0, 0, 0);
     TEST_ASSERT_TRUE(device_schema_on_notify(device_id, &tool0));
     vTaskDelay(pdMS_TO_TICKS(50));
 
@@ -759,7 +762,7 @@ TEST_CASE("ambiguous feature name", "[device_control]")
     vTaskDelay(pdMS_TO_TICKS(50));
 
     gw_message_t tool0 = make_tool_item("dc-amb-feat", 5001, 0, "toggle",
-                                        0, 0x01, 0, 0, 0);
+                                        1, 0x01, 0, 0, 0);
     TEST_ASSERT_TRUE(device_schema_on_notify("dc-amb-feat", &tool0));
     vTaskDelay(pdMS_TO_TICKS(50));
 

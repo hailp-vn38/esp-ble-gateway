@@ -40,35 +40,41 @@ static void schema_nvs_key(int index, char key[8])
 esp_err_t schema_persist_record(int index,
                                 const device_schema_snapshot_t *snapshot)
 {
-    persisted_schema_t persisted = {
-        .schema_version = SCHEMA_STORE_SCHEMA_VERSION,
-        .tool_count = (uint8_t)snapshot->tool_count,
-        .feature_count = (uint8_t)snapshot->feature_count,
-        .revision = snapshot->revision,
-    };
-    strlcpy(persisted.device_id, snapshot->device_id,
-            sizeof(persisted.device_id));
+    persisted_schema_t *persisted = gw_mem_calloc(
+        1, sizeof(*persisted), GW_MEM_EXTERNAL_PREFERRED);
+    if (persisted == NULL) return ESP_ERR_NO_MEM;
+
+    persisted->schema_version = SCHEMA_STORE_SCHEMA_VERSION;
+    persisted->tool_count = (uint8_t)snapshot->tool_count;
+    persisted->feature_count = (uint8_t)snapshot->feature_count;
+    persisted->revision = snapshot->revision;
+    strlcpy(persisted->device_id, snapshot->device_id,
+            sizeof(persisted->device_id));
     if (snapshot->tool_count > 0) {
-        memcpy(persisted.tools, snapshot->tools,
+        memcpy(persisted->tools, snapshot->tools,
                snapshot->tool_count * sizeof(snapshot->tools[0]));
     }
     if (snapshot->feature_count > 0) {
-        memcpy(persisted.features, snapshot->features,
+        memcpy(persisted->features, snapshot->features,
                snapshot->feature_count * sizeof(snapshot->features[0]));
     }
 
     nvs_handle_t handle;
     esp_err_t error = nvs_open(SCHEMA_NVS_NAMESPACE, NVS_READWRITE, &handle);
-    if (error != ESP_OK) return error;
+    if (error != ESP_OK) {
+        gw_mem_free(persisted);
+        return error;
+    }
     char key[8];
     schema_nvs_key(index, key);
     /* Always write the full struct so the on-disk layout matches the struct
        layout.  A compact blob (header + N tools + M features) would misalign
        when tool_count < MAX_TOOLS because features[] sits at a fixed offset
        past MAX_TOOLS slots in the struct. */
-    error = nvs_set_blob(handle, key, &persisted, sizeof(persisted));
+    error = nvs_set_blob(handle, key, persisted, sizeof(*persisted));
     if (error == ESP_OK) error = nvs_commit(handle);
     nvs_close(handle);
+    gw_mem_free(persisted);
     return error;
 }
 

@@ -206,6 +206,35 @@ TEST_CASE("CBOR v4 preserves semantic feature fields", "[cbor_codec]")
     TEST_ASSERT_EQUAL_INT32(-12000, decoded.feature_value_int);
 }
 
+TEST_CASE("CBOR v4 accepts an empty optional feature tool", "[cbor_codec]")
+{
+    /* Device v2 emits key 29 with an empty string for read-only features.
+     * On the gateway, that is equivalent to no writable-tool binding. */
+    const gw_message_t input = {
+        .protocol_version = GW_PROTOCOL_VERSION,
+        .type = "feature_item",
+        .command = "describe_capabilities",
+        .feature_id = "temperature_main",
+        .has_feature_id = 1,
+        .feature_type = GW_FEATURE_TEMPERATURE_SENSOR,
+        .has_feature_type = 1,
+        .property_id = GW_PROP_TEMPERATURE,
+        .has_property_id = 1,
+        .value_type = 2,
+        .has_value_type = 1,
+        .feature_tool = "",
+        .has_feature_tool = 1,
+    };
+    uint8_t encoded[GW_MSG_MAX_LEN];
+    int length = cbor_codec_encode(&input, encoded, sizeof(encoded));
+    TEST_ASSERT_GREATER_THAN(0, length);
+
+    gw_message_t decoded;
+    TEST_ASSERT_EQUAL_INT(0, cbor_codec_decode(encoded, length, &decoded));
+    TEST_ASSERT_TRUE(decoded.has_feature_tool);
+    TEST_ASSERT_EQUAL_STRING("", decoded.feature_tool);
+}
+
 TEST_CASE("CBOR v4 accepts feature items without v2 decimals", "[cbor_codec]")
 {
     const gw_message_t old_feature = {

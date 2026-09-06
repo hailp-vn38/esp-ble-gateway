@@ -98,7 +98,10 @@ bool mcp_sem_serialize_feature(cJSON *array,
                             device_template_property_name(feature->property_id));
 
     device_template_value_type_t type =
-        device_template_property_value_type(feature->property_id);
+        (device_template_value_type_t)feature->value_type;
+    cJSON_AddStringToObject(item, "title", feature->title);
+    cJSON_AddStringToObject(item, "unit", feature->unit);
+    cJSON_AddNumberToObject(item, "decimals", feature->decimals);
     cJSON_AddStringToObject(item, "value_type",
                             type == DEVICE_TEMPLATE_VALUE_BOOL ? "bool" :
                             type == DEVICE_TEMPLATE_VALUE_INT  ? "int"  : "none");

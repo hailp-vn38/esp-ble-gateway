@@ -8,6 +8,7 @@
 #include "esp_timer.h"
 #include "gateway_events.h"
 #include "device_template.h"
+#include "memory_policy.h"
 
 static const char *TAG = "schema_proto";
 
@@ -257,12 +258,21 @@ static void handle_end(const char *device_id, const gw_message_t *message)
         return;
     }
 
-    device_schema_snapshot_t committed;
+    device_schema_snapshot_t *committed = gw_mem_alloc(
+        sizeof(*committed), GW_MEM_EXTERNAL_PREFERRED);
+    if (committed == NULL) {
+        ESP_LOGE(TAG, "[%s] could not allocate committed schema snapshot",
+                 device_id);
+        return;
+    }
     bool persist = false;
     bool changed = false;
     int64_t now_ms = esp_timer_get_time() / 1000;
 
-    if (!schema_runtime_lock()) return;
+    if (!schema_runtime_lock()) {
+        gw_mem_free(committed);
+        return;
+    }
     schema_record_t *record = schema_runtime_find_locked(device_id);
     if (record != NULL) {
         bool complete =
@@ -288,15 +298,15 @@ static void handle_end(const char *device_id, const gw_message_t *message)
             record->committed = record->staging;
             record->has_committed = true;
             record->staging_active = false;
-            committed = record->committed;
+            *committed = record->committed;
             persist = true;
 
             ESP_LOGI(TAG,
                      "[%s] SCHEMA_END committed %u tools %u features "
                      "(revision=%lu changed=%d)",
-                     device_id, (unsigned)committed.tool_count,
-                     (unsigned)committed.feature_count,
-                     (unsigned long)committed.revision, (int)changed);
+                     device_id, (unsigned)committed->tool_count,
+                     (unsigned)committed->feature_count,
+                     (unsigned long)committed->revision, (int)changed);
         } else {
             ESP_LOGW(TAG, "[%s] SCHEMA_END incomplete", device_id);
             record->staging_active = false;
@@ -331,7 +341,7 @@ static void handle_end(const char *device_id, const gw_message_t *message)
                 schema_record_t *r = schema_runtime_find_locked(device_id);
                 if (r != NULL && r->persist_dirty) {
                     esp_err_t err = schema_persist_record(persist_index,
-                                                          &committed);
+                                                          committed);
                     if (err == ESP_OK) {
                         r->persist_dirty = false;
                     }
@@ -339,7 +349,7 @@ static void handle_end(const char *device_id, const gw_message_t *message)
                 schema_runtime_unlock();
             }
         } else {
-            esp_err_t error = schema_persist_record(persist_index, &committed);
+            esp_err_t error = schema_persist_record(persist_index, committed);
             if (error != ESP_OK) {
                 ESP_LOGW(TAG, "[%s] NVS persist failed: %s (persist_dirty=true)",
                          device_id, esp_err_to_name(error));
@@ -360,7 +370,7 @@ static void handle_end(const char *device_id, const gw_message_t *message)
      * decision, for every successful commit (changed or not). It must only
      * enqueue work — the exposure consumer relies on this contract. */
     if (persist) {
-        schema_runtime_notify_commit(device_id, committed.revision);
+        schema_runtime_notify_commit(device_id, committed->revision);
     }
 
     /* Publish schema event for realtime consumers (WebSocket, etc.) */
@@ -368,9 +378,11 @@ static void handle_end(const char *device_id, const gw_message_t *message)
         gateway_event_t ev = {0};
         ev.type = GW_EVENT_DEVICE_SCHEMA;
         strlcpy(ev.device_id, device_id, sizeof(ev.device_id));
-        ev.schema_revision = committed.revision;
+        ev.schema_revision = committed->revision;
         gateway_events_publish(&ev);
     }
+
+    gw_mem_free(committed);
 }
 
 /* ── Public entry point ─────────────────────────────────────────────── */

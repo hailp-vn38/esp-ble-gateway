@@ -72,7 +72,7 @@ static cJSON *schema_device_control(void)
     cJSON *feat = cJSON_CreateObject();
     if (feat == NULL) { cJSON_Delete(schema); return NULL; }
     cJSON_AddStringToObject(feat, "type", "string");
-    cJSON_AddStringToObject(feat, "description", "Optional for describe; required for read/set. Feature id or trusted semantic name");
+    cJSON_AddStringToObject(feat, "description", "Optional for describe; required for read/set. Prefer exact feature_id returned by describe/list; semantic name is accepted only when unique.");
     cJSON_AddItemToObject(properties, "feature", feat);
 
     /* bool_value: optional boolean for set */

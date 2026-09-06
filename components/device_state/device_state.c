@@ -9,6 +9,7 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/portmacro.h"
 #include "gateway_events.h"
+#include "memory_policy.h"
 
 static const char *TAG = "device_state";
 
@@ -59,16 +60,23 @@ static void on_schema_committed(const char *device_id, uint32_t revision,
     (void)revision;
     (void)context;
 
-    device_schema_snapshot_t cap;
-    if (device_schema_get(device_id, &cap) != ESP_OK || !cap.has_committed) {
+    device_schema_snapshot_t *cap = gw_mem_alloc(
+        sizeof(*cap), GW_MEM_EXTERNAL_PREFERRED);
+    if (cap == NULL) {
+        ESP_LOGW(TAG, "[%s] could not allocate schema snapshot for state seed",
+                 device_id);
+        return;
+    }
+    if (device_schema_get(device_id, cap) != ESP_OK || !cap->has_committed) {
+        gw_mem_free(cap);
         return;
     }
 
     ESP_LOGI(TAG, "[%s] seeding state for %zu features",
-             device_id, cap.feature_count);
+             device_id, cap->feature_count);
 
-    for (size_t i = 0; i < cap.feature_count; i++) {
-        const device_schema_feature_t *f = &cap.features[i];
+    for (size_t i = 0; i < cap->feature_count; i++) {
+        const device_schema_feature_t *f = &cap->features[i];
         if (f->property_id == GW_PROP_NONE) {
             continue;
         }
@@ -89,6 +97,7 @@ static void on_schema_committed(const char *device_id, uint32_t revision,
                      device_id, f->feature_id, esp_err_to_name(err));
         }
     }
+    gw_mem_free(cap);
 }
 
 /* ── Shared state-apply helper ──────────────────────────────────────── */

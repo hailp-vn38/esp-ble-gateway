@@ -12,6 +12,24 @@ const devices = {
     detailLoadPromise: null,
     detailReloadRequested: false,
 
+    scaleOf(feature) {
+        return 10 ** Math.max(0, Number(feature?.decimals) || 0);
+    },
+
+    rawToDisplay(feature, raw) {
+        return Number(raw) / this.scaleOf(feature);
+    },
+
+    displayToRaw(feature, value) {
+        return Math.round(Number(value) * this.scaleOf(feature));
+    },
+
+    formatNumeric(feature, raw) {
+        const decimals = Math.max(0, Number(feature?.decimals) || 0);
+        const display = this.rawToDisplay(feature, raw);
+        return `${display.toFixed(decimals)}${feature?.unit ? ` ${feature.unit}` : ''}`;
+    },
+
     _initEvents() {
         if (this._eventsInitialized) return;
         this._eventsInitialized = true;
@@ -642,10 +660,11 @@ const devices = {
         const titleGroup = document.createElement('div');
         titleGroup.className = 'flex items-center gap-2';
 
-        const featureId = document.createElement('span');
-        featureId.className = 'text-sm font-semibold text-gray-800';
-        featureId.textContent = feature.feature_id;
-        titleGroup.appendChild(featureId);
+        const featureTitle = document.createElement('span');
+        featureTitle.className = 'text-sm font-semibold text-gray-800';
+        featureTitle.textContent = feature.title || feature.semantic?.name || feature.feature_id;
+        featureTitle.title = feature.feature_id;
+        titleGroup.appendChild(featureTitle);
 
         const semantic = feature.semantic;
         const semanticSupported = semantic?.name && semantic.name !== 'unknown';
@@ -670,7 +689,7 @@ const devices = {
                 stateText.textContent = feature.state.value_bool ? 'ON' : 'OFF';
             } else if (semantic?.value_type === 'int' &&
                        Number.isFinite(feature.state.value_int)) {
-                stateText.textContent = String(feature.state.value_int);
+                stateText.textContent = this.formatNumeric(feature, feature.state.value_int);
             }
             header.appendChild(stateText);
         }
@@ -681,7 +700,7 @@ const devices = {
         control.className = 'flex flex-col sm:flex-row gap-2';
 
         if (semanticSupported && feature.control?.writable && feature.control.write_command) {
-            if (semantic.primary_property === 1) {
+            if (feature.value_type === 1) {
                 /* ON/OFF property → toggle button */
                 const isOn = feature.state && feature.state.valid && feature.state.value_bool;
                 const toggleBtn = document.createElement('button');
@@ -693,26 +712,43 @@ const devices = {
                 toggleBtn.textContent = isOn ? i18n.t('device_detail.turn_off') : i18n.t('device_detail.turn_on');
                 toggleBtn.onclick = () => this.sendToggle(feature);
                 control.appendChild(toggleBtn);
-            } else if (semantic.primary_property === 2) {
-                /* LEVEL property → slider or integer input */
-                const min = feature.control.minimum ?? 0;
-                const max = feature.control.maximum ?? 100;
-                const step = feature.control.step ?? 1;
+            } else if (feature.value_type === 2 &&
+                       Number.isFinite(feature.control.minimum) &&
+                       Number.isFinite(feature.control.maximum) &&
+                       Number.isFinite(feature.control.step)) {
+                /* Every writable INT feature uses raw tool limits but display scaling. */
+                const min = this.rawToDisplay(feature, feature.control.minimum);
+                const max = this.rawToDisplay(feature, feature.control.maximum);
+                const step = this.rawToDisplay(feature, feature.control.step);
+                const current = feature.state?.valid
+                    ? this.rawToDisplay(feature, feature.state.value_int) : min;
                 const input = document.createElement('input');
                 input.type = 'range';
                 input.min = min;
                 input.max = max;
                 input.step = step;
-                input.value = (feature.state && feature.state.valid) ? feature.state.value_int : min;
+                input.value = current;
                 input.disabled = device.status !== 'online';
                 input.className = 'flex-1';
+                const number = document.createElement('input');
+                number.type = 'number';
+                number.min = min;
+                number.max = max;
+                number.step = step;
+                number.value = current;
+                number.disabled = device.status !== 'online';
+                number.className = 'w-24 rounded border border-gray-300 px-2 py-1 text-sm';
+                input.oninput = () => { number.value = input.value; };
+                number.oninput = () => { input.value = number.value; };
                 const applyBtn = document.createElement('button');
                 applyBtn.type = 'button';
                 applyBtn.disabled = device.status !== 'online';
                 applyBtn.className = 'px-4 py-2 bg-brand-600 text-white rounded-lg hover:bg-brand-700 transition-colors text-sm font-medium disabled:opacity-50 disabled:cursor-not-allowed';
                 applyBtn.textContent = i18n.t('device_detail.apply');
-                applyBtn.onclick = () => this.sendCommand(feature.control.write_command, 'integer', Number(input.value), [input, applyBtn]);
-                control.append(input, applyBtn);
+                applyBtn.onclick = () => this.sendCommand(
+                    feature.control.write_command, 'integer',
+                    this.displayToRaw(feature, number.value), [input, number, applyBtn]);
+                control.append(input, number, applyBtn);
             } else {
                 /* Unknown property → action button */
                 const actionBtn = document.createElement('button');

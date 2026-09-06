@@ -56,8 +56,12 @@ static cJSON *feature_to_json(const char *device_id,
     if (object == NULL) return NULL;
 
     cJSON_AddStringToObject(object, "feature_id", feature->feature_id);
+    cJSON_AddStringToObject(object, "title", feature->title);
+    cJSON_AddStringToObject(object, "unit", feature->unit);
     cJSON_AddNumberToObject(object, "feature_type", feature->feature_type);
     cJSON_AddNumberToObject(object, "property_id", feature->property_id);
+    cJSON_AddNumberToObject(object, "value_type", feature->value_type);
+    cJSON_AddNumberToObject(object, "decimals", feature->decimals);
 
     const device_template_t *template = device_template_resolve(
         feature->feature_type, feature->feature_schema_version);
@@ -71,7 +75,7 @@ static cJSON *feature_to_json(const char *device_id,
 
     const char *property = device_template_property_name(feature->property_id);
     device_template_value_type_t value_type =
-        device_template_property_value_type(feature->property_id);
+        (device_template_value_type_t)feature->value_type;
     cJSON_AddStringToObject(semantic, "name",
                             template != NULL ? template->semantic_name : "unknown");
     cJSON_AddStringToObject(semantic, "property", property);

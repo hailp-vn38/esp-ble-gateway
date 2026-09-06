@@ -107,6 +107,7 @@ TEST_CASE("sem_resolve_feature: exact feature_id match", "[mcp_semantic]")
     feat.feature_type = GW_FEATURE_ON_OFF_LIGHT;
     feat.feature_schema_version = 1;
     feat.property_id = GW_PROP_ON_OFF;
+    feat.value_type = DEVICE_TEMPLATE_VALUE_BOOL;
 
     device_schema_snapshot_t snap = make_snapshot(&feat, 1, NULL, 0);
     cJSON *arg = cJSON_CreateString("feat-onoff");
@@ -125,6 +126,7 @@ TEST_CASE("sem_resolve_feature: unique semantic name fallback", "[mcp_semantic]"
     feat.feature_type = GW_FEATURE_ON_OFF_LIGHT;
     feat.feature_schema_version = 1;
     feat.property_id = GW_PROP_ON_OFF;
+    feat.value_type = DEVICE_TEMPLATE_VALUE_BOOL;
 
     device_schema_snapshot_t snap = make_snapshot(&feat, 1, NULL, 0);
     cJSON *arg = cJSON_CreateString("light");
@@ -143,11 +145,13 @@ TEST_CASE("sem_resolve_feature: duplicate semantic is ambiguous", "[mcp_semantic
     feats[0].feature_type = GW_FEATURE_ON_OFF_LIGHT;
     feats[0].feature_schema_version = 1;
     feats[0].property_id = GW_PROP_ON_OFF;
+    feats[0].value_type = DEVICE_TEMPLATE_VALUE_BOOL;
 
     strlcpy(feats[1].feature_id, "feat-b", sizeof(feats[1].feature_id));
     feats[1].feature_type = GW_FEATURE_DIMMABLE_LIGHT;
     feats[1].feature_schema_version = 1;
     feats[1].property_id = GW_PROP_ON_OFF;
+    feats[1].value_type = DEVICE_TEMPLATE_VALUE_BOOL;
 
     device_schema_snapshot_t snap = make_snapshot(feats, 2, NULL, 0);
     cJSON *arg = cJSON_CreateString("light");
@@ -200,6 +204,7 @@ TEST_CASE("sem_serialize_feature: BOOL feature", "[mcp_semantic]")
     feat.feature_type = GW_FEATURE_ON_OFF_LIGHT;
     feat.feature_schema_version = 1;
     feat.property_id = GW_PROP_ON_OFF;
+    feat.value_type = DEVICE_TEMPLATE_VALUE_BOOL;
     feat.writable_tool_index = -1; /* read-only */
 
     device_schema_snapshot_t snap = make_snapshot(&feat, 1, NULL, 0);
@@ -241,6 +246,7 @@ TEST_CASE("sem_serialize_feature: writable INT feature with range", "[mcp_semant
     feat.feature_type = GW_FEATURE_DIMMABLE_LIGHT;
     feat.feature_schema_version = 1;
     feat.property_id = GW_PROP_LEVEL;
+    feat.value_type = DEVICE_TEMPLATE_VALUE_INT;
     feat.writable_tool_index = 0; /* points to tool[0] */
 
     device_schema_snapshot_t snap = make_snapshot(&feat, 1, &tool, 1);
@@ -264,6 +270,72 @@ TEST_CASE("sem_serialize_feature: writable INT feature with range", "[mcp_semant
     TEST_ASSERT_EQUAL_DOUBLE(5.0, step->valuedouble);
 
     cJSON_Delete(array);
+}
+
+TEST_CASE("sem_serialize_feature: generic value exposes v2 metadata", "[mcp_semantic]")
+{
+    device_schema_tool_t tool = {0};
+    strlcpy(tool.command, "set_dryer_temperature", sizeof(tool.command));
+    tool.value_type = DEVICE_TEMPLATE_VALUE_INT;
+    tool.min_value = 300;
+    tool.max_value = 1000;
+    tool.step = 5;
+
+    device_schema_feature_t feature = {0};
+    strlcpy(feature.feature_id, "dryer_temperature",
+            sizeof(feature.feature_id));
+    strlcpy(feature.title, "Nhiet do say", sizeof(feature.title));
+    strlcpy(feature.unit, "C", sizeof(feature.unit));
+    feature.feature_type = GW_FEATURE_GENERIC_VALUE;
+    feature.feature_schema_version = 1;
+    feature.property_id = GW_PROP_VALUE;
+    feature.value_type = DEVICE_TEMPLATE_VALUE_INT;
+    feature.decimals = 1;
+    feature.writable_tool_index = 0;
+
+    device_schema_snapshot_t snap = make_snapshot(&feature, 1, &tool, 1);
+    cJSON *array = cJSON_CreateArray();
+    TEST_ASSERT_TRUE(mcp_sem_serialize_feature(array, &snap, &feature));
+
+    cJSON *item = cJSON_GetArrayItem(array, 0);
+    TEST_ASSERT_EQUAL_STRING("value", cJSON_GetStringValue(
+        cJSON_GetObjectItemCaseSensitive(item, "semantic_name")));
+    TEST_ASSERT_EQUAL_STRING("Nhiet do say", cJSON_GetStringValue(
+        cJSON_GetObjectItemCaseSensitive(item, "title")));
+    TEST_ASSERT_EQUAL_STRING("C", cJSON_GetStringValue(
+        cJSON_GetObjectItemCaseSensitive(item, "unit")));
+    TEST_ASSERT_EQUAL_INT(1, cJSON_GetObjectItemCaseSensitive(
+        item, "decimals")->valueint);
+    TEST_ASSERT_EQUAL_INT(300, cJSON_GetObjectItemCaseSensitive(
+        item, "minimum")->valueint);
+    TEST_ASSERT_TRUE(cJSON_IsTrue(cJSON_GetObjectItemCaseSensitive(
+        item, "writable")));
+    cJSON_Delete(array);
+}
+
+TEST_CASE("sem_resolve_feature: generic semantic value is ambiguous", "[mcp_semantic]")
+{
+    device_schema_feature_t features[2] = {0};
+    for (size_t i = 0; i < 2; ++i) {
+        strlcpy(features[i].feature_id,
+                i == 0 ? "dryer_temperature" : "drying_time",
+                sizeof(features[i].feature_id));
+        features[i].feature_type = GW_FEATURE_GENERIC_VALUE;
+        features[i].feature_schema_version = 1;
+        features[i].property_id = GW_PROP_VALUE;
+        features[i].value_type = DEVICE_TEMPLATE_VALUE_INT;
+    }
+    device_schema_snapshot_t snap = make_snapshot(features, 2, NULL, 0);
+    cJSON *arg = cJSON_CreateString("value");
+    device_schema_feature_t out = {0};
+    TEST_ASSERT_EQUAL(MCP_SEM_AMBIGUOUS,
+                      mcp_sem_resolve_feature(&snap, arg, &out));
+    cJSON_Delete(arg);
+
+    arg = cJSON_CreateString("dryer_temperature");
+    TEST_ASSERT_EQUAL(MCP_SEM_OK, mcp_sem_resolve_feature(&snap, arg, &out));
+    TEST_ASSERT_EQUAL_STRING("dryer_temperature", out.feature_id);
+    cJSON_Delete(arg);
 }
 
 /* ── Hint serialization tests ───────────────────────────────────────── */
