@@ -396,19 +396,13 @@ cJSON *mcp_tools_execute_list_devices(const mcp_request_context_t *ctx,
 
         /* Control hints via shared semantic helper */
         cJSON *controls = cJSON_AddArrayToObject(item, "controls");
-        mcp_control_hint_t hints[MCP_SEMANTIC_CONTROL_HINT_MAX] = {0};
-        size_t hint_count = 0;
-        bool controls_truncated = false;
-        if (controls != NULL &&
-            mcp_semantic_control_get_hints(
-                devices[i].device_id, hints, MCP_SEMANTIC_CONTROL_HINT_MAX,
-                &hint_count, &controls_truncated) == ESP_OK) {
-            if (mcp_semantic_control_serialize_hints(controls, hints,
-                                                    hint_count) != ESP_OK)
-                controls_truncated = true;
+        size_t control_count = 0;
+        if (controls != NULL) {
+            esp_err_t hint_err =
+                mcp_semantic_control_append_hints(
+                    devices[i].device_id, controls, &control_count);
+            (void)hint_err;
         }
-        if (controls_truncated)
-            cJSON_AddBoolToObject(item, "controls_truncated", true);
 
         /* BLE address */
         cJSON_AddBoolToObject(item, "has_ble_addr", devices[i].has_ble_identity);
@@ -423,33 +417,11 @@ cJSON *mcp_tools_execute_list_devices(const mcp_request_context_t *ctx,
         cJSON_AddItemToArray(array, item);
     }
 
-    /* Truncate if payload too large for MCP content envelope */
     char *printed = cJSON_PrintUnformatted(array);
-    if (printed == NULL) {
-        /* Try removing controls one by one from the last device */
-        bool trimmed = false;
-        for (int i = cJSON_GetArraySize(array) - 1;
-             i >= 0 && !trimmed; --i) {
-            cJSON *dev = cJSON_GetArrayItem(array, i);
-            cJSON *ctl = cJSON_GetObjectItemCaseSensitive(dev, "controls");
-            int ctl_count = cJSON_GetArraySize(ctl);
-            if (ctl_count <= 0) continue;
-            cJSON_DeleteItemFromArray(ctl, ctl_count - 1);
-            cJSON *trunc = cJSON_GetObjectItemCaseSensitive(
-                dev, "controls_truncated");
-            if (trunc != NULL)
-                cJSON_SetBoolValue(trunc, true);
-            else
-                cJSON_AddBoolToObject(dev, "controls_truncated", true);
-            trimmed = true;
-        }
-        if (trimmed)
-            printed = cJSON_PrintUnformatted(array);
-    }
     cJSON_Delete(array);
 
     if (printed == NULL) {
-        *error = (mcp_rpc_error_t){-32603, "device list too large"};
+        *error = (mcp_rpc_error_t){-32603, "out of memory"};
         return NULL;
     }
 

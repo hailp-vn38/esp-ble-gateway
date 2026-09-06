@@ -941,6 +941,72 @@ uint32_t mcp_tool_exposure_get_policy_revision(void)
     return s_policy_revision;
 }
 
+/* ── Single-feature eligibility check ────────────────────────────────── */
+
+static bool build_control_hint(const char *device_id,
+                               const device_schema_snapshot_t *schema,
+                               const device_schema_feature_t *feature,
+                               mcp_control_hint_t *out)
+{
+    if (feature->feature_id[0] == '\0' ||
+        feature->writable_tool_index < 0 ||
+        (size_t)feature->writable_tool_index >= schema->tool_count) {
+        return false;
+    }
+
+    const device_schema_tool_t *tool =
+        &schema->tools[feature->writable_tool_index];
+
+    const device_template_t *tpl = device_template_resolve(
+        feature->feature_type, feature->feature_schema_version);
+    device_template_value_type_t value_type =
+        device_template_property_value_type(feature->property_id);
+
+    if (tpl == NULL || tpl->semantic_name[0] == '\0' ||
+        (value_type != DEVICE_TEMPLATE_VALUE_BOOL &&
+         value_type != DEVICE_TEMPLATE_VALUE_INT) ||
+        tool->value_type != (uint8_t)value_type ||
+        (tool->flags & DEVICE_SCHEMA_FLAG_DESTRUCTIVE) != 0) {
+        return false;
+    }
+
+    mcp_tool_exposure_t exposure = {0};
+    if (mcp_tool_exposure_get_feature(device_id, feature->feature_id,
+                                      &exposure) != ESP_OK ||
+        !exposure.control_enabled ||
+        exposure.state != MCP_EXPOSURE_ENABLED) {
+        return false;
+    }
+
+    uint8_t digest[MCP_CAPABILITY_DIGEST_LEN];
+    mcp_tool_digest_compute(tool, digest);
+    if (!mcp_tool_digest_match(digest, exposure.capability_digest)) {
+        return false;
+    }
+
+    memset(out, 0, sizeof(*out));
+    strlcpy(out->feature_id, feature->feature_id, sizeof(out->feature_id));
+    strlcpy(out->semantic_name, tpl->semantic_name,
+            sizeof(out->semantic_name));
+    strlcpy(out->property_name,
+            device_template_property_name(feature->property_id),
+            sizeof(out->property_name));
+    out->value_type = (uint8_t)value_type;
+
+    if (value_type == DEVICE_TEMPLATE_VALUE_INT) {
+        out->has_min = true;
+        out->min_value = tool->min_value;
+        out->has_max = true;
+        out->max_value = tool->max_value;
+        out->has_step = true;
+        out->step = tool->step;
+    }
+
+    return true;
+}
+
+/* ── Bounded snapshot (existing API) ─────────────────────────────────── */
+
 esp_err_t mcp_semantic_control_get_hints(
     const char *device_id,
     mcp_control_hint_t *out,
@@ -962,36 +1028,9 @@ esp_err_t mcp_semantic_control_get_hints(
     }
 
     for (size_t i = 0; i < schema.feature_count; ++i) {
-        const device_schema_feature_t *feature = &schema.features[i];
-        if (feature->feature_id[0] == '\0' ||
-            feature->writable_tool_index < 0 ||
-            (size_t)feature->writable_tool_index >= schema.tool_count) {
-            continue;
-        }
-        const device_schema_tool_t *tool =
-            &schema.tools[feature->writable_tool_index];
-        const device_template_t *tpl = device_template_resolve(
-            feature->feature_type, feature->feature_schema_version);
-        device_template_value_type_t value_type =
-            device_template_property_value_type(feature->property_id);
-        if (tpl == NULL || tpl->semantic_name[0] == '\0' ||
-            (value_type != DEVICE_TEMPLATE_VALUE_BOOL &&
-             value_type != DEVICE_TEMPLATE_VALUE_INT) ||
-            tool->value_type != (uint8_t)value_type ||
-            (tool->flags & DEVICE_SCHEMA_FLAG_DESTRUCTIVE) != 0) {
-            continue;
-        }
-
-        mcp_tool_exposure_t exposure = {0};
-        if (mcp_tool_exposure_get_feature(device_id, feature->feature_id,
-                                          &exposure) != ESP_OK ||
-            !exposure.control_enabled ||
-            exposure.state != MCP_EXPOSURE_ENABLED) {
-            continue;
-        }
-        uint8_t digest[MCP_CAPABILITY_DIGEST_LEN];
-        mcp_tool_digest_compute(tool, digest);
-        if (!mcp_tool_digest_match(digest, exposure.capability_digest)) {
+        mcp_control_hint_t hint;
+        if (!build_control_hint(device_id, &schema, &schema.features[i],
+                                &hint)) {
             continue;
         }
 
@@ -999,23 +1038,42 @@ esp_err_t mcp_semantic_control_get_hints(
             *out_truncated = true;
             continue;
         }
-        mcp_control_hint_t *hint = &out[*out_count];
-        memset(hint, 0, sizeof(*hint));
-        strlcpy(hint->feature_id, feature->feature_id,
-                sizeof(hint->feature_id));
-        strlcpy(hint->semantic_name, tpl->semantic_name,
-                sizeof(hint->semantic_name));
-        strlcpy(hint->property_name,
-                device_template_property_name(feature->property_id),
-                sizeof(hint->property_name));
-        hint->value_type = (uint8_t)value_type;
-        if (value_type == DEVICE_TEMPLATE_VALUE_INT) {
-            hint->has_min = true;
-            hint->min_value = tool->min_value;
-            hint->has_max = true;
-            hint->max_value = tool->max_value;
-            hint->has_step = true;
-            hint->step = tool->step;
+        out[*out_count] = hint;
+        (*out_count)++;
+    }
+    return ESP_OK;
+}
+
+/* ── Incremental serialization (new API, Phase 2) ────────────────────── */
+
+esp_err_t mcp_semantic_control_append_hints(
+    const char *device_id,
+    cJSON *array,
+    size_t *out_count)
+{
+    if (device_id == NULL || array == NULL || out_count == NULL ||
+        !cJSON_IsArray(array)) {
+        return ESP_ERR_INVALID_ARG;
+    }
+    *out_count = 0;
+
+    device_schema_snapshot_t schema = {0};
+    if (device_schema_get(device_id, &schema) != ESP_OK ||
+        !schema.has_committed) {
+        return ESP_ERR_NOT_FOUND;
+    }
+
+    for (size_t i = 0; i < schema.feature_count; ++i) {
+        mcp_control_hint_t hint = {0};
+        if (!build_control_hint(device_id, &schema, &schema.features[i],
+                                &hint)) {
+            continue;
+        }
+
+        esp_err_t err =
+            mcp_semantic_control_serialize_hints(array, &hint, 1);
+        if (err != ESP_OK) {
+            return err;
         }
         (*out_count)++;
     }

@@ -15,7 +15,13 @@ extern "C" {
 
 #define MCP_DYNAMIC_TOOL_NAME_MAX 128
 #define MCP_CAPABILITY_DIGEST_LEN 16
-#define MCP_SEMANTIC_CONTROL_HINT_MAX 4
+
+/*
+ * A device schema can expose at most DEVICE_SCHEMA_MAX_FEATURES features.
+ * list_devices must therefore be able to return every eligible semantic
+ * control without applying an unrelated MCP-specific limit.
+ */
+#define MCP_SEMANTIC_CONTROL_HINT_MAX DEVICE_SCHEMA_MAX_FEATURES
 
 typedef struct {
     char feature_id[GW_FEATURE_ID_LEN];
@@ -147,6 +153,16 @@ esp_err_t mcp_semantic_control_get_hints(
 esp_err_t mcp_semantic_control_serialize_hints(cJSON *array,
                                                const mcp_control_hint_t *hints,
                                                size_t count);
+
+// Incrementally append eligible semantic control hints directly into a cJSON
+// array without first collecting them into an intermediate buffer.  One
+// mcp_control_hint_t is allocated on the stack per eligible feature, keeping
+// stack usage minimal compared to get_hints() which needs capacity slots.
+// Returns the number of hints appended in *out_count.
+esp_err_t mcp_semantic_control_append_hints(
+    const char *device_id,
+    cJSON *array,
+    size_t *out_count);
 
 #ifdef __cplusplus
 }
