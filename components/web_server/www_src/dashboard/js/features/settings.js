@@ -40,11 +40,20 @@ const settings = {
             this.networkState = data.network || { connected: false };
 
             document.getElementById('set-fw-version').textContent = system.firmware || '—';
-            document.getElementById('set-idf-version').textContent = `IDF ${system.idf || '—'}`;
+            document.getElementById('set-idf-version').textContent = system.idf || '—';
             document.getElementById('set-uptime').textContent =
                 this.formatUptime(system.uptime_ms || 0);
-            document.getElementById('set-heap').textContent =
-                this.formatMemory(system.free_heap || 0);
+            document.getElementById('set-internal-free').textContent =
+                `${this.formatMemory(system.internal_free || 0)} ${i18n.t('settings.free')}`;
+            document.getElementById('set-internal-min').textContent =
+                `${i18n.t('settings.minimum_free')} ${this.formatMemory(system.internal_min_free || 0)}`;
+            const psramReady = Boolean(system.psram_ready);
+            document.getElementById('set-psram-free').textContent = psramReady
+                ? `${this.formatMemory(system.psram_free || 0)} ${i18n.t('settings.free')}`
+                : i18n.t('settings.psram_unavailable');
+            document.getElementById('set-psram-min').textContent = psramReady
+                ? `${i18n.t('settings.minimum_free')} ${this.formatMemory(system.psram_min_free || 0)}`
+                : '—';
             document.getElementById('set-ssid').textContent =
                 this.networkState.ssid || i18n.t('settings.disconnected');
             document.getElementById('set-ip').textContent = this.networkState.ip || '0.0.0.0';

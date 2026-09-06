@@ -17,32 +17,36 @@
                     <!-- System summary -->
                     <section aria-labelledby="settings-summary-title">
                         <h3 id="settings-summary-title" data-i18n="settings.system_summary" class="sr-only">System summary</h3>
-                        <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
-                            <article class="bg-white rounded-xl border border-gray-200 p-5 shadow-sm min-w-0">
-                                <div class="flex items-center gap-2 text-gray-500 mb-3">
-                                    <i class="ph ph-cpu text-lg text-brand-600" aria-hidden="true"></i>
-                                    <span data-i18n="settings.firmware_version" class="text-xs font-semibold uppercase tracking-wide">Firmware</span>
+                        <article class="bg-white rounded-xl border border-gray-200 p-4 md:p-5 shadow-sm">
+                            <div class="flex items-center gap-2 mb-4">
+                                <i class="ph ph-cpu text-lg text-brand-600" aria-hidden="true"></i>
+                                <h3 data-i18n="settings.system" class="text-sm font-semibold text-gray-900">System</h3>
+                            </div>
+                            <div class="grid grid-cols-2 md:grid-cols-3 gap-x-6 gap-y-4">
+                                <div class="min-w-0">
+                                    <p data-i18n="settings.firmware_version" class="text-xs font-medium text-gray-500">Firmware</p>
+                                    <p id="set-fw-version" class="mt-1 text-sm font-semibold text-gray-900 font-mono break-all">—</p>
                                 </div>
-                                <p id="set-fw-version" class="text-lg font-semibold text-gray-900 font-mono break-all">Checking…</p>
-                                <p id="set-idf-version" class="text-xs text-gray-500 font-mono mt-1">IDF —</p>
-                            </article>
-
-                            <article class="bg-white rounded-xl border border-gray-200 p-5 shadow-sm">
-                                <div class="flex items-center gap-2 text-gray-500 mb-3">
-                                    <i class="ph ph-spinner text-lg text-brand-600" aria-hidden="true"></i>
-                                    <span data-i18n="settings.uptime" class="text-xs font-semibold uppercase tracking-wide">Uptime</span>
+                                <div>
+                                    <p data-i18n="settings.idf_version" class="text-xs font-medium text-gray-500">ESP-IDF</p>
+                                    <p id="set-idf-version" class="mt-1 text-sm font-semibold text-gray-900 font-mono">—</p>
                                 </div>
-                                <p id="set-uptime" class="text-2xl font-semibold text-gray-900">—</p>
-                            </article>
-
-                            <article class="bg-white rounded-xl border border-gray-200 p-5 shadow-sm">
-                                <div class="flex items-center gap-2 text-gray-500 mb-3">
-                                    <i class="ph ph-cpu text-lg text-brand-600" aria-hidden="true"></i>
-                                    <span data-i18n="settings.free_heap" class="text-xs font-semibold uppercase tracking-wide">Free Memory</span>
+                                <div>
+                                    <p data-i18n="settings.uptime" class="text-xs font-medium text-gray-500">Uptime</p>
+                                    <p id="set-uptime" class="mt-1 text-lg font-semibold text-gray-900">—</p>
                                 </div>
-                                <p id="set-heap" class="text-2xl font-semibold text-gray-900 font-mono">—</p>
-                            </article>
-                        </div>
+                                <div>
+                                    <p data-i18n="settings.internal_ram" class="text-xs font-medium text-gray-500">Internal RAM</p>
+                                    <p id="set-internal-free" class="mt-1 text-lg font-semibold text-gray-900 font-mono">—</p>
+                                    <p id="set-internal-min" class="mt-0.5 text-xs text-gray-500 font-mono">—</p>
+                                </div>
+                                <div>
+                                    <p data-i18n="settings.psram" class="text-xs font-medium text-gray-500">PSRAM</p>
+                                    <p id="set-psram-free" class="mt-1 text-lg font-semibold text-gray-900 font-mono">—</p>
+                                    <p id="set-psram-min" class="mt-0.5 text-xs text-gray-500 font-mono">—</p>
+                                </div>
+                            </div>
+                        </article>
                     </section>
 
                     <!-- Connectivity and access -->

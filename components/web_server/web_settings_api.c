@@ -92,6 +92,17 @@ static esp_err_t settings_get_handler(httpd_req_t *request)
     cJSON_AddStringToObject(system, "idf", gw_status.idf_version);
     cJSON_AddNumberToObject(system, "uptime_ms", (double)gw_status.uptime_ms);
     cJSON_AddNumberToObject(system, "free_heap", gw_status.free_heap);
+    cJSON_AddNumberToObject(system, "internal_free",
+                            (double)gw_status.internal_free);
+    cJSON_AddNumberToObject(system, "internal_min_free",
+                            (double)gw_status.internal_min_free);
+    cJSON_AddBoolToObject(system, "psram_ready", gw_status.psram_ready);
+    if (gw_status.psram_ready) {
+        cJSON_AddNumberToObject(system, "psram_free",
+                                (double)gw_status.psram_free);
+        cJSON_AddNumberToObject(system, "psram_min_free",
+                                (double)gw_status.psram_min_free);
+    }
 
     cJSON *network = cJSON_AddObjectToObject(response, "network");
     cJSON_AddBoolToObject(network, "connected", gw_status.wifi_connected);
