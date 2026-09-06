@@ -49,10 +49,14 @@ static cJSON *feature_to_json(const device_schema_feature_t *feature,
     if (obj == NULL) return NULL;
 
     cJSON_AddStringToObject(obj, "feature_id", feature->feature_id);
+    cJSON_AddStringToObject(obj, "title", feature->title);
+    cJSON_AddStringToObject(obj, "unit", feature->unit);
     cJSON_AddNumberToObject(obj, "feature_type", feature->feature_type);
     cJSON_AddNumberToObject(obj, "feature_schema_version",
                             feature->feature_schema_version);
     cJSON_AddNumberToObject(obj, "property_id", feature->property_id);
+    cJSON_AddNumberToObject(obj, "value_type", feature->value_type);
+    cJSON_AddNumberToObject(obj, "decimals", feature->decimals);
     cJSON_AddNumberToObject(obj, "writable_tool_index",
                             feature->writable_tool_index);
 

@@ -22,6 +22,7 @@
 typedef enum {
     GW_FEATURE_NONE = 0,
     GW_FEATURE_GENERIC_RELAY = 1,
+    GW_FEATURE_GENERIC_VALUE = 2,
     GW_FEATURE_ON_OFF_PLUGIN_UNIT = 10,
     GW_FEATURE_ON_OFF_LIGHT = 11,
     GW_FEATURE_DIMMABLE_LIGHT = 12,
@@ -42,6 +43,7 @@ typedef enum {
     GW_PROP_TEMPERATURE = 5,
     GW_PROP_HUMIDITY = 6,
     GW_PROP_CONTACT = 7,
+    GW_PROP_VALUE = 8,
 } gw_feature_property_t;
 
 typedef struct {
@@ -105,6 +107,8 @@ typedef struct {
     int has_feature_tool;
     uint16_t feature_total;
     int has_feature_total;
+    uint8_t feature_decimals;
+    int has_feature_decimals;
 } gw_message_t;
 
 int cbor_codec_decode(const uint8_t *buf, size_t len, gw_message_t *out_msg);

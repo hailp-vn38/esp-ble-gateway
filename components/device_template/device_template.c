@@ -6,6 +6,12 @@
 
 static const device_template_t s_templates[] = {
     {
+        .feature_type    = GW_FEATURE_GENERIC_VALUE,
+        .schema_version  = 1,
+        .semantic_name   = "value",
+        .primary_property = GW_PROP_VALUE,
+    },
+    {
         .feature_type    = GW_FEATURE_GENERIC_RELAY,
         .schema_version  = 1,
         .semantic_name   = "relay",
@@ -27,13 +33,13 @@ static const device_template_t s_templates[] = {
         .feature_type    = GW_FEATURE_DIMMABLE_LIGHT,
         .schema_version  = 1,
         .semantic_name   = "light",
-        .primary_property = GW_PROP_ON_OFF,
+        .primary_property = GW_PROP_LEVEL,
     },
     {
         .feature_type    = GW_FEATURE_FAN,
         .schema_version  = 1,
         .semantic_name   = "fan",
-        .primary_property = GW_PROP_ON_OFF,
+        .primary_property = GW_PROP_PERCENT_SETTING,
     },
     {
         .feature_type    = GW_FEATURE_TEMPERATURE_SENSOR,
@@ -66,6 +72,7 @@ static const struct {
 } s_feature_names[] = {
     { GW_FEATURE_NONE,                  "none" },
     { GW_FEATURE_GENERIC_RELAY,         "relay" },
+    { GW_FEATURE_GENERIC_VALUE,         "value" },
     { GW_FEATURE_ON_OFF_PLUGIN_UNIT,    "outlet" },
     { GW_FEATURE_ON_OFF_LIGHT,          "light" },
     { GW_FEATURE_DIMMABLE_LIGHT,        "light" },
@@ -90,6 +97,7 @@ static const struct {
     { GW_PROP_TEMPERATURE,      "temperature",       DEVICE_TEMPLATE_VALUE_INT },
     { GW_PROP_HUMIDITY,         "humidity",          DEVICE_TEMPLATE_VALUE_INT },
     { GW_PROP_CONTACT,          "contact",           DEVICE_TEMPLATE_VALUE_BOOL },
+    { GW_PROP_VALUE,            "value",             DEVICE_TEMPLATE_VALUE_INT },
 };
 
 /* ── Public API ─────────────────────────────────────────────────────── */

@@ -48,6 +48,7 @@ enum {
     CBOR_KEY_FEATURE_VALUE_INT = 28,
     CBOR_KEY_FEATURE_TOOL = 29,
     CBOR_KEY_FEATURE_TOTAL = 30,
+    CBOR_KEY_FEATURE_DECIMALS = 31,
 };
 
 static bool valid_string(const char *value, size_t capacity, bool allow_empty)
@@ -223,6 +224,10 @@ int cbor_codec_encode(const gw_message_t *msg, uint8_t *out_buf, size_t out_buf_
     if (msg->has_feature_total) {
         QCBOREncode_AddUInt64ToMapN(&context, CBOR_KEY_FEATURE_TOTAL,
                                     msg->feature_total);
+    }
+    if (msg->has_feature_decimals) {
+        QCBOREncode_AddUInt64ToMapN(&context, CBOR_KEY_FEATURE_DECIMALS,
+                                    msg->feature_decimals);
     }
     QCBOREncode_CloseMap(&context);
 
@@ -505,6 +510,14 @@ int cbor_codec_decode(const uint8_t *buf, size_t len, gw_message_t *out_msg)
         out_msg->has_feature_total = 1;
     } else if (error != QCBOR_ERR_LABEL_NOT_FOUND) return -1;
 
+    error = get_optional_uint(&context, CBOR_KEY_FEATURE_DECIMALS,
+                              &optional_uint);
+    if (error == QCBOR_SUCCESS) {
+        if (optional_uint > UINT8_MAX) return -1;
+        out_msg->feature_decimals = (uint8_t)optional_uint;
+        out_msg->has_feature_decimals = 1;
+    } else if (error != QCBOR_ERR_LABEL_NOT_FOUND) return -1;
+
     QCBORDecode_ExitMap(&context);
     if (QCBORDecode_Finish(&context) != QCBOR_SUCCESS) return -1;
 
@@ -574,6 +587,7 @@ int cbor_codec_msg_to_json(const gw_message_t *msg, char *out_json, size_t out_j
     }
     if (msg->has_feature_tool) cJSON_AddStringToObject(root, "feature_tool", msg->feature_tool);
     if (msg->has_feature_total) cJSON_AddNumberToObject(root, "feature_total", msg->feature_total);
+    if (msg->has_feature_decimals) cJSON_AddNumberToObject(root, "feature_decimals", msg->feature_decimals);
 
     bool printed = cJSON_PrintPreallocated(root, out_json, (int)out_json_cap, false);
     cJSON_Delete(root);
@@ -783,6 +797,12 @@ int cbor_codec_json_to_msg(const char *json_str, gw_message_t *out_msg)
     if (present) {
         out_msg->feature_total = (uint16_t)numeric;
         out_msg->has_feature_total = 1;
+    }
+    if (optional_json_integer(root, "feature_decimals", 0, UINT8_MAX,
+                              &numeric, &present) != 0) goto cleanup;
+    if (present) {
+        out_msg->feature_decimals = (uint8_t)numeric;
+        out_msg->has_feature_decimals = 1;
     }
     const cJSON *feature_bool_item =
         cJSON_GetObjectItemCaseSensitive(root, "feature_value_bool");

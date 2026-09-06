@@ -35,12 +35,14 @@ enum {
 
 typedef struct {
     device_feature_id_t feature_id;
+    char title[GW_MSG_CAP_LABEL_LEN];
+    char unit[GW_MSG_CAP_UNIT_LEN];
     uint8_t feature_type;
     uint16_t feature_schema_version;
     uint16_t feature_flags;
     uint8_t property_id;
-    bool feature_value_bool;
-    int32_t feature_value_int;
+    uint8_t value_type;
+    uint8_t decimals;
     int8_t writable_tool_index; /* index into tools[], -1 = none */
 } device_schema_feature_t;
 

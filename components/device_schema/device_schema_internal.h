@@ -132,6 +132,9 @@ bool schema_valid_feature_id(const char *feature_id);
 int8_t schema_resolve_writable_tool(const device_schema_tool_t *tools,
                                      size_t tool_count,
                                      const char *feature_tool);
+bool schema_feature_matches_template(const device_schema_feature_t *feature);
+bool schema_validate_feature_tool(const device_schema_feature_t *feature,
+                                  const device_schema_tool_t *tool);
 
 /* Store functions (device_schema_store.c) */
 esp_err_t schema_persist_record(int index,

@@ -9,7 +9,7 @@
 #include "memory_policy.h"
 #include "nvs.h"
 
-#define SCHEMA_STORE_SCHEMA_VERSION 1
+#define SCHEMA_STORE_SCHEMA_VERSION 2
 #define SCHEMA_NVS_NAMESPACE "dev_schema"
 
 static const char *TAG = "schema_store";
@@ -95,27 +95,44 @@ void schema_load_persisted(schema_record_t *records)
     for (int i = 0; i < DEVICE_STORE_MAX_DEVICES; i++) {
         char key[8];
         schema_nvs_key(i, key);
-        memset(persisted, 0, sizeof(*persisted));
         size_t length = 0;
         error = nvs_get_blob(handle, key, NULL, &length);
         if (error == ESP_ERR_NVS_NOT_FOUND) continue;
-        if (error != ESP_OK ||
-            length < offsetof(persisted_schema_t, tools) ||
-            length > sizeof(*persisted)) {
+        if (error != ESP_OK || length == 0 || length > sizeof(*persisted)) {
             ESP_LOGW(TAG, "Ignoring invalid schema record %s", key);
             continue;
         }
-        error = nvs_get_blob(handle, key, persisted, &length);
-        /* Reject compact blobs — their features would land in the wrong
-           struct offset.  They are re-persisted as full-struct on next
-           discovery cycle. */
-        if (error != ESP_OK ||
-            length != sizeof(persisted_schema_t) ||
-            persisted->schema_version != SCHEMA_STORE_SCHEMA_VERSION ||
-            persisted->tool_count > DEVICE_SCHEMA_MAX_TOOLS ||
+        uint8_t *raw = gw_mem_calloc(1, length, GW_MEM_EXTERNAL_PREFERRED);
+        if (raw == NULL || nvs_get_blob(handle, key, raw, &length) != ESP_OK) {
+            gw_mem_free(raw);
+            ESP_LOGW(TAG, "Ignoring invalid schema record %s", key);
+            continue;
+        }
+        uint8_t stored_version = raw[0];
+        if (stored_version != SCHEMA_STORE_SCHEMA_VERSION) {
+            ESP_LOGW(TAG, "Erasing incompatible schema record %s (version=%u)",
+                     key, (unsigned)stored_version);
+            nvs_erase_key(handle, key);
+            nvs_commit(handle);
+            gw_mem_free(raw);
+            continue;
+        }
+        if (length != sizeof(persisted_schema_t)) {
+            ESP_LOGW(TAG, "Erasing corrupt schema record %s (length=%u)",
+                     key, (unsigned)length);
+            nvs_erase_key(handle, key);
+            nvs_commit(handle);
+            gw_mem_free(raw);
+            continue;
+        }
+        memcpy(persisted, raw, sizeof(*persisted));
+        gw_mem_free(raw);
+        if (persisted->tool_count > DEVICE_SCHEMA_MAX_TOOLS ||
             persisted->feature_count > DEVICE_SCHEMA_MAX_FEATURES ||
             persisted->device_id[0] == '\0') {
-            ESP_LOGW(TAG, "Ignoring invalid schema record %s", key);
+            ESP_LOGW(TAG, "Erasing invalid schema record %s", key);
+            nvs_erase_key(handle, key);
+            nvs_commit(handle);
             continue;
         }
 
@@ -130,6 +147,10 @@ void schema_load_persisted(schema_record_t *records)
                 valid = false;
                 break;
             }
+        }
+        for (size_t f = 0; valid && f < persisted->feature_count; f++) {
+            valid = schema_valid_feature_id(persisted->features[f].feature_id) &&
+                    schema_feature_matches_template(&persisted->features[f]);
         }
         if (!valid) continue;
 

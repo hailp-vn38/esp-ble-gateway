@@ -73,16 +73,6 @@ static void on_schema_committed(const char *device_id, uint32_t revision,
             continue;
         }
 
-        /* Skip non-BOOL properties for now: current device active-read
-         * contract only supports BOOL. INT reads will be populated by
-         * spontaneous events/ACKs. */
-        if (f->property_id != GW_PROP_ON_OFF &&
-            f->property_id != GW_PROP_CONTACT) {
-            ESP_LOGD(TAG, "[%s] seed skip %s prop=%u (unsupported active-read kind)",
-                     device_id, f->feature_id, f->property_id);
-            continue;
-        }
-
         device_command_request_t request = {0};
         request.origin = DEVICE_CMD_ORIGIN_STATE_READ;
         strlcpy(request.device_id, device_id, sizeof(request.device_id));

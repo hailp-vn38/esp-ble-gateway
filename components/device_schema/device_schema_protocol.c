@@ -7,6 +7,7 @@
 #include "esp_log.h"
 #include "esp_timer.h"
 #include "gateway_events.h"
+#include "device_template.h"
 
 static const char *TAG = "schema_proto";
 
@@ -169,16 +170,28 @@ static void handle_feature_item(const char *device_id,
                              ? message->feature_flags
                              : 0,
         .property_id = message->property_id,
-        .feature_value_bool = message->has_feature_value_bool
-                                  ? message->feature_value_bool
-                                  : false,
-        .feature_value_int = message->has_feature_value_int
-                                 ? message->feature_value_int
-                                 : 0,
+        .value_type = (uint8_t)device_template_property_value_type(
+            message->property_id),
+        .decimals = message->has_feature_decimals
+                        ? message->feature_decimals
+                        : 0,
         .writable_tool_index = -1,
     };
     strlcpy(feature.feature_id, message->feature_id,
             sizeof(feature.feature_id));
+    strlcpy(feature.title,
+            message->capability_label[0] != '\0'
+                ? message->capability_label
+                : message->feature_id,
+            sizeof(feature.title));
+    strlcpy(feature.unit, message->capability_unit,
+            sizeof(feature.unit));
+
+    if (!schema_feature_matches_template(&feature)) {
+        ESP_LOGW(TAG, "[%s] feature '%s' property/type mismatch",
+                 device_id, feature.feature_id);
+        return;
+    }
 
     /* Resolve writable tool index if feature_tool is provided. */
     if (!schema_runtime_lock()) return;
@@ -209,6 +222,12 @@ static void handle_feature_item(const char *device_id,
                 if (feature.writable_tool_index < 0) {
                     ESP_LOGW(TAG, "[%s] SCHEMA_FEATURE_ITEM tool '%s' not found",
                              device_id, message->feature_tool);
+                    valid_sequence = false;
+                } else if (!schema_validate_feature_tool(
+                               &feature,
+                               &record->staging.tools[feature.writable_tool_index])) {
+                    ESP_LOGW(TAG, "[%s] SCHEMA_FEATURE_ITEM tool/type mismatch",
+                             device_id);
                     valid_sequence = false;
                 }
             }

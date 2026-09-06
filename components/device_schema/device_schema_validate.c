@@ -5,6 +5,7 @@
 #include <string.h>
 
 #include "cbor_codec.h"
+#include "device_template.h"
 
 bool schema_valid_command_name(const char *command)
 {
@@ -61,4 +62,25 @@ int8_t schema_resolve_writable_tool(const device_schema_tool_t *tools,
         }
     }
     return -1;
+}
+
+bool schema_feature_matches_template(const device_schema_feature_t *feature)
+{
+    const device_template_t *template = device_template_resolve(
+        feature->feature_type, feature->feature_schema_version);
+    if (template == NULL) return true;
+    if (feature->property_id != template->primary_property) return false;
+    return feature->value_type == device_template_property_value_type(
+        feature->property_id);
+}
+
+bool schema_validate_feature_tool(const device_schema_feature_t *feature,
+                                  const device_schema_tool_t *tool)
+{
+    if (tool == NULL || feature->value_type != tool->value_type) return false;
+    if (feature->unit[0] != '\0' && tool->unit[0] != '\0' &&
+        strcmp(feature->unit, tool->unit) != 0) return false;
+    if (feature->value_type == 2 &&
+        (tool->step == 0 || tool->min_value > tool->max_value)) return false;
+    return true;
 }
