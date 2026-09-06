@@ -14,6 +14,9 @@ void *ds_settings_alloc(size_t size)
     void *ptr = gw_mem_alloc(size, GW_MEM_EXTERNAL_REQUIRED);
     if (ptr == NULL) {
         ESP_LOGE(TAG, "PSRAM alloc failed: %u bytes", (unsigned)size);
+        DS_DIAG_INC(psram_alloc_fail);
+    } else {
+        DS_DIAG_INC(psram_alloc_success);
     }
     return ptr;
 }

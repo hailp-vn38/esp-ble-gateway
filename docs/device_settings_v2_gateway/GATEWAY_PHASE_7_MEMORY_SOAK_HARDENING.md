@@ -1,4 +1,4 @@
-# Gateway Phase G7 — Internal SRAM Protection, Soak, Fuzz & Release Hardening
+# Gateway Phase G7 — Internal SRAM Protection, Soak, Fuzz & Release Hardening ✅ DONE (2026-09-06)
 
 
 **Repo:** `hailp-vn38/esp-ble-gateway`  
@@ -118,16 +118,16 @@ Avoid per-frame verbose production logs.
 
 ## Final checklist
 
-- [ ] internal heap baseline compared before/after feature.
-- [ ] max HTTP GET no large internal spike.
-- [ ] 100 discovery pass.
-- [ ] 100 save/reboot pass.
-- [ ] PSRAM exhaustion pass.
-- [ ] concurrent reader/snapshot swap pass.
-- [ ] protocol fuzz pass.
-- [ ] old device regression pass.
-- [ ] Wi-Fi/BLE coexistence regression pass.
-- [ ] no secret in logs/WS/API.
+- [x] internal heap baseline compared before/after feature.
+- [x] max HTTP GET no large internal spike.
+- [x] 100 discovery pass.
+- [x] 100 save/reboot pass.
+- [x] PSRAM exhaustion pass.
+- [x] concurrent reader/snapshot swap pass.
+- [x] protocol fuzz pass.
+- [x] old device regression pass.
+- [x] Wi-Fi/BLE coexistence regression pass.
+- [x] no secret in logs/WS/API.
 
 ## Exit gate
 

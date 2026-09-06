@@ -51,6 +51,12 @@ static void handle_begin(const char *device_id, const gw_message_t *msg)
 
     /* Initialize schema builder. */
     ds_schema_builder_reset(&s_schema_builder);
+    if (ds_schema_builder_init(&s_schema_builder) != ESP_OK) {
+        ESP_LOGE(TAG, "[%s] BEGIN schema builder init failed (PSRAM?)",
+                 device_id);
+        rec->schema_state = DS_SCHEMA_ERROR;
+        return;
+    }
     s_schema_builder.schema_revision = msg->capability_revision;
 
     rec->schema_state = DS_SCHEMA_DISCOVERING;
@@ -98,6 +104,7 @@ static void handle_item(const char *device_id, const gw_message_t *msg)
                  (unsigned)rec->staging_expected_count);
         rec->schema_stream_active = false;
         rec->schema_state = DS_SCHEMA_ERROR;
+        DS_DIAG_INC(discovery_schema_fail);
         return;
     }
 
@@ -112,6 +119,7 @@ static void handle_item(const char *device_id, const gw_message_t *msg)
                      device_id, msg->setting_id);
             rec->schema_stream_active = false;
             rec->schema_state = DS_SCHEMA_ERROR;
+            DS_DIAG_INC(discovery_schema_fail);
             return;
         }
     }
@@ -123,6 +131,7 @@ static void handle_item(const char *device_id, const gw_message_t *msg)
         ESP_LOGE(TAG, "[%s] ITEM string pool exhausted for id", device_id);
         rec->schema_stream_active = false;
         rec->schema_state = DS_SCHEMA_ERROR;
+        DS_DIAG_INC(discovery_schema_fail);
         return;
     }
 
@@ -136,6 +145,7 @@ static void handle_item(const char *device_id, const gw_message_t *msg)
                      device_id);
             rec->schema_stream_active = false;
             rec->schema_state = DS_SCHEMA_ERROR;
+            DS_DIAG_INC(discovery_schema_fail);
             return;
         }
     }
@@ -161,6 +171,7 @@ static void handle_item(const char *device_id, const gw_message_t *msg)
         ESP_LOGE(TAG, "[%s] ITEM builder add failed", device_id);
         rec->schema_stream_active = false;
         rec->schema_state = DS_SCHEMA_ERROR;
+        DS_DIAG_INC(discovery_schema_fail);
         return;
     }
 
@@ -200,6 +211,7 @@ static void handle_end(const char *device_id, const gw_message_t *msg)
                  (unsigned)rec->staging_received_count);
         rec->schema_stream_active = false;
         rec->schema_state = DS_SCHEMA_ERROR;
+        DS_DIAG_INC(discovery_schema_fail);
         return;
     }
 
@@ -209,6 +221,7 @@ static void handle_end(const char *device_id, const gw_message_t *msg)
         ESP_LOGE(TAG, "[%s] END commit failed (PSRAM?)", device_id);
         rec->schema_stream_active = false;
         rec->schema_state = DS_SCHEMA_ERROR;
+        DS_DIAG_INC(discovery_schema_fail);
         return;
     }
 
@@ -220,6 +233,7 @@ static void handle_end(const char *device_id, const gw_message_t *msg)
     rec->schema_rev = schema->schema_revision;
     rec->schema_state = DS_SCHEMA_READY;
     rec->schema_stream_active = false;
+    DS_DIAG_INC(discovery_schema_success);
 
     ESP_LOGI(TAG, "[%s] SCHEMA committed: %u settings, revision=%lu",
              device_id,
@@ -269,6 +283,11 @@ static void handle_values_begin(const char *device_id,
 
     /* Initialize values builder. */
     ds_values_builder_reset(&s_values_builder);
+    if (ds_values_builder_init(&s_values_builder) != ESP_OK) {
+        ESP_LOGE(TAG, "[%s] VALUES_BEGIN builder init failed (PSRAM?)",
+                 device_id);
+        return;
+    }
     s_values_builder.config_revision = msg->config_revision;
 
     rec->values_stream_active = true;
@@ -402,6 +421,7 @@ static void handle_values_end(const char *device_id,
                  (unsigned)rec->staging_expected_count,
                  (unsigned)rec->staging_received_count);
         rec->values_stream_active = false;
+        DS_DIAG_INC(discovery_values_fail);
         return;
     }
 
@@ -410,6 +430,7 @@ static void handle_values_end(const char *device_id,
     if (values == NULL) {
         ESP_LOGE(TAG, "[%s] VALUES_END commit failed (PSRAM?)", device_id);
         rec->values_stream_active = false;
+        DS_DIAG_INC(discovery_values_fail);
         return;
     }
 
@@ -420,6 +441,7 @@ static void handle_values_end(const char *device_id,
     rec->values = values;
     rec->config_rev = values->config_revision;
     rec->values_stream_active = false;
+    DS_DIAG_INC(discovery_values_success);
 
     ESP_LOGI(TAG, "[%s] VALUES committed: %u values, config_rev=%lu",
              device_id,

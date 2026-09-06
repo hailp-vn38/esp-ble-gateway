@@ -15,6 +15,20 @@ static ds_device_record_t s_records[DEVICE_SETTINGS_MAX_DEVICES];
 static SemaphoreHandle_t  s_mutex;
 static bool               s_initialized;
 
+/* ── Observability counters (internal SRAM, no lock needed) ──────── */
+
+ds_diag_t s_diag;
+
+void device_settings_diag_snapshot(ds_diag_t *out)
+{
+    if (out != NULL) *out = s_diag;
+}
+
+void device_settings_diag_reset(void)
+{
+    memset(&s_diag, 0, sizeof(s_diag));
+}
+
 /* ── Init / deinit ─────────────────────────────────────────────────── */
 
 esp_err_t device_settings_init(void)
@@ -245,12 +259,14 @@ void device_settings_reconcile(const char *device_id)
          * Full value verification can be added later if needed. */
         ESP_LOGI(TAG, "[%s] reconcile: SUCCEEDED (rev matches)",
                  device_id);
+        DS_DIAG_INC(reconcile_success);
         outcome = DS_TX_RESULT_OK;
 
     } else if (current_rev == old_rev) {
         /* Commit did not persist. */
         ESP_LOGW(TAG, "[%s] reconcile: FAILED (rev still old)",
                  device_id);
+        DS_DIAG_INC(reconcile_fail);
         outcome = DS_TX_RESULT_FAILED;
 
     } else {
@@ -259,6 +275,7 @@ void device_settings_reconcile(const char *device_id)
                  device_id,
                  (unsigned long)current_rev,
                  (unsigned long)expected_rev);
+        DS_DIAG_INC(reconcile_conflict);
         outcome = DS_TX_RESULT_DEVICE_CONFLICT;
     }
 

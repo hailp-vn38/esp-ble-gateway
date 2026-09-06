@@ -140,6 +140,7 @@ static void reconciliation_timeout_cb(TimerHandle_t timer)
 
     ESP_LOGW(TAG, "[%s] reconciliation timeout — OUTCOME_UNKNOWN",
              tx->device_id);
+    DS_DIAG_INC(outcome_unknown);
 
     ds_device_record_t *rec = device_settings_find_record(tx->device_id);
     if (rec != NULL) {
@@ -328,6 +329,7 @@ static void on_cmd_complete(const device_command_result_t *result,
                 tx->new_config_rev = (uint32_t)result->int_value;
             }
             tx->state = DS_TX_WAITING_REBOOT;
+            DS_DIAG_INC(tx_success);
             ESP_LOGI(TAG, "[%s] COMMIT_ACK new_config_rev=%lu — waiting reboot",
                      tx->device_id,
                      (unsigned long)tx->new_config_rev);
@@ -349,6 +351,7 @@ static void on_cmd_complete(const device_command_result_t *result,
     case DEVICE_CMD_STATUS_REJECTED:
         ESP_LOGW(TAG, "[%s] REJECTED in state %d", tx->device_id, tx->state);
         tx->state = DS_TX_FAILED;
+        DS_DIAG_INC(tx_fail);
         ds_tx_complete(tx, DS_TX_RESULT_DEVICE_REJECTED, 0);
         break;
 
@@ -356,6 +359,7 @@ static void on_cmd_complete(const device_command_result_t *result,
         /* Device was busy — could retry, but for now fail. */
         ESP_LOGW(TAG, "[%s] BUSY in state %d", tx->device_id, tx->state);
         tx->state = DS_TX_FAILED;
+        DS_DIAG_INC(tx_fail);
         ds_tx_complete(tx, DS_TX_RESULT_DEVICE_REJECTED, 0);
         break;
 
@@ -365,6 +369,7 @@ static void on_cmd_complete(const device_command_result_t *result,
             /* Ambiguous — commit may have persisted.  Set up reconciliation. */
             ESP_LOGW(TAG, "[%s] TIMEOUT during COMMIT — OUTCOME_UNKNOWN",
                      tx->device_id);
+            DS_DIAG_INC(outcome_unknown);
             tx->state = DS_TX_WAITING_REBOOT;
             ds_device_record_t *rec =
                 device_settings_find_record(tx->device_id);
@@ -376,6 +381,7 @@ static void on_cmd_complete(const device_command_result_t *result,
             start_reconciliation_timer(tx);
         } else {
             tx->state = DS_TX_FAILED;
+            DS_DIAG_INC(tx_fail);
             ds_tx_complete(tx, DS_TX_RESULT_TIMEOUT, 0);
         }
         break;
@@ -387,6 +393,7 @@ static void on_cmd_complete(const device_command_result_t *result,
             /* Ambiguous — commit may have persisted.  Set up reconciliation. */
             ESP_LOGW(TAG, "[%s] DISCONNECT during COMMIT — OUTCOME_UNKNOWN",
                      tx->device_id);
+            DS_DIAG_INC(outcome_unknown);
             tx->state = DS_TX_WAITING_REBOOT;
             ds_device_record_t *rec =
                 device_settings_find_record(tx->device_id);
@@ -398,6 +405,7 @@ static void on_cmd_complete(const device_command_result_t *result,
             start_reconciliation_timer(tx);
         } else {
             tx->state = DS_TX_FAILED;
+            DS_DIAG_INC(tx_fail);
             ds_tx_complete(tx, DS_TX_RESULT_DISCONNECTED, 0);
         }
         break;
@@ -405,6 +413,7 @@ static void on_cmd_complete(const device_command_result_t *result,
     case DEVICE_CMD_STATUS_CANCELLED:
         ESP_LOGI(TAG, "[%s] CANCELLED", tx->device_id);
         tx->state = DS_TX_CANCELLED;
+        DS_DIAG_INC(tx_fail);
         ds_tx_complete(tx, DS_TX_RESULT_CANCELLED, 0);
         break;
 
@@ -437,6 +446,7 @@ esp_err_t device_settings_save(const char *device_id,
     /* One active transaction per device. */
     if (ds_tx_find(device_id) != NULL) {
         ESP_LOGW(TAG, "[%s] save: already active", device_id);
+        DS_DIAG_INC(tx_conflict);
         return ESP_ERR_INVALID_STATE;
     }
 
@@ -477,6 +487,7 @@ esp_err_t device_settings_save(const char *device_id,
         if (!prevalidate_change(rec->schema, &tx->changes[i])) {
             ESP_LOGW(TAG, "[%s] prevalidate FAIL at change %u id='%s'",
                      device_id, (unsigned)i, tx->changes[i].setting_id);
+            DS_DIAG_INC(tx_prevalidate_fail);
             ds_tx_free(tx);
             return ESP_ERR_INVALID_ARG;
         }

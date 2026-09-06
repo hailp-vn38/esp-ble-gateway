@@ -42,7 +42,7 @@ Device implementation details không nằm trong bộ này; gateway chỉ dựa 
 | G4 | `GATEWAY_PHASE_4_REBOOT_RECONCILIATION.md` | ✅ DONE (2026-09-06) |
 | G5 | `GATEWAY_PHASE_5_WEB_API.md` | ✅ DONE (2026-09-06) |
 | G6 | `GATEWAY_PHASE_6_DEVICE_DETAIL_UI.md` | ✅ DONE (2026-09-06) |
-| G7 | `GATEWAY_PHASE_7_MEMORY_SOAK_HARDENING.md` | SRAM/PSRAM + soak release gates pass |
+| G7 | `GATEWAY_PHASE_7_MEMORY_SOAK_HARDENING.md` | ✅ DONE (2026-09-06) |
 
 Release checklist: `GATEWAY_TEST_MATRIX_AND_RELEASE_CHECKLIST.md`.
 

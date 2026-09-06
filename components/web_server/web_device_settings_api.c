@@ -7,6 +7,7 @@
 #include "cJSON.h"
 #include "device_settings.h"
 #include "device_store.h"
+#include "esp_heap_caps.h"
 #include "esp_log.h"
 #include "web_http.h"
 
@@ -453,6 +454,70 @@ static esp_err_t operations_get_handler(httpd_req_t *request)
     return web_send_json(request, root);
 }
 
+/* ── GET /api/devices/settings/diagnostics ────────────────────────── */
+
+static esp_err_t diagnostics_get_handler(httpd_req_t *request)
+{
+    ds_diag_t diag;
+    device_settings_diag_snapshot(&diag);
+
+    cJSON *root = cJSON_CreateObject();
+    if (root == NULL) {
+        return web_send_api_error(request, "500 Internal Server Error",
+                                  "Out of memory");
+    }
+
+    cJSON_AddBoolToObject(root, "success", true);
+    cJSON *counters = cJSON_AddObjectToObject(root, "counters");
+    if (counters != NULL) {
+        cJSON_AddNumberToObject(counters, "discovery_schema_success",
+                                diag.discovery_schema_success);
+        cJSON_AddNumberToObject(counters, "discovery_schema_fail",
+                                diag.discovery_schema_fail);
+        cJSON_AddNumberToObject(counters, "discovery_values_success",
+                                diag.discovery_values_success);
+        cJSON_AddNumberToObject(counters, "discovery_values_fail",
+                                diag.discovery_values_fail);
+        cJSON_AddNumberToObject(counters, "psram_alloc_success",
+                                diag.psram_alloc_success);
+        cJSON_AddNumberToObject(counters, "psram_alloc_fail",
+                                diag.psram_alloc_fail);
+        cJSON_AddNumberToObject(counters, "tx_success",
+                                diag.tx_success);
+        cJSON_AddNumberToObject(counters, "tx_fail",
+                                diag.tx_fail);
+        cJSON_AddNumberToObject(counters, "tx_conflict",
+                                diag.tx_conflict);
+        cJSON_AddNumberToObject(counters, "tx_prevalidate_fail",
+                                diag.tx_prevalidate_fail);
+        cJSON_AddNumberToObject(counters, "outcome_unknown",
+                                diag.outcome_unknown);
+        cJSON_AddNumberToObject(counters, "reconcile_success",
+                                diag.reconcile_success);
+        cJSON_AddNumberToObject(counters, "reconcile_fail",
+                                diag.reconcile_fail);
+        cJSON_AddNumberToObject(counters, "reconcile_conflict",
+                                diag.reconcile_conflict);
+    }
+
+    /* Heap snapshots for memory monitoring. */
+    cJSON *heap = cJSON_AddObjectToObject(root, "heap");
+    if (heap != NULL) {
+        cJSON_AddNumberToObject(heap, "internal_free",
+            heap_caps_get_free_size(MALLOC_CAP_INTERNAL));
+        cJSON_AddNumberToObject(heap, "internal_min_free",
+            heap_caps_get_minimum_free_size(MALLOC_CAP_INTERNAL));
+        cJSON_AddNumberToObject(heap, "internal_largest_block",
+            heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL));
+        cJSON_AddNumberToObject(heap, "psram_free",
+            heap_caps_get_free_size(MALLOC_CAP_SPIRAM));
+        cJSON_AddNumberToObject(heap, "psram_largest_block",
+            heap_caps_get_largest_free_block(MALLOC_CAP_SPIRAM));
+    }
+
+    return web_send_json(request, root);
+}
+
 /* ── Registration ───────────────────────────────────────────────────── */
 
 esp_err_t web_device_settings_api_register(httpd_handle_t server)
@@ -464,6 +529,8 @@ esp_err_t web_device_settings_api_register(httpd_handle_t server)
                      settings_put_handler),
         WEB_URI_INIT("/api/devices/settings/operations", HTTP_GET,
                      operations_get_handler),
+        WEB_URI_INIT("/api/devices/settings/diagnostics", HTTP_GET,
+                     diagnostics_get_handler),
     };
     return web_register_routes(server, routes, WEB_ARRAY_SIZE(routes));
 }

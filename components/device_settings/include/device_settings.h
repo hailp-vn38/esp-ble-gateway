@@ -409,6 +409,39 @@ const char *device_settings_schema_state_name(ds_schema_state_t state);
 const char *device_settings_tx_state_name(ds_tx_state_t state);
 const char *device_settings_tx_result_name(ds_tx_result_t result);
 
+/* ── Observability counters ────────────────────────────────────────
+ * Compact diagnostic counters for production monitoring.
+ * All fields are uint32_t counters — use ds_diag_snapshot() for
+ * a consistent read.  Counters are cumulative since boot. */
+
+typedef struct {
+    uint32_t discovery_schema_success;
+    uint32_t discovery_schema_fail;
+    uint32_t discovery_values_success;
+    uint32_t discovery_values_fail;
+    uint32_t psram_alloc_success;
+    uint32_t psram_alloc_fail;
+    uint32_t tx_success;
+    uint32_t tx_fail;
+    uint32_t tx_conflict;
+    uint32_t tx_prevalidate_fail;
+    uint32_t outcome_unknown;
+    uint32_t reconcile_success;
+    uint32_t reconcile_fail;
+    uint32_t reconcile_conflict;
+} ds_diag_t;
+
+/* Take a consistent snapshot of all diagnostic counters. */
+void device_settings_diag_snapshot(ds_diag_t *out);
+
+/* Reset all diagnostic counters to zero (for testing). */
+void device_settings_diag_reset(void);
+
+/* Live counter instance — extern for increment from sibling files. */
+extern ds_diag_t s_diag;
+
+#define DS_DIAG_INC(field)  do { ++s_diag.field; } while (0)
+
 /* ── Per-device record access (internal) ───────────────────────────── */
 
 ds_device_record_t *device_settings_find_record(const char *device_id);

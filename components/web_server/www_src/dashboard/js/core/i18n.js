@@ -290,6 +290,8 @@ const i18n = {
             'device_settings.op_failed': 'Update failed',
             'device_settings.op_conflict': 'Conflict — revision mismatch',
             'device_settings.op_unknown': 'Verifying…'
+        },
+        vi: {
             'device_detail.back': 'Quay lại Thiết bị',
             'device_detail.edit': 'Chỉnh sửa',
             'device_detail.online': 'Đã kết nối',
@@ -577,6 +579,7 @@ const i18n = {
             'device_settings.op_failed': 'Cập nhật thất bại',
             'device_settings.op_conflict': 'Xung đột — phiên bản không khớp',
             'device_settings.op_unknown': 'Đang xác minh…'
+        }
     },
     t(key) {
         return this.translations[this.currentLang]?.[key] || this.translations.en[key] || key;
