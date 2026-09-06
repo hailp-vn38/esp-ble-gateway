@@ -1,0 +1,17 @@
+# ============================================================
+# LOCAL DEVELOPMENT WI-FI TEMPLATE
+# ============================================================
+#
+# Copy:
+#
+#   cp sdkconfig.defaults.local.example sdkconfig.defaults.local
+#
+# Then edit sdkconfig.defaults.local with your actual development
+# Wi-Fi credentials.
+#
+# NEVER put real credentials in this example file.
+# ============================================================
+
+CONFIG_WIFI_PROV_DEV_DEFAULT_ENABLED=y
+CONFIG_WIFI_PROV_DEV_DEFAULT_SSID=""
+CONFIG_WIFI_PROV_DEV_DEFAULT_PASSWORD=""
