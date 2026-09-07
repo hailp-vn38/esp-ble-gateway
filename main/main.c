@@ -22,6 +22,21 @@
 
 static const char *TAG = "app_main";
 
+static void on_schema_commit_for_settings(const char *device_id,
+                                          uint32_t revision,
+                                          void *context)
+{
+    (void)revision;
+    (void)context;
+    device_schema_snapshot_t snapshot;
+    if (device_schema_get(device_id, &snapshot) != ESP_OK) return;
+
+    device_settings_on_capability(
+        device_id,
+        snapshot.settings_state == DEVICE_SETTINGS_STATE_READY,
+        snapshot.settings_schema_revision);
+}
+
 static void on_device_notify(const char *device_id, const gw_message_t *msg)
 {
     if (device_schema_on_notify(device_id, msg)) return;
@@ -260,6 +275,11 @@ void app_main(void)
     gw_memory_log_checkpoint("device_store_ready");
     if (device_schema_init() != ESP_OK) {
         ESP_LOGE(TAG, "Device schema manager initialization failed");
+        return;
+    }
+    if (device_schema_register_commit_listener3(
+            on_schema_commit_for_settings, NULL) != ESP_OK) {
+        ESP_LOGE(TAG, "Settings schema listener registration failed");
         return;
     }
     gw_memory_log_checkpoint("schema_ready");

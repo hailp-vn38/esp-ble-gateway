@@ -54,6 +54,15 @@ esp_err_t device_schema_register_commit_listener2(
     return ESP_OK;
 }
 
+esp_err_t device_schema_register_commit_listener3(
+    device_schema_commit_listener_t listener, void *context)
+{
+    if (!schema_runtime_lock()) return ESP_ERR_TIMEOUT;
+    schema_runtime_set_commit_listener3(listener, context);
+    schema_runtime_unlock();
+    return ESP_OK;
+}
+
 esp_err_t device_schema_on_ready(const char *device_id)
 {
     if (!schema_runtime_is_initialized()) return ESP_ERR_INVALID_STATE;

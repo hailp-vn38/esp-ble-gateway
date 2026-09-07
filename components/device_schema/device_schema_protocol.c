@@ -26,6 +26,8 @@ static bool snapshot_content_equal(const device_schema_snapshot_t *a,
                                    const device_schema_snapshot_t *b)
 {
     if (a->revision != b->revision ||
+        a->settings_state != b->settings_state ||
+        a->settings_schema_revision != b->settings_schema_revision ||
         a->tool_count != b->tool_count ||
         a->feature_count != b->feature_count) {
         return false;
@@ -70,15 +72,17 @@ static void handle_begin(const char *device_id, const gw_message_t *message)
         record->staging_expected_tools = message->total;
         record->staging_expected_features =
             message->has_feature_total ? message->feature_total : 0;
-        /* Settings capability gate: check device capability_flags for
-         * SETTINGS_SUPPORT bit.  Old devices without this flag will have
-         * settings_state UNSUPPORTED — gateway will not send
-         * describe_settings to them. */
-        if (message->has_capability_flags &&
-            (message->capability_flags & DEVICE_SCHEMA_FLAG_SETTINGS_SUPPORT)) {
+        /* Settings support is advertised only by the dedicated key32/33
+         * fields. Missing key32 follows the legacy-unsupported policy. */
+        if (message->has_settings_supported && message->settings_supported) {
             record->staging.settings_state = DEVICE_SETTINGS_STATE_READY;
+            record->staging.settings_schema_revision =
+                message->has_settings_schema_revision
+                    ? message->settings_schema_revision
+                    : 0;
         } else {
             record->staging.settings_state = DEVICE_SETTINGS_STATE_UNSUPPORTED;
+            record->staging.settings_schema_revision = 0;
         }
         record->staging_active = true;
         ESP_LOGI(TAG, "[%s] SCHEMA_BEGIN snapshot=%lu tools=%u features=%u rev=%lu",

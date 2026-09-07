@@ -41,7 +41,7 @@ static void handle_begin(const char *device_id, const gw_message_t *msg)
              device_id,
              (unsigned long)msg->snapshot_id,
              (unsigned)msg->total,
-             (unsigned long)msg->settings_schema_revision);
+             (unsigned long)msg->capability_revision);
 
     ds_device_record_t *rec = device_settings_find_or_create_record(device_id);
     if (rec == NULL) {

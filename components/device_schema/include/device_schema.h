@@ -79,6 +79,7 @@ typedef struct {
     device_schema_tool_t tools[DEVICE_SCHEMA_MAX_TOOLS];
     device_schema_feature_t features[DEVICE_SCHEMA_MAX_FEATURES];
     device_settings_state_t settings_state;
+    uint16_t settings_schema_revision;
 } device_schema_snapshot_t;
 
 /* ── Validation result ──────────────────────────────────────────────── */
@@ -173,6 +174,9 @@ esp_err_t device_schema_register_commit_listener(
 
 esp_err_t device_schema_register_commit_listener2(
     device_schema_commit_listener2_t listener, void *context);
+
+esp_err_t device_schema_register_commit_listener3(
+    device_schema_commit_listener_t listener, void *context);
 
 esp_err_t device_schema_on_ready(const char *device_id);
 void device_schema_on_disconnect(const char *device_id);

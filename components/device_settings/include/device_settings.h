@@ -328,6 +328,10 @@ bool device_settings_on_notify(const char *device_id,
 
 void device_settings_on_disconnect(const char *device_id);
 
+void device_settings_on_capability(const char *device_id,
+                                   bool supported,
+                                   uint16_t schema_revision);
+
 /* ── Reconciliation timeout ───────────────────────────────────────────
  * If device does not reconnect within this window after COMMIT ACK,
  * the transaction is resolved as OUTCOME_UNKNOWN. */

@@ -75,6 +75,8 @@ void schema_runtime_set_commit_listener(device_schema_commit_listener_t listener
                                         void *context);
 void schema_runtime_set_commit_listener2(device_schema_commit_listener2_t listener,
                                          void *context);
+void schema_runtime_set_commit_listener3(device_schema_commit_listener_t listener,
+                                         void *context);
 void schema_runtime_notify_commit(const char *device_id, uint32_t revision);
 void schema_runtime_reset(void);
 

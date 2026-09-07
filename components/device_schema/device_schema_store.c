@@ -9,7 +9,7 @@
 #include "memory_policy.h"
 #include "nvs.h"
 
-#define SCHEMA_STORE_SCHEMA_VERSION 2
+#define SCHEMA_STORE_SCHEMA_VERSION 3
 #define SCHEMA_NVS_NAMESPACE "dev_schema"
 
 static const char *TAG = "schema_store";
@@ -23,6 +23,19 @@ typedef struct {
     uint16_t reserved;
     char device_id[GW_MSG_DEVICE_ID_LEN];
     uint32_t revision;
+    device_schema_tool_t tools[DEVICE_SCHEMA_MAX_TOOLS];
+    device_schema_feature_t features[DEVICE_SCHEMA_MAX_FEATURES];
+} persisted_schema_v2_t;
+
+typedef struct {
+    uint8_t schema_version;
+    uint8_t tool_count;
+    uint8_t feature_count;
+    uint16_t reserved;
+    char device_id[GW_MSG_DEVICE_ID_LEN];
+    uint32_t revision;
+    uint8_t settings_state;
+    uint16_t settings_schema_revision;
     device_schema_tool_t tools[DEVICE_SCHEMA_MAX_TOOLS];
     device_schema_feature_t features[DEVICE_SCHEMA_MAX_FEATURES];
 } persisted_schema_t;
@@ -48,6 +61,8 @@ esp_err_t schema_persist_record(int index,
     persisted->tool_count = (uint8_t)snapshot->tool_count;
     persisted->feature_count = (uint8_t)snapshot->feature_count;
     persisted->revision = snapshot->revision;
+    persisted->settings_state = (uint8_t)snapshot->settings_state;
+    persisted->settings_schema_revision = snapshot->settings_schema_revision;
     strlcpy(persisted->device_id, snapshot->device_id,
             sizeof(persisted->device_id));
     if (snapshot->tool_count > 0) {
@@ -115,7 +130,24 @@ void schema_load_persisted(schema_record_t *records)
             continue;
         }
         uint8_t stored_version = raw[0];
-        if (stored_version != SCHEMA_STORE_SCHEMA_VERSION) {
+        if (stored_version == 2 && length == sizeof(persisted_schema_v2_t)) {
+            persisted_schema_v2_t legacy;
+            memcpy(&legacy, raw, sizeof(legacy));
+            memset(persisted, 0, sizeof(*persisted));
+            persisted->schema_version = SCHEMA_STORE_SCHEMA_VERSION;
+            persisted->tool_count = legacy.tool_count;
+            persisted->feature_count = legacy.feature_count;
+            strlcpy(persisted->device_id, legacy.device_id,
+                    sizeof(persisted->device_id));
+            persisted->revision = legacy.revision;
+            persisted->settings_state = DEVICE_SETTINGS_STATE_UNSUPPORTED;
+            memcpy(persisted->tools, legacy.tools, sizeof(legacy.tools));
+            memcpy(persisted->features, legacy.features, sizeof(legacy.features));
+            ESP_LOGI(TAG, "Migrating legacy schema record %s to version 3", key);
+        } else if (stored_version == SCHEMA_STORE_SCHEMA_VERSION &&
+                   length == sizeof(persisted_schema_t)) {
+            memcpy(persisted, raw, sizeof(*persisted));
+        } else {
             ESP_LOGW(TAG, "Erasing incompatible schema record %s (version=%u)",
                      key, (unsigned)stored_version);
             nvs_erase_key(handle, key);
@@ -123,15 +155,6 @@ void schema_load_persisted(schema_record_t *records)
             gw_mem_free(raw);
             continue;
         }
-        if (length != sizeof(persisted_schema_t)) {
-            ESP_LOGW(TAG, "Erasing corrupt schema record %s (length=%u)",
-                     key, (unsigned)length);
-            nvs_erase_key(handle, key);
-            nvs_commit(handle);
-            gw_mem_free(raw);
-            continue;
-        }
-        memcpy(persisted, raw, sizeof(*persisted));
         gw_mem_free(raw);
         if (persisted->tool_count > DEVICE_SCHEMA_MAX_TOOLS ||
             persisted->feature_count > DEVICE_SCHEMA_MAX_FEATURES ||
@@ -169,6 +192,12 @@ void schema_load_persisted(schema_record_t *records)
                 sizeof(record->committed.device_id));
         record->committed.state = DEVICE_SCHEMA_STATE_READY;
         record->committed.revision = persisted->revision;
+        record->committed.settings_state =
+            persisted->settings_state <= DEVICE_SETTINGS_STATE_READY
+                ? (device_settings_state_t)persisted->settings_state
+                : DEVICE_SETTINGS_STATE_UNSUPPORTED;
+        record->committed.settings_schema_revision =
+            persisted->settings_schema_revision;
         record->committed.tool_count = persisted->tool_count;
         record->committed.feature_count = persisted->feature_count;
         memcpy(record->committed.tools, persisted->tools,

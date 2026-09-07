@@ -40,6 +40,17 @@ static gw_message_t make_begin(const char *device_id, uint32_t snapshot_id,
     return msg;
 }
 
+static void set_settings_capability(gw_message_t *msg, bool supported,
+                                     uint16_t schema_revision)
+{
+    msg->has_settings_supported = 1;
+    msg->settings_supported = supported;
+    if (supported) {
+        msg->has_settings_schema_revision = 1;
+        msg->settings_schema_revision = schema_revision;
+    }
+}
+
 static gw_message_t make_tool_item(const char *device_id, uint32_t snapshot_id,
                                    uint16_t sequence, const char *command,
                                    uint8_t value_type, uint8_t flags,
@@ -268,12 +279,102 @@ TEST_CASE("validate_command returns unknown for unregistered device",
                           device_schema_validate_command(&msg, NULL));
 }
 
-/* ── Discovery flow tests ──────────────────────────────────────────── */
+/* ── G2 capability detection tests ─────────────────────────────────── */
 
 static bool s_submit_called;
 static gw_message_t s_submitted_msg;
 static device_schema_submit_done_fn s_submit_done;
 static void *s_submit_done_ctx;
+static esp_err_t test_submitter(const gw_message_t *message,
+                                device_schema_submit_done_fn done,
+                                void *context);
+static int s_listener3_calls;
+
+static void test_listener3(const char *device_id, uint32_t revision,
+                           void *context)
+{
+    (void)device_id;
+    (void)revision;
+    (void)context;
+    s_listener3_calls++;
+}
+
+static void assert_capability_state(const char *device_id, bool supported,
+                                    bool include_key, uint16_t revision,
+                                    bool capability_flag)
+{
+    reset_and_init();
+    device_store_add(device_id, "Capability test");
+    device_schema_set_submitter(test_submitter);
+    TEST_ASSERT_EQUAL_INT(ESP_OK, device_schema_on_ready(device_id));
+    vTaskDelay(pdMS_TO_TICKS(100));
+
+    gw_message_t begin = make_begin(device_id, 901, 0, 0, 1);
+    if (include_key) set_settings_capability(&begin, supported, revision);
+    if (capability_flag) {
+        begin.has_capability_flags = 1;
+        begin.capability_flags = DEVICE_SCHEMA_FLAG_SETTINGS_SUPPORT;
+    }
+    TEST_ASSERT_TRUE(device_schema_on_notify(device_id, &begin));
+    vTaskDelay(pdMS_TO_TICKS(50));
+    gw_message_t end = make_end(device_id, 901, 0);
+    TEST_ASSERT_TRUE(device_schema_on_notify(device_id, &end));
+    vTaskDelay(pdMS_TO_TICKS(100));
+
+    device_schema_snapshot_t snap = {0};
+    TEST_ASSERT_EQUAL_INT(ESP_OK, device_schema_get(device_id, &snap));
+    TEST_ASSERT_TRUE(snap.has_committed);
+    TEST_ASSERT_EQUAL_INT(supported && include_key
+                              ? DEVICE_SETTINGS_STATE_READY
+                              : DEVICE_SETTINGS_STATE_UNSUPPORTED,
+                          snap.settings_state);
+    if (supported && include_key) {
+        TEST_ASSERT_EQUAL_UINT16(revision, snap.settings_schema_revision);
+    }
+}
+
+TEST_CASE("DS-CAP-001: key32 supported enables Settings", "[device_schema][g2]")
+{
+    assert_capability_state("cap1", true, true, 7, false);
+}
+
+TEST_CASE("DS-CAP-002: key32 zero disables Settings", "[device_schema][g2]")
+{
+    assert_capability_state("cap2", false, true, 0, false);
+}
+
+TEST_CASE("DS-CAP-003: missing key32 is legacy unsupported", "[device_schema][g2]")
+{
+    assert_capability_state("cap3", true, false, 0, false);
+}
+
+TEST_CASE("DS-CAP-004: capability flag does not enable Settings", "[device_schema][g2]")
+{
+    assert_capability_state("cap4", true, false, 0, true);
+}
+
+TEST_CASE("DS-CAP-007: third commit listener is invoked", "[device_schema][g2]")
+{
+    reset_and_init();
+    s_listener3_calls = 0;
+    TEST_ASSERT_EQUAL_INT(ESP_OK,
+                          device_schema_register_commit_listener3(test_listener3,
+                                                                  NULL));
+    device_schema_set_submitter(test_submitter);
+    device_store_add("cap7", "Listener test");
+    TEST_ASSERT_EQUAL_INT(ESP_OK, device_schema_on_ready("cap7"));
+    vTaskDelay(pdMS_TO_TICKS(100));
+    gw_message_t begin = make_begin("cap7", 907, 0, 0, 1);
+    set_settings_capability(&begin, false, 0);
+    TEST_ASSERT_TRUE(device_schema_on_notify("cap7", &begin));
+    vTaskDelay(pdMS_TO_TICKS(30));
+    gw_message_t end = make_end("cap7", 907, 0);
+    TEST_ASSERT_TRUE(device_schema_on_notify("cap7", &end));
+    vTaskDelay(pdMS_TO_TICKS(100));
+    TEST_ASSERT_EQUAL_INT(1, s_listener3_calls);
+}
+
+/* ── Discovery flow tests ──────────────────────────────────────────── */
 
 static esp_err_t test_submitter(const gw_message_t *message,
                                 device_schema_submit_done_fn done,

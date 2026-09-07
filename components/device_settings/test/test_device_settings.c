@@ -354,6 +354,49 @@ TEST_CASE("device_settings_cancel rejects unknown device",
                       device_settings_cancel("nonexistent"));
 }
 
+TEST_CASE("DS-CAP-005: changed revision queues DESCRIBE",
+          "[device_settings][g2]")
+{
+    device_settings_deinit();
+    device_settings_reset_for_test();
+    TEST_ASSERT_EQUAL(ESP_OK, device_settings_init());
+    device_settings_on_capability("cap-describe", true, 7);
+
+    ds_device_record_t record = {0};
+    TEST_ASSERT_EQUAL(ESP_OK,
+                      device_settings_get_record("cap-describe", &record));
+    TEST_ASSERT_EQUAL_INT(DS_SCHEMA_DISCOVERING, record.schema_state);
+    TEST_ASSERT_EQUAL_INT(ESP_OK,
+                          device_settings_cancel("cap-describe"));
+    device_settings_deinit();
+}
+
+TEST_CASE("DS-CAP-006: same revision queues READ",
+          "[device_settings][g2]")
+{
+    device_settings_deinit();
+    device_settings_reset_for_test();
+    TEST_ASSERT_EQUAL(ESP_OK, device_settings_init());
+    ds_device_record_t *record =
+        device_settings_find_or_create_record("cap-read");
+    TEST_ASSERT_NOT_NULL(record);
+    record->schema_state = DS_SCHEMA_READY;
+    record->schema_rev = 7;
+    /* The capability bridge only needs a non-NULL cached snapshot to choose
+     * READ; the operation API does not dereference it. */
+    record->schema = (ds_schema_t *)(uintptr_t)1;
+
+    device_settings_on_capability("cap-read", true, 7);
+    ds_device_record_t observed = {0};
+    TEST_ASSERT_EQUAL(ESP_OK,
+                      device_settings_get_record("cap-read", &observed));
+    TEST_ASSERT_EQUAL_INT(DS_SCHEMA_READY, observed.schema_state);
+    TEST_ASSERT_EQUAL_INT(ESP_OK, device_settings_cancel("cap-read"));
+    record->schema = NULL;
+    device_settings_reset_for_test();
+    device_settings_deinit();
+}
+
 /* ── Footprint tests ───────────────────────────────────────────────── */
 
 TEST_CASE("sizeof(ds_device_record_t) is compact",

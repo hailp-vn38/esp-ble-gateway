@@ -20,6 +20,8 @@ typedef struct {
     void *commit_listener_context;
     device_schema_commit_listener2_t commit_listener2;
     void *commit_listener2_context;
+    device_schema_commit_listener_t commit_listener3;
+    void *commit_listener3_context;
 
     schema_global_owner_t owner;
 
@@ -120,6 +122,10 @@ void schema_runtime_notify_commit(const char *device_id, uint32_t revision)
         s_runtime.commit_listener2(device_id, revision,
                                    s_runtime.commit_listener2_context);
     }
+    if (s_runtime.commit_listener3 != NULL) {
+        s_runtime.commit_listener3(device_id, revision,
+                                   s_runtime.commit_listener3_context);
+    }
 }
 
 /* ── Records accessor ───────────────────────────────────────────────── */
@@ -158,6 +164,8 @@ esp_err_t schema_runtime_init(void)
     memset(&s_runtime.owner, 0, sizeof(s_runtime.owner));
     s_runtime.commit_listener2 = NULL;
     s_runtime.commit_listener2_context = NULL;
+    s_runtime.commit_listener3 = NULL;
+    s_runtime.commit_listener3_context = NULL;
     s_runtime.next_operation_id = 0;
     s_runtime.next_generation = 0;
 
@@ -184,6 +192,13 @@ void schema_runtime_set_commit_listener2(device_schema_commit_listener2_t listen
 {
     s_runtime.commit_listener2 = listener;
     s_runtime.commit_listener2_context = context;
+}
+
+void schema_runtime_set_commit_listener3(device_schema_commit_listener_t listener,
+                                         void *context)
+{
+    s_runtime.commit_listener3 = listener;
+    s_runtime.commit_listener3_context = context;
 }
 
 void schema_runtime_reset(void)

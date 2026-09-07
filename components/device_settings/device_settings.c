@@ -176,6 +176,47 @@ void device_settings_values_release(const ds_values_t *values)
     ds_values_ref_release((ds_values_t *)values);
 }
 
+/* ── Capability bridge ─────────────────────────────────────────────── */
+
+void device_settings_on_capability(const char *device_id,
+                                   bool supported,
+                                   uint16_t schema_revision)
+{
+    if (device_id == NULL || device_id[0] == '\0' || !s_initialized) return;
+    if (!lock()) return;
+
+    ds_device_record_t *rec = device_settings_find_or_create_record(device_id);
+    if (rec == NULL) {
+        unlock();
+        return;
+    }
+
+    if (!supported) {
+        rec->schema_state = DS_SCHEMA_UNSUPPORTED;
+        ESP_LOGI(TAG, "[%s] [CAPABILITY] supported=0", device_id);
+        unlock();
+        return;
+    }
+
+    const bool needs_describe = rec->schema == NULL ||
+                                rec->schema_rev != schema_revision;
+    rec->schema_state = needs_describe ? DS_SCHEMA_DISCOVERING
+                                       : DS_SCHEMA_READY;
+    ESP_LOGI(TAG, "[%s] [CAPABILITY] supported=1 schema_rev=%u cached_rev=%lu action=%s",
+             device_id, (unsigned)schema_revision,
+             (unsigned long)rec->schema_rev,
+             needs_describe ? "DESCRIBE" : "READ");
+    unlock();
+
+    esp_err_t err = needs_describe
+                        ? device_settings_describe(device_id, NULL, NULL)
+                        : device_settings_get(device_id, NULL, NULL);
+    if (err != ESP_OK) {
+        ESP_LOGW(TAG, "[%s] capability action failed: %s", device_id,
+                 esp_err_to_name(err));
+    }
+}
+
 /* ── Disconnect handler ────────────────────────────────────────────── */
 
 void device_settings_on_disconnect(const char *device_id)
