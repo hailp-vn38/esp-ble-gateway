@@ -34,9 +34,11 @@ void dcs_build_wire_message(const device_command_request_t *request,
     }
 }
 
-device_command_status_t dcs_validate_request(const device_command_request_t *request)
+device_command_status_t dcs_validate_request(
+    const device_command_request_t *request, const gw_message_t *wire_message)
 {
-    if (request->device_id[0] == '\0') {
+    if (request == NULL || wire_message == NULL ||
+        request->device_id[0] == '\0') {
         return DEVICE_CMD_STATUS_INVALID_ARGUMENT;
     }
     switch (request->origin) {
@@ -44,11 +46,8 @@ device_command_status_t dcs_validate_request(const device_command_request_t *req
         if (request->command[0] == '\0') {
             return DEVICE_CMD_STATUS_INVALID_ARGUMENT;
         }
-        gw_message_t message;
-        dcs_build_wire_message(request, 0, &message);
-        message.has_request_id = 0;
         device_schema_validation_t validation =
-            device_schema_validate_command(&message, NULL);
+            device_schema_validate_command(wire_message, NULL);
         if (validation == DEVICE_SCHEMA_VALID_UNKNOWN) {
             return DEVICE_CMD_STATUS_SCHEMA_NOT_READY;
         }

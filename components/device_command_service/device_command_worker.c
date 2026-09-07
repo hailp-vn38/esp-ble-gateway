@@ -16,7 +16,11 @@ static void complete_event(const dcs_event_t *event, device_command_status_t sta
 static void handle_submit(const dcs_event_t *event)
 {
     const device_command_request_t *request = &event->request;
-    device_command_status_t validation = dcs_validate_request(request);
+    gw_message_t wire_message;
+    dcs_build_wire_message(request, 0, &wire_message);
+    wire_message.has_request_id = 0;
+    device_command_status_t validation =
+        dcs_validate_request(request, &wire_message);
     if (validation != DEVICE_CMD_STATUS_OK) {
         complete_event(event, validation);
         return;
@@ -64,7 +68,6 @@ static void handle_submit(const dcs_event_t *event)
     }
     taskEXIT_CRITICAL(&g_dcs.stats_mux);
 
-    gw_message_t wire_message;
     dcs_build_wire_message(request, slot->request_id, &wire_message);
     ESP_LOGI(DCS_TAG, "[SEND] device=%s request_id=%lu command=%s origin=%d",
              slot->device_id, (unsigned long)slot->request_id,
@@ -172,6 +175,7 @@ void dcs_service_task(void *arg)
 {
     (void)arg;
     dcs_event_t event;
+    uint32_t events_since_stack_check = 0;
     while (g_dcs.running) {
         int64_t nearest_deadline_us = esp_timer_get_time() + 1000000LL;
         for (size_t i = 0; i < DCS_MAX_PENDING; i++) {
@@ -199,6 +203,15 @@ void dcs_service_task(void *arg)
             case DCS_EVENT_SHUTDOWN:
                 g_dcs.running = false;
                 break;
+            }
+            if (++events_since_stack_check >= 16) {
+                events_since_stack_check = 0;
+                UBaseType_t watermark = uxTaskGetStackHighWaterMark(NULL);
+                if (watermark < 512) {
+                    ESP_LOGW(DCS_TAG,
+                             "Low stack watermark: %lu words remaining",
+                             (unsigned long)watermark);
+                }
             }
         }
         check_timeouts();

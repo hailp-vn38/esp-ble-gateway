@@ -11,7 +11,7 @@
 #include "freertos/task.h"
 
 #define DCS_QUEUE_LEN                8
-#define DCS_TASK_STACK            2048
+#define DCS_TASK_STACK            4096
 #define DCS_TASK_PRIORITY         (tskIDLE_PRIORITY + 4)
 #define DCS_MAX_PENDING              4
 #define DCS_ACK_TIMEOUT_MS        2000
@@ -71,7 +71,8 @@ extern dcs_state_t g_dcs;
 extern const char *DCS_TAG;
 
 void dcs_stats_inc(uint32_t *field);
-device_command_status_t dcs_validate_request(const device_command_request_t *request);
+device_command_status_t dcs_validate_request(const device_command_request_t *request,
+                                             const gw_message_t *wire_message);
 void dcs_build_wire_message(const device_command_request_t *request,
                             uint32_t request_id, gw_message_t *message);
 void dcs_pending_reset(void);
