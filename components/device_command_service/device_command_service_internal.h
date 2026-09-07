@@ -11,7 +11,7 @@
 #include "freertos/task.h"
 
 #define DCS_QUEUE_LEN                8
-#define DCS_TASK_STACK            3072
+#define DCS_TASK_STACK            2048
 #define DCS_TASK_PRIORITY         (tskIDLE_PRIORITY + 4)
 #define DCS_MAX_PENDING              4
 #define DCS_ACK_TIMEOUT_MS        2000

@@ -129,6 +129,7 @@ typedef struct {
     uint32_t config_revision;
     uint16_t settings_count;
     gw_settings_entry_t entries[GW_SETTINGS_MAX_ENTRIES];
+    char text_storage[GW_SETTINGS_MAX_ENUM_OPTIONS + 2][GW_SETTINGS_MAX_STRING_LEN];
 } gw_settings_snapshot_t;
 
 /* ── Values entry (parsed from settings_values_value frame) ──────── */

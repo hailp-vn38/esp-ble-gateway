@@ -42,6 +42,17 @@ static QCBORError get_optional_bool(QCBORDecodeContext *ctx, int64_t key,
     return QCBORDecode_GetAndResetError(ctx);
 }
 
+static int copy_text(char *dst, size_t dst_size, UsefulBufC text)
+{
+    if (dst == NULL || dst_size == 0 || text.ptr == NULL ||
+        text.len >= dst_size) {
+        return -1;
+    }
+    memcpy(dst, text.ptr, text.len);
+    dst[text.len] = '\0';
+    return 0;
+}
+
 /* ── Frame view parser ─────────────────────────────────────────────── */
 
 int gw_settings_frame_view_parse(const gw_settings_frame_view_t *view,
@@ -74,15 +85,8 @@ int gw_settings_frame_view_parse(const gw_settings_frame_view_t *view,
         return -1;
     }
 
-    /* Settings count (optional, computed from entries). */
-    err = get_optional_uint(&context, GW_SETTINGS_CBOR_KEY_SETTINGS_ITEM,
-                            &uval);
-    if (err == QCBOR_SUCCESS) {
-        if (uval > GW_SETTINGS_MAX_ENTRIES) return -1;
-        out->settings_count = (uint16_t)uval;
-    } else if (err != QCBOR_ERR_LABEL_NOT_FOUND) {
-        return -1;
-    }
+    /* This API parses one settings_item frame at a time. */
+    out->settings_count = 1;
 
     /* Setting ID (required). */
     UsefulBufC text_val;
@@ -92,8 +96,11 @@ int gw_settings_frame_view_parse(const gw_settings_frame_view_t *view,
         text_val.len >= GW_SETTINGS_MAX_ID_LEN) {
         return -1;
     }
-    /* Point directly into the frame buffer (zero-copy). */
-    out->entries[0].setting_id = (const char *)text_val.ptr;
+    if (copy_text(out->text_storage[0], sizeof(out->text_storage[0]),
+                  text_val) != 0) {
+        return -1;
+    }
+    out->entries[0].setting_id = out->text_storage[0];
 
     /* Setting type (required). */
     err = get_optional_uint(&context, GW_SETTINGS_CBOR_KEY_SETTING_TYPE, &uval);
@@ -168,13 +175,9 @@ int gw_settings_frame_view_parse(const gw_settings_frame_view_t *view,
          * exit the map before the next iteration.  When PeekNext returns
          * QCBOR_ERR_NO_MORE_ITEMS the array is exhausted. */
         while (idx < GW_SETTINGS_MAX_ENUM_OPTIONS) {
-            QCBORDecode_PeekNext(&context, NULL);
-            err = QCBORDecode_GetAndResetError(&context);
-            if (err == QCBOR_ERR_NO_MORE_ITEMS) break;
-            if (err != QCBOR_SUCCESS) return -1;
-
             QCBORDecode_EnterMap(&context, NULL);
             err = QCBORDecode_GetAndResetError(&context);
+            if (err == QCBOR_ERR_NO_MORE_ITEMS) break;
             if (err != QCBOR_SUCCESS) return -1;
 
             int64_t ev = 0;
@@ -197,10 +200,17 @@ int gw_settings_frame_view_parse(const gw_settings_frame_view_t *view,
                                             &label_buf);
             err = QCBORDecode_GetAndResetError(&context);
             if (err == QCBOR_SUCCESS && label_buf.len > 0) {
+                if (copy_text(out->text_storage[idx + 1],
+                              sizeof(out->text_storage[idx + 1]), label_buf) != 0) {
+                    QCBORDecode_ExitMap(&context);
+                    return -1;
+                }
                 out->entries[0].enum_options[idx].label =
-                    (const char *)label_buf.ptr;
+                    out->text_storage[idx + 1];
             } else if (err == QCBOR_SUCCESS) {
-                out->entries[0].enum_options[idx].label = "";
+                out->text_storage[idx + 1][0] = '\0';
+                out->entries[0].enum_options[idx].label =
+                    out->text_storage[idx + 1];
             } else {
                 QCBORDecode_ExitMap(&context);
                 return -1;
@@ -219,7 +229,13 @@ int gw_settings_frame_view_parse(const gw_settings_frame_view_t *view,
     err = get_optional_text(&context, GW_SETTINGS_CBOR_KEY_GROUP, &text_val);
     if (err == QCBOR_SUCCESS) {
         if (text_val.len > 0 && text_val.len < GW_SETTINGS_MAX_GROUP_LEN) {
-            out->entries[0].group = (const char *)text_val.ptr;
+            if (copy_text(out->text_storage[GW_SETTINGS_MAX_ENUM_OPTIONS + 1],
+                          sizeof(out->text_storage[GW_SETTINGS_MAX_ENUM_OPTIONS + 1]),
+                          text_val) != 0) {
+                return -1;
+            }
+            out->entries[0].group =
+                out->text_storage[GW_SETTINGS_MAX_ENUM_OPTIONS + 1];
         }
     } else if (err != QCBOR_ERR_LABEL_NOT_FOUND) {
         return -1;
