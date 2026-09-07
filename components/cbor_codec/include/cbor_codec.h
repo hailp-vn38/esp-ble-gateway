@@ -16,7 +16,54 @@
 #define GW_MSG_CAP_UNIT_LEN      12
 #define GW_FEATURE_ID_LEN        DEVICE_FEATURE_ID_MAX_LEN
 #define GW_SETTINGS_CBOR_MAX_ID_LEN 32
+#define GW_SETTINGS_VALUE_MAX_LEN   32
 #define GW_PROTOCOL_VERSION      4
+
+/* Settings Protocol v4 keys. These values mirror the Device contract and
+ * are the only Settings key definitions used by the Gateway. */
+enum {
+    GW_KEY_SETTINGS_SUPPORTED         = 32,
+    GW_KEY_SETTINGS_SCHEMA_REVISION   = 33,
+    GW_KEY_SETTINGS_ID                = 34,
+    GW_KEY_SETTINGS_TITLE             = 35,
+    GW_KEY_SETTINGS_GROUP             = 36,
+    GW_KEY_SETTINGS_UNIT              = 37,
+    GW_KEY_SETTINGS_TYPE              = 38,
+    GW_KEY_SETTINGS_FLAGS             = 39,
+    GW_KEY_SETTINGS_VALUE             = 40,
+    GW_KEY_SETTINGS_TRANSACTION_ID    = 41,
+    GW_KEY_SETTINGS_EXPECTED_REVISION = 42,
+    GW_KEY_SETTINGS_NEW_REVISION      = 43,
+    GW_KEY_SETTINGS_OPTION_INDEX      = 44,
+    GW_KEY_SETTINGS_MAX_LENGTH        = 45,
+    GW_KEY_SETTINGS_OPTION_COUNT      = 46,
+    GW_KEY_SETTINGS_SEQUENCE          = 47,
+};
+
+enum {
+    GW_SETTING_TYPE_NONE   = 0,
+    GW_SETTING_TYPE_BOOL   = 1,
+    GW_SETTING_TYPE_INT    = 2,
+    GW_SETTING_TYPE_FLOAT  = 3,
+    GW_SETTING_TYPE_STRING = 4,
+    GW_SETTING_TYPE_ENUM   = 5,
+};
+
+enum {
+    GW_SETTING_FLAG_READONLY = 1u << 0,
+    GW_SETTING_FLAG_SECRET   = 1u << 1,
+    GW_SETTING_FLAG_ADVANCED = 1u << 2,
+};
+
+typedef struct {
+    uint8_t type;
+    union {
+        bool bool_val;
+        int32_t int_val;
+        uint8_t enum_val;
+        char string_val[GW_SETTINGS_VALUE_MAX_LEN];
+    } value;
+} gw_settings_wire_value_t;
 
 /* Semantic feature types (wire contract v4, must match the Device's
  * gateway_protocol.h — do not renumber). */
@@ -111,28 +158,40 @@ typedef struct {
     uint8_t feature_decimals;
     int has_feature_decimals;
 
-    // Settings v2 protocol fields (keys 32–52, additive extension).
-    // Decoded by cbor_codec_decode(); unknown keys silently ignored.
+    // Settings Protocol v4 fields (keys 32–47).
+    bool settings_supported;
+    int has_settings_supported;
+    uint16_t settings_schema_revision;
+    int has_settings_schema_revision;
     char setting_id[GW_SETTINGS_CBOR_MAX_ID_LEN];
     int has_setting_id;
-    uint8_t setting_type;
-    int has_setting_type;
-    bool setting_writable;
-    int has_setting_writable;
-    uint32_t config_revision;
-    int has_config_revision;
     char setting_group[32];
     int has_setting_group;
-    uint8_t setting_group_order;
-    int has_setting_group_order;
-    uint32_t string_max_len;
-    int has_string_max_len;
-    char dependency_id[GW_SETTINGS_CBOR_MAX_ID_LEN];
-    int has_dependency_id;
-    uint8_t dependency_op;
-    int has_dependency_op;
-    int32_t dependency_val;
-    int has_dependency_val;
+    uint8_t setting_type;
+    int has_setting_type;
+    uint16_t setting_flags;
+    int has_setting_flags;
+    union {
+        bool setting_value_bool;
+        int32_t setting_value_int;
+        uint8_t setting_value_enum;
+        char setting_value_string[GW_SETTINGS_VALUE_MAX_LEN];
+    } setting_value;
+    int has_setting_value;
+    uint64_t settings_transaction_id;
+    int has_settings_transaction_id;
+    uint32_t settings_expected_revision;
+    int has_settings_expected_revision;
+    uint32_t settings_new_revision;
+    int has_settings_new_revision;
+    uint8_t settings_option_index;
+    int has_settings_option_index;
+    uint16_t settings_max_length;
+    int has_settings_max_length;
+    uint16_t settings_option_count;
+    int has_settings_option_count;
+    uint16_t settings_sequence;
+    int has_settings_sequence;
 } gw_message_t;
 
 int cbor_codec_decode(const uint8_t *buf, size_t len, gw_message_t *out_msg);

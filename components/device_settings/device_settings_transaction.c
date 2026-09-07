@@ -193,8 +193,8 @@ static bool prevalidate_change(const ds_schema_t *schema,
         if (id != NULL && strcmp(id, change->setting_id) == 0) {
             const ds_setting_desc_t *desc = &schema->descriptors[i];
 
-            /* Must be writable. */
-            if (!(desc->flags & DS_FLAG_WRITABLE)) return false;
+            /* Canonical flags only encode restrictions; absent READONLY is writable. */
+            if (desc->flags & DS_FLAG_READONLY) return false;
 
             /* Type must match. */
             if (desc->type != change->type) return false;

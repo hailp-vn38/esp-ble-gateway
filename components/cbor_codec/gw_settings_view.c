@@ -1,14 +1,11 @@
-#include <stdbool.h>
+#include <limits.h>
 #include <string.h>
 
-#include "esp_log.h"
 #include "qcbor/qcbor_decode.h"
 #include "qcbor/qcbor_encode.h"
 #include "qcbor/qcbor_spiffy_decode.h"
 
 #include "gw_settings_view.h"
-
-/* ── Internal helpers ──────────────────────────────────────────────── */
 
 static QCBORError get_optional_text(QCBORDecodeContext *ctx, int64_t key,
                                     UsefulBufC *value)
@@ -34,336 +31,249 @@ static QCBORError get_optional_int(QCBORDecodeContext *ctx, int64_t key,
     return QCBORDecode_GetAndResetError(ctx);
 }
 
-static QCBORError get_optional_bool(QCBORDecodeContext *ctx, int64_t key,
-                                    bool *value)
-{
-    *value = false;
-    QCBORDecode_GetBoolInMapN(ctx, key, value);
-    return QCBORDecode_GetAndResetError(ctx);
-}
-
 static int copy_text(char *dst, size_t dst_size, UsefulBufC text)
 {
-    if (dst == NULL || dst_size == 0 || text.ptr == NULL ||
-        text.len >= dst_size) {
+    if (dst == NULL || dst_size == 0 || text.ptr == NULL || text.len >= dst_size) {
         return -1;
     }
-    memcpy(dst, text.ptr, text.len);
+    if (text.len > 0) memcpy(dst, text.ptr, text.len);
     dst[text.len] = '\0';
     return 0;
 }
 
-/* ── Frame view parser ─────────────────────────────────────────────── */
-
-int gw_settings_frame_view_parse(const gw_settings_frame_view_t *view,
-                                 size_t len,
-                                 gw_settings_snapshot_t *out)
+static int parse_settings_view(const gw_settings_frame_view_t *frame,
+                               size_t len, gw_settings_view_t *out)
 {
-    if (view == NULL || view->buf == NULL || len == 0 || out == NULL) {
-        return -1;
-    }
-
+    if (frame == NULL || frame->buf == NULL || len == 0 || out == NULL) return -1;
     memset(out, 0, sizeof(*out));
 
     QCBORDecodeContext context;
-    QCBORDecode_Init(&context, (UsefulBufC){view->buf, len},
-                     QCBOR_DECODE_MODE_NORMAL);
+    QCBORDecode_Init(&context, (UsefulBufC){frame->buf, len}, QCBOR_DECODE_MODE_NORMAL);
     QCBORDecode_EnterMap(&context, NULL);
-    if (QCBORDecode_GetAndResetError(&context) != QCBOR_SUCCESS) {
-        return -1;
-    }
+    if (QCBORDecode_GetAndResetError(&context) != QCBOR_SUCCESS) return -1;
 
-    /* Config revision (optional). */
-    uint64_t uval = 0;
-    QCBORError err = get_optional_uint(&context,
-                                       GW_SETTINGS_CBOR_KEY_CONFIG_REVISION,
-                                       &uval);
+    QCBORError err;
+    uint64_t uval;
+    UsefulBufC text;
+
+    err = get_optional_uint(&context, GW_KEY_SETTINGS_SEQUENCE, &uval);
     if (err == QCBOR_SUCCESS) {
-        if (uval > UINT32_MAX) return -1;
-        out->config_revision = (uint32_t)uval;
-    } else if (err != QCBOR_ERR_LABEL_NOT_FOUND) {
-        return -1;
-    }
+        if (uval > UINT16_MAX) return -1;
+        out->sequence = (uint16_t)uval;
+        out->has_sequence = true;
+    } else if (err != QCBOR_ERR_LABEL_NOT_FOUND) return -1;
 
-    /* This API parses one settings_item frame at a time. */
-    out->settings_count = 1;
-
-    /* Setting ID (required). */
-    UsefulBufC text_val;
-    err = get_optional_text(&context, GW_SETTINGS_CBOR_KEY_SETTING_ID,
-                            &text_val);
-    if (err != QCBOR_SUCCESS || text_val.len == 0 ||
-        text_val.len >= GW_SETTINGS_MAX_ID_LEN) {
-        return -1;
-    }
-    if (copy_text(out->text_storage[0], sizeof(out->text_storage[0]),
-                  text_val) != 0) {
-        return -1;
-    }
-    out->entries[0].setting_id = out->text_storage[0];
-
-    /* Setting type (required). */
-    err = get_optional_uint(&context, GW_SETTINGS_CBOR_KEY_SETTING_TYPE, &uval);
-    if (err != QCBOR_SUCCESS || uval > GW_SETTINGS_TYPE_ENUM) {
-        return -1;
-    }
-    out->entries[0].setting_type = (uint8_t)uval;
-
-    /* Writable (optional, default false). */
-    bool writable = false;
-    err = get_optional_bool(&context, GW_SETTINGS_CBOR_KEY_WRITABLE, &writable);
-    if (err != QCBOR_SUCCESS && err != QCBOR_ERR_LABEL_NOT_FOUND) {
-        return -1;
-    }
-    out->entries[0].writable = writable;
-
-    /* Default value (optional). */
-    int64_t ival = 0;
-    err = get_optional_int(&context, GW_SETTINGS_CBOR_KEY_DEFAULT_VALUE, &ival);
+    err = get_optional_text(&context, GW_KEY_SETTINGS_ID, &text);
     if (err == QCBOR_SUCCESS) {
-        out->entries[0].has_value = true;
-        switch (out->entries[0].setting_type) {
-        case GW_SETTINGS_TYPE_BOOL:
-            out->entries[0].bool_val = (ival != 0);
-            break;
-        case GW_SETTINGS_TYPE_INT:
-            if (ival < INT32_MIN || ival > INT32_MAX) return -1;
-            out->entries[0].int_val = (int32_t)ival;
-            break;
-        case GW_SETTINGS_TYPE_ENUM:
-            if (ival < INT32_MIN || ival > INT32_MAX) return -1;
-            out->entries[0].enum_val.value = (int32_t)ival;
-            break;
-        default:
-            break;
+        if (text.len == 0 || copy_text(out->setting_id, sizeof(out->setting_id), text) != 0) {
+            return -1;
         }
-    } else if (err != QCBOR_ERR_LABEL_NOT_FOUND) {
-        return -1;
-    }
+        out->has_setting_id = true;
+    } else if (err != QCBOR_ERR_LABEL_NOT_FOUND) return -1;
 
-    /* Numeric range (optional). */
-    err = get_optional_int(&context, GW_SETTINGS_CBOR_KEY_MIN_VALUE, &ival);
+    err = get_optional_text(&context, GW_KEY_SETTINGS_TITLE, &text);
     if (err == QCBOR_SUCCESS) {
-        if (ival < INT32_MIN || ival > INT32_MAX) return -1;
-        out->entries[0].numeric_range.min_value = (int32_t)ival;
-    } else if (err != QCBOR_ERR_LABEL_NOT_FOUND) {
-        return -1;
-    }
+        if (copy_text(out->title, sizeof(out->title), text) != 0) return -1;
+        out->has_title = true;
+    } else if (err != QCBOR_ERR_LABEL_NOT_FOUND) return -1;
 
-    err = get_optional_int(&context, GW_SETTINGS_CBOR_KEY_MAX_VALUE, &ival);
+    err = get_optional_text(&context, GW_KEY_SETTINGS_GROUP, &text);
     if (err == QCBOR_SUCCESS) {
-        if (ival < INT32_MIN || ival > INT32_MAX) return -1;
-        out->entries[0].numeric_range.max_value = (int32_t)ival;
-    } else if (err != QCBOR_ERR_LABEL_NOT_FOUND) {
-        return -1;
-    }
+        if (copy_text(out->group, sizeof(out->group), text) != 0) return -1;
+        out->has_group = true;
+    } else if (err != QCBOR_ERR_LABEL_NOT_FOUND) return -1;
 
-    err = get_optional_uint(&context, GW_SETTINGS_CBOR_KEY_STEP, &uval);
+    err = get_optional_text(&context, GW_KEY_SETTINGS_UNIT, &text);
     if (err == QCBOR_SUCCESS) {
-        if (uval > UINT32_MAX) return -1;
-        out->entries[0].numeric_range.step = (uint32_t)uval;
-    } else if (err != QCBOR_ERR_LABEL_NOT_FOUND) {
-        return -1;
-    }
+        if (copy_text(out->unit, sizeof(out->unit), text) != 0) return -1;
+        out->has_unit = true;
+    } else if (err != QCBOR_ERR_LABEL_NOT_FOUND) return -1;
 
-    /* Enum options (optional array of maps). */
-    QCBORDecode_EnterArrayFromMapN(&context, GW_SETTINGS_CBOR_KEY_ENUM_OPTIONS);
-    err = QCBORDecode_GetAndResetError(&context);
+    err = get_optional_uint(&context, GW_KEY_SETTINGS_TYPE, &uval);
     if (err == QCBOR_SUCCESS) {
-        uint8_t idx = 0;
-        /* Iterate array entries.  Peek into each map to read fields, then
-         * exit the map before the next iteration.  When PeekNext returns
-         * QCBOR_ERR_NO_MORE_ITEMS the array is exhausted. */
-        while (idx < GW_SETTINGS_MAX_ENUM_OPTIONS) {
-            QCBORDecode_EnterMap(&context, NULL);
-            err = QCBORDecode_GetAndResetError(&context);
-            if (err == QCBOR_ERR_NO_MORE_ITEMS) break;
-            if (err != QCBOR_SUCCESS) return -1;
+        if (uval == GW_SETTING_TYPE_NONE || uval > GW_SETTING_TYPE_ENUM) return -1;
+        out->type = (uint8_t)uval;
+        out->value.type = (uint8_t)uval;
+        out->has_type = true;
+    } else if (err != QCBOR_ERR_LABEL_NOT_FOUND) return -1;
 
-            int64_t ev = 0;
-            QCBORDecode_GetInt64InMapN(&context,
-                                       GW_SETTINGS_CBOR_KEY_ENUM_VALUE, &ev);
-            err = QCBORDecode_GetAndResetError(&context);
-            if (err != QCBOR_SUCCESS) {
-                QCBORDecode_ExitMap(&context);
-                return -1;
-            }
-            if (ev < INT32_MIN || ev > INT32_MAX) {
-                QCBORDecode_ExitMap(&context);
-                return -1;
-            }
-            out->entries[0].enum_options[idx].value = (int32_t)ev;
-
-            UsefulBufC label_buf;
-            QCBORDecode_GetTextStringInMapN(&context,
-                                            GW_SETTINGS_CBOR_KEY_ENUM_LABEL,
-                                            &label_buf);
-            err = QCBORDecode_GetAndResetError(&context);
-            if (err == QCBOR_SUCCESS && label_buf.len > 0) {
-                if (copy_text(out->text_storage[idx + 1],
-                              sizeof(out->text_storage[idx + 1]), label_buf) != 0) {
-                    QCBORDecode_ExitMap(&context);
-                    return -1;
-                }
-                out->entries[0].enum_options[idx].label =
-                    out->text_storage[idx + 1];
-            } else if (err == QCBOR_SUCCESS) {
-                out->text_storage[idx + 1][0] = '\0';
-                out->entries[0].enum_options[idx].label =
-                    out->text_storage[idx + 1];
-            } else {
-                QCBORDecode_ExitMap(&context);
-                return -1;
-            }
-
-            QCBORDecode_ExitMap(&context);
-            idx++;
-        }
-        QCBORDecode_ExitArray(&context);
-        out->entries[0].enum_option_count = idx;
-    } else if (err != QCBOR_ERR_LABEL_NOT_FOUND) {
-        return -1;
-    }
-
-    /* Group (optional). */
-    err = get_optional_text(&context, GW_SETTINGS_CBOR_KEY_GROUP, &text_val);
+    err = get_optional_uint(&context, GW_KEY_SETTINGS_FLAGS, &uval);
     if (err == QCBOR_SUCCESS) {
-        if (text_val.len > 0 && text_val.len < GW_SETTINGS_MAX_GROUP_LEN) {
-            if (copy_text(out->text_storage[GW_SETTINGS_MAX_ENUM_OPTIONS + 1],
-                          sizeof(out->text_storage[GW_SETTINGS_MAX_ENUM_OPTIONS + 1]),
-                          text_val) != 0) {
-                return -1;
-            }
-            out->entries[0].group =
-                out->text_storage[GW_SETTINGS_MAX_ENUM_OPTIONS + 1];
-        }
-    } else if (err != QCBOR_ERR_LABEL_NOT_FOUND) {
-        return -1;
-    }
+        if (uval > UINT16_MAX) return -1;
+        out->flags = (uint16_t)uval;
+        out->has_flags = true;
+    } else if (err != QCBOR_ERR_LABEL_NOT_FOUND) return -1;
 
-    err = get_optional_uint(&context, GW_SETTINGS_CBOR_KEY_GROUP_ORDER, &uval);
+    err = get_optional_uint(&context, GW_KEY_SETTINGS_MAX_LENGTH, &uval);
+    if (err == QCBOR_SUCCESS) {
+        if (uval > UINT16_MAX) return -1;
+        out->max_length = (uint16_t)uval;
+        out->has_max_length = true;
+    } else if (err != QCBOR_ERR_LABEL_NOT_FOUND) return -1;
+
+    err = get_optional_uint(&context, GW_KEY_SETTINGS_OPTION_INDEX, &uval);
     if (err == QCBOR_SUCCESS) {
         if (uval > UINT8_MAX) return -1;
-        out->entries[0].group_order = (uint8_t)uval;
-    } else if (err != QCBOR_ERR_LABEL_NOT_FOUND) {
-        return -1;
+        out->option_index = (uint8_t)uval;
+        out->has_option_index = true;
+    } else if (err != QCBOR_ERR_LABEL_NOT_FOUND) return -1;
+
+    err = get_optional_uint(&context, GW_KEY_SETTINGS_OPTION_COUNT, &uval);
+    if (err == QCBOR_SUCCESS) {
+        if (uval > UINT16_MAX) return -1;
+        out->option_count = (uint16_t)uval;
+        out->has_option_count = true;
+    } else if (err != QCBOR_ERR_LABEL_NOT_FOUND) return -1;
+
+    err = get_optional_uint(&context, GW_KEY_SETTINGS_TRANSACTION_ID,
+                            &out->transaction_id);
+    if (err == QCBOR_SUCCESS) out->has_transaction_id = true;
+    else if (err != QCBOR_ERR_LABEL_NOT_FOUND) return -1;
+
+    err = get_optional_uint(&context, GW_KEY_SETTINGS_EXPECTED_REVISION, &uval);
+    if (err == QCBOR_SUCCESS) {
+        if (uval > UINT32_MAX) return -1;
+        out->expected_revision = (uint32_t)uval;
+        out->has_expected_revision = true;
+    } else if (err != QCBOR_ERR_LABEL_NOT_FOUND) return -1;
+
+    err = get_optional_uint(&context, GW_KEY_SETTINGS_NEW_REVISION, &uval);
+    if (err == QCBOR_SUCCESS) {
+        if (uval > UINT32_MAX) return -1;
+        out->new_revision = (uint32_t)uval;
+        out->has_new_revision = true;
+    } else if (err != QCBOR_ERR_LABEL_NOT_FOUND) return -1;
+
+    if (out->has_type) {
+        int64_t ival;
+        switch (out->type) {
+        case GW_SETTING_TYPE_BOOL:
+            QCBORDecode_GetBoolInMapN(&context, GW_KEY_SETTINGS_VALUE,
+                                      &out->value.value.bool_val);
+            err = QCBORDecode_GetAndResetError(&context);
+            break;
+        case GW_SETTING_TYPE_INT:
+            err = get_optional_int(&context, GW_KEY_SETTINGS_VALUE, &ival);
+            if (err == QCBOR_SUCCESS) {
+                if (ival < INT32_MIN || ival > INT32_MAX) return -1;
+                out->value.value.int_val = (int32_t)ival;
+            }
+            break;
+        case GW_SETTING_TYPE_STRING:
+            err = get_optional_text(&context, GW_KEY_SETTINGS_VALUE, &text);
+            if (err == QCBOR_SUCCESS &&
+                copy_text(out->value.value.string_val,
+                          sizeof(out->value.value.string_val), text) != 0) {
+                return -1;
+            }
+            break;
+        case GW_SETTING_TYPE_ENUM:
+            err = get_optional_uint(&context, GW_KEY_SETTINGS_VALUE, &uval);
+            if (err == QCBOR_SUCCESS) {
+                if (uval > UINT8_MAX) return -1;
+                out->value.value.enum_val = (uint8_t)uval;
+            }
+            break;
+        default:
+            err = QCBOR_ERR_LABEL_NOT_FOUND;
+            break;
+        }
+        if (err == QCBOR_SUCCESS) out->has_value = true;
+        else if (err != QCBOR_ERR_LABEL_NOT_FOUND) return -1;
     }
 
-    /* Unknown keys are silently ignored (targeted-lookup pattern). */
-
     QCBORDecode_ExitMap(&context);
-    if (QCBORDecode_Finish(&context) != QCBOR_SUCCESS) return -1;
+    return QCBORDecode_Finish(&context) == QCBOR_SUCCESS ? 0 : -1;
+}
 
+int gw_settings_frame_view_parse(const gw_settings_frame_view_t *view,
+                                 size_t len, gw_settings_snapshot_t *out)
+{
+    if (out == NULL) return -1;
+    memset(out, 0, sizeof(*out));
+    if (parse_settings_view(view, len, &out->view) != 0 || !out->view.has_setting_id ||
+        !out->view.has_type) return -1;
+
+    out->settings_count = 1;
+    gw_settings_entry_t *entry = &out->entries[0];
+    if (copy_text(out->text_storage[0], sizeof(out->text_storage[0]),
+                  (UsefulBufC){out->view.setting_id, strlen(out->view.setting_id)}) != 0) {
+        return -1;
+    }
+    entry->setting_id = out->text_storage[0];
+    entry->setting_type = out->view.type;
+    entry->flags = out->view.flags;
+    entry->writable = !out->view.has_flags ||
+                      !(out->view.flags & GW_SETTING_FLAG_READONLY);
+    entry->has_value = out->view.has_value;
+    if (out->view.has_group) {
+        if (copy_text(out->text_storage[1], sizeof(out->text_storage[1]),
+                      (UsefulBufC){out->view.group, strlen(out->view.group)}) != 0) {
+            return -1;
+        }
+        entry->group = out->text_storage[1];
+    }
+    entry->string_val.max_len = out->view.max_length;
+
+    if (entry->has_value) {
+        switch (entry->setting_type) {
+        case GW_SETTING_TYPE_BOOL: entry->bool_val = out->view.value.value.bool_val; break;
+        case GW_SETTING_TYPE_INT: entry->int_val = out->view.value.value.int_val; break;
+        case GW_SETTING_TYPE_STRING:
+            if (copy_text(out->text_storage[2], sizeof(out->text_storage[2]),
+                          (UsefulBufC){out->view.value.value.string_val,
+                                       strlen(out->view.value.value.string_val)}) != 0) {
+                return -1;
+            }
+            entry->string_val.str = out->text_storage[2];
+            break;
+        case GW_SETTING_TYPE_ENUM: entry->enum_val.value = out->view.value.value.enum_val; break;
+        default: break;
+        }
+    }
     return 0;
 }
 
-/* ── Settings request encoder ──────────────────────────────────────── */
-
-int gw_settings_encode_request(const char *command,
-                               const char *device_id,
-                               uint8_t *out_buf,
-                               size_t out_buf_cap)
+int gw_settings_encode_request(const char *command, const char *device_id,
+                               uint8_t *out_buf, size_t out_buf_cap)
 {
-    if (command == NULL || command[0] == '\0' ||
-        device_id == NULL || device_id[0] == '\0' ||
-        out_buf == NULL || out_buf_cap == 0) {
-        return -1;
-    }
-
-    gw_message_t msg = {
-        .protocol_version = GW_PROTOCOL_VERSION,
-        .has_device_id = 1,
-    };
+    if (command == NULL || command[0] == '\0' || device_id == NULL ||
+        device_id[0] == '\0' || out_buf == NULL || out_buf_cap == 0) return -1;
+    gw_message_t msg = {.protocol_version = GW_PROTOCOL_VERSION, .has_device_id = 1};
     strlcpy(msg.type, command, sizeof(msg.type));
     strlcpy(msg.device_id, device_id, sizeof(msg.device_id));
     strlcpy(msg.command, command, sizeof(msg.command));
-
     return cbor_codec_encode(&msg, out_buf, out_buf_cap);
 }
 
-/* ── Values frame view parser ─────────────────────────────────────── */
-
 int gw_settings_value_frame_view_parse(const gw_settings_frame_view_t *view,
-                                       size_t len,
-                                       gw_settings_value_entry_t *out)
+                                       size_t len, gw_settings_value_entry_t *out)
 {
-    if (view == NULL || view->buf == NULL || len == 0 || out == NULL) {
-        return -1;
-    }
-
+    if (out == NULL) return -1;
     memset(out, 0, sizeof(*out));
-
-    QCBORDecodeContext context;
-    QCBORDecode_Init(&context, (UsefulBufC){view->buf, len},
-                     QCBOR_DECODE_MODE_NORMAL);
-    QCBORDecode_EnterMap(&context, NULL);
-    if (QCBORDecode_GetAndResetError(&context) != QCBOR_SUCCESS) {
+    gw_settings_view_t parsed;
+    if (parse_settings_view(view, len, &parsed) != 0 || !parsed.has_setting_id ||
+        !parsed.has_type) return -1;
+    if (strlcpy(out->setting_id_storage, parsed.setting_id,
+                sizeof(out->setting_id_storage)) >= sizeof(out->setting_id_storage)) {
         return -1;
     }
-
-    /* Setting ID (required). */
-    UsefulBufC text_val;
-    QCBORError err = get_optional_text(&context, GW_SETTINGS_CBOR_KEY_SETTING_ID,
-                                       &text_val);
-    if (err != QCBOR_SUCCESS || text_val.len == 0 ||
-        text_val.len >= GW_SETTINGS_MAX_ID_LEN) {
-        return -1;
-    }
-    out->setting_id = (const char *)text_val.ptr;
-
-    /* Setting type (required). */
-    uint64_t uval = 0;
-    err = get_optional_uint(&context, GW_SETTINGS_CBOR_KEY_SETTING_TYPE, &uval);
-    if (err != QCBOR_SUCCESS || uval > GW_SETTINGS_TYPE_ENUM) {
-        return -1;
-    }
-    out->setting_type = (uint8_t)uval;
-
-    /* Value (required for values stream — each frame carries one value). */
-    int64_t ival = 0;
-    err = get_optional_int(&context, GW_SETTINGS_CBOR_KEY_DEFAULT_VALUE, &ival);
-    if (err == QCBOR_SUCCESS) {
-        out->has_value = true;
-        switch (out->setting_type) {
-        case GW_SETTINGS_TYPE_BOOL:
-            out->bool_val = (ival != 0);
-            break;
-        case GW_SETTINGS_TYPE_INT:
-            if (ival < INT32_MIN || ival > INT32_MAX) return -1;
-            out->int_val = (int32_t)ival;
-            break;
-        case GW_SETTINGS_TYPE_FLOAT: {
-            /* Float values transmitted as integer with implicit decimals. */
-            if (ival < INT32_MIN || ival > INT32_MAX) return -1;
-            out->float_val = (float)ival;
-            break;
-        }
-        case GW_SETTINGS_TYPE_ENUM:
-            if (ival < INT32_MIN || ival > INT32_MAX) return -1;
-            out->enum_val = (int32_t)ival;
-            break;
-        case GW_SETTINGS_TYPE_STRING:
-            /* String values use a separate key in the wire format. */
-            err = get_optional_text(&context, GW_SETTINGS_CBOR_KEY_DEFAULT_VALUE,
-                                    &text_val);
-            if (err == QCBOR_SUCCESS && text_val.len > 0) {
-                out->string_val.str = (const char *)text_val.ptr;
-            }
-            break;
-        default:
+    out->setting_id = out->setting_id_storage;
+    out->setting_type = parsed.type;
+    out->has_value = parsed.has_value;
+    if (!parsed.has_value) return 0;
+    switch (parsed.type) {
+    case GW_SETTING_TYPE_BOOL: out->bool_val = parsed.value.value.bool_val; break;
+    case GW_SETTING_TYPE_INT: out->int_val = parsed.value.value.int_val; break;
+    case GW_SETTING_TYPE_STRING:
+        if (strlcpy(out->string_val.storage, parsed.value.value.string_val,
+                    sizeof(out->string_val.storage)) >= sizeof(out->string_val.storage)) {
             return -1;
         }
-    } else if (err == QCBOR_ERR_LABEL_NOT_FOUND) {
-        /* Value key missing — mark as no value. */
-        out->has_value = false;
-    } else {
-        return -1;
+        out->string_val.str = out->string_val.storage;
+        break;
+    case GW_SETTING_TYPE_ENUM: out->enum_val = parsed.value.value.enum_val; break;
+    default: return -1;
     }
-
-    /* Unknown keys are silently ignored (targeted-lookup pattern). */
-
-    QCBORDecode_ExitMap(&context);
-    if (QCBORDecode_Finish(&context) != QCBOR_SUCCESS) return -1;
-
     return 0;
 }

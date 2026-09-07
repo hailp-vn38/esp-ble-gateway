@@ -20,23 +20,18 @@ extern "C" {
 #define DEVICE_SETTINGS_MAX_STRING_POOL 512
 #define DEVICE_SETTINGS_MAX_DEVICES     16
 
-/* ── Setting value types (wire contract) ────────────────────────────── */
+/* Internal aliases retain existing consumers while the wire contract lives
+ * in cbor_codec.h. */
+#define DS_TYPE_NONE   GW_SETTING_TYPE_NONE
+#define DS_TYPE_BOOL   GW_SETTING_TYPE_BOOL
+#define DS_TYPE_INT    GW_SETTING_TYPE_INT
+#define DS_TYPE_FLOAT  GW_SETTING_TYPE_FLOAT
+#define DS_TYPE_STRING GW_SETTING_TYPE_STRING
+#define DS_TYPE_ENUM   GW_SETTING_TYPE_ENUM
 
-enum {
-    DS_TYPE_NONE   = 0,
-    DS_TYPE_BOOL   = 1,
-    DS_TYPE_INT    = 2,
-    DS_TYPE_FLOAT  = 3,
-    DS_TYPE_STRING = 4,
-    DS_TYPE_ENUM   = 5,
-};
-
-/* ── Setting flags ─────────────────────────────────────────────────── */
-
-enum {
-    DS_FLAG_WRITABLE = 1u << 0,
-    DS_FLAG_SECRET   = 1u << 1,
-};
+#define DS_FLAG_READONLY GW_SETTING_FLAG_READONLY
+#define DS_FLAG_SECRET   GW_SETTING_FLAG_SECRET
+#define DS_FLAG_ADVANCED GW_SETTING_FLAG_ADVANCED
 
 /* ── Schema states ─────────────────────────────────────────────────── */
 

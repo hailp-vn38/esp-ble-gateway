@@ -414,6 +414,62 @@ TEST_CASE("CBOR decoder requires explicit protocol version 4", "[cbor_codec]")
                                  "\"bool_value\":false}", &message));
 }
 
+/* ── G1 Settings codec alignment tests ─────────────────────────────── */
+
+TEST_CASE("DS-CBOR-001: decodes settings supported", "[cbor_codec][g1]")
+{
+    const gw_message_t source = {
+        .protocol_version = GW_PROTOCOL_VERSION,
+        .type = "capabilities_begin",
+        .command = "describe_capabilities",
+        .settings_supported = true,
+        .has_settings_supported = 1,
+    };
+    uint8_t buffer[GW_MSG_MAX_LEN];
+    gw_message_t decoded;
+    int len = cbor_codec_encode(&source, buffer, sizeof(buffer));
+    TEST_ASSERT_GREATER_THAN(0, len);
+    TEST_ASSERT_EQUAL_INT(0, cbor_codec_decode(buffer, len, &decoded));
+    TEST_ASSERT_TRUE(decoded.has_settings_supported);
+    TEST_ASSERT_TRUE(decoded.settings_supported);
+}
+
+TEST_CASE("DS-CBOR-002: decodes settings unsupported", "[cbor_codec][g1]")
+{
+    const gw_message_t source = {
+        .protocol_version = GW_PROTOCOL_VERSION,
+        .type = "capabilities_begin",
+        .command = "describe_capabilities",
+        .settings_supported = false,
+        .has_settings_supported = 1,
+    };
+    uint8_t buffer[GW_MSG_MAX_LEN];
+    gw_message_t decoded;
+    int len = cbor_codec_encode(&source, buffer, sizeof(buffer));
+    TEST_ASSERT_GREATER_THAN(0, len);
+    TEST_ASSERT_EQUAL_INT(0, cbor_codec_decode(buffer, len, &decoded));
+    TEST_ASSERT_TRUE(decoded.has_settings_supported);
+    TEST_ASSERT_FALSE(decoded.settings_supported);
+}
+
+TEST_CASE("DS-CBOR-003: decodes schema revision", "[cbor_codec][g1]")
+{
+    const gw_message_t source = {
+        .protocol_version = GW_PROTOCOL_VERSION,
+        .type = "capabilities_begin",
+        .command = "describe_capabilities",
+        .settings_schema_revision = 7,
+        .has_settings_schema_revision = 1,
+    };
+    uint8_t buffer[GW_MSG_MAX_LEN];
+    gw_message_t decoded;
+    int len = cbor_codec_encode(&source, buffer, sizeof(buffer));
+    TEST_ASSERT_GREATER_THAN(0, len);
+    TEST_ASSERT_EQUAL_INT(0, cbor_codec_decode(buffer, len, &decoded));
+    TEST_ASSERT_TRUE(decoded.has_settings_schema_revision);
+    TEST_ASSERT_EQUAL_UINT16(7, decoded.settings_schema_revision);
+}
+
 /* ── G0 Protocol Alignment tests ───────────────────────────────────── */
 
 TEST_CASE("G0: sizeof(gw_message_t) unchanged by Settings work",

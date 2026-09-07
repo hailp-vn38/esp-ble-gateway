@@ -102,7 +102,7 @@ TEST_CASE("schema builder creates valid schema",
         .title_off = title_off,
         .unit_off = unit_off,
         .type = DS_TYPE_INT,
-        .flags = DS_FLAG_WRITABLE,
+        .flags = 0,
         .min_value = 0,
         .max_value = 100,
         .step = 5,
@@ -119,7 +119,7 @@ TEST_CASE("schema builder creates valid schema",
         ds_string_pool_get(&schema->strings,
                            schema->descriptors[0].title_off));
     TEST_ASSERT_EQUAL(DS_TYPE_INT, schema->descriptors[0].type);
-    TEST_ASSERT_TRUE(schema->descriptors[0].flags & DS_FLAG_WRITABLE);
+    TEST_ASSERT_FALSE(schema->descriptors[0].flags & DS_FLAG_READONLY);
     TEST_ASSERT_EQUAL_INT32(0, schema->descriptors[0].min_value);
     TEST_ASSERT_EQUAL_INT32(100, schema->descriptors[0].max_value);
     TEST_ASSERT_EQUAL_INT32(5, schema->descriptors[0].step);
@@ -148,7 +148,7 @@ TEST_CASE("schema builder with enum options",
     ds_setting_desc_t desc = {
         .id_off = id_off,
         .type = DS_TYPE_ENUM,
-        .flags = DS_FLAG_WRITABLE,
+        .flags = 0,
         .option_count = 3,
         .option_index = opt0,
     };

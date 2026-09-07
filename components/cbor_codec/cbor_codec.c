@@ -49,29 +49,6 @@ enum {
     CBOR_KEY_FEATURE_TOOL = 29,
     CBOR_KEY_FEATURE_TOTAL = 30,
     CBOR_KEY_FEATURE_DECIMALS = 31,
-
-    /* Settings v2 protocol keys (additive extension, keys 32–52). */
-    CBOR_KEY_SETTINGS_BEGIN     = 32,
-    CBOR_KEY_SETTINGS_ITEM      = 33,
-    CBOR_KEY_SETTINGS_END       = 34,
-    CBOR_KEY_SETTING_ID         = 35,
-    CBOR_KEY_SETTING_TYPE       = 36,
-    CBOR_KEY_WRITABLE           = 37,
-    CBOR_KEY_ENUM_OPTIONS       = 38,
-    CBOR_KEY_ENUM_VALUE         = 39,
-    CBOR_KEY_ENUM_LABEL         = 40,
-    CBOR_KEY_DEFAULT_VALUE      = 41,
-    CBOR_KEY_MIN_VALUE_S        = 42,  /* Settings-specific min (avoid clash) */
-    CBOR_KEY_MAX_VALUE_S        = 43,
-    CBOR_KEY_STEP_S             = 44,
-    CBOR_KEY_STRING_MAX_LEN     = 45,
-    CBOR_KEY_CONFIG_REVISION    = 46,
-    CBOR_KEY_GROUP              = 47,
-    CBOR_KEY_GROUP_LABEL        = 48,
-    CBOR_KEY_GROUP_ORDER        = 49,
-    CBOR_KEY_DEPENDENCY_ID      = 50,
-    CBOR_KEY_DEPENDENCY_OP      = 51,
-    CBOR_KEY_DEPENDENCY_VAL     = 52,
 };
 
 static bool valid_string(const char *value, size_t capacity, bool allow_empty)
@@ -251,6 +228,76 @@ int cbor_codec_encode(const gw_message_t *msg, uint8_t *out_buf, size_t out_buf_
     if (msg->has_feature_decimals) {
         QCBOREncode_AddUInt64ToMapN(&context, CBOR_KEY_FEATURE_DECIMALS,
                                     msg->feature_decimals);
+    }
+    if (msg->has_settings_supported) {
+        QCBOREncode_AddUInt64ToMapN(&context, GW_KEY_SETTINGS_SUPPORTED,
+                                    msg->settings_supported ? 1 : 0);
+    }
+    if (msg->has_settings_schema_revision) {
+        QCBOREncode_AddUInt64ToMapN(&context, GW_KEY_SETTINGS_SCHEMA_REVISION,
+                                    msg->settings_schema_revision);
+    }
+    if (msg->has_setting_id) {
+        QCBOREncode_AddSZStringToMapN(&context, GW_KEY_SETTINGS_ID, msg->setting_id);
+    }
+    if (msg->has_setting_group) {
+        QCBOREncode_AddSZStringToMapN(&context, GW_KEY_SETTINGS_GROUP, msg->setting_group);
+    }
+    if (msg->has_setting_type) {
+        QCBOREncode_AddUInt64ToMapN(&context, GW_KEY_SETTINGS_TYPE, msg->setting_type);
+    }
+    if (msg->has_setting_flags) {
+        QCBOREncode_AddUInt64ToMapN(&context, GW_KEY_SETTINGS_FLAGS, msg->setting_flags);
+    }
+    if (msg->has_setting_value) {
+        switch (msg->setting_type) {
+        case GW_SETTING_TYPE_BOOL:
+            QCBOREncode_AddBoolToMapN(&context, GW_KEY_SETTINGS_VALUE,
+                                      msg->setting_value.setting_value_bool);
+            break;
+        case GW_SETTING_TYPE_INT:
+            QCBOREncode_AddInt64ToMapN(&context, GW_KEY_SETTINGS_VALUE,
+                                       msg->setting_value.setting_value_int);
+            break;
+        case GW_SETTING_TYPE_STRING:
+            QCBOREncode_AddSZStringToMapN(&context, GW_KEY_SETTINGS_VALUE,
+                                          msg->setting_value.setting_value_string);
+            break;
+        case GW_SETTING_TYPE_ENUM:
+            QCBOREncode_AddUInt64ToMapN(&context, GW_KEY_SETTINGS_VALUE,
+                                        msg->setting_value.setting_value_enum);
+            break;
+        default:
+            return -1;
+        }
+    }
+    if (msg->has_settings_transaction_id) {
+        QCBOREncode_AddUInt64ToMapN(&context, GW_KEY_SETTINGS_TRANSACTION_ID,
+                                    msg->settings_transaction_id);
+    }
+    if (msg->has_settings_expected_revision) {
+        QCBOREncode_AddUInt64ToMapN(&context, GW_KEY_SETTINGS_EXPECTED_REVISION,
+                                    msg->settings_expected_revision);
+    }
+    if (msg->has_settings_new_revision) {
+        QCBOREncode_AddUInt64ToMapN(&context, GW_KEY_SETTINGS_NEW_REVISION,
+                                    msg->settings_new_revision);
+    }
+    if (msg->has_settings_option_index) {
+        QCBOREncode_AddUInt64ToMapN(&context, GW_KEY_SETTINGS_OPTION_INDEX,
+                                    msg->settings_option_index);
+    }
+    if (msg->has_settings_max_length) {
+        QCBOREncode_AddUInt64ToMapN(&context, GW_KEY_SETTINGS_MAX_LENGTH,
+                                    msg->settings_max_length);
+    }
+    if (msg->has_settings_option_count) {
+        QCBOREncode_AddUInt64ToMapN(&context, GW_KEY_SETTINGS_OPTION_COUNT,
+                                    msg->settings_option_count);
+    }
+    if (msg->has_settings_sequence) {
+        QCBOREncode_AddUInt64ToMapN(&context, GW_KEY_SETTINGS_SEQUENCE,
+                                    msg->settings_sequence);
     }
     QCBOREncode_CloseMap(&context);
 
@@ -541,80 +588,142 @@ int cbor_codec_decode(const uint8_t *buf, size_t len, gw_message_t *out_msg)
         out_msg->has_feature_decimals = 1;
     } else if (error != QCBOR_ERR_LABEL_NOT_FOUND) return -1;
 
-    /* Settings v2 protocol fields (keys 32–52).  Unknown settings keys
-     * from older devices are silently ignored by the targeted-lookup
-     * decoder pattern — same as base protocol keys. */
-    error = get_optional_text(&context, CBOR_KEY_SETTING_ID, &optional_value);
+    /* Settings Protocol v4 fields (keys 32–47). Targeted lookups make
+     * decoding independent of CBOR map order. */
+    error = get_optional_uint(&context, GW_KEY_SETTINGS_SUPPORTED, &optional_uint);
+    if (error == QCBOR_SUCCESS) {
+        if (optional_uint > 1) return -1;
+        out_msg->settings_supported = optional_uint != 0;
+        out_msg->has_settings_supported = 1;
+    } else if (error != QCBOR_ERR_LABEL_NOT_FOUND) return -1;
+
+    error = get_optional_uint(&context, GW_KEY_SETTINGS_SCHEMA_REVISION,
+                              &optional_uint);
+    if (error == QCBOR_SUCCESS) {
+        if (optional_uint > UINT16_MAX) return -1;
+        out_msg->settings_schema_revision = (uint16_t)optional_uint;
+        out_msg->has_settings_schema_revision = 1;
+    } else if (error != QCBOR_ERR_LABEL_NOT_FOUND) return -1;
+
+    error = get_optional_text(&context, GW_KEY_SETTINGS_ID, &optional_value);
     if (error == QCBOR_SUCCESS) {
         if (copy_text(optional_value, out_msg->setting_id,
                       sizeof(out_msg->setting_id), false) != 0) return -1;
         out_msg->has_setting_id = 1;
     } else if (error != QCBOR_ERR_LABEL_NOT_FOUND) return -1;
 
-    error = get_optional_uint(&context, CBOR_KEY_SETTING_TYPE, &optional_uint);
-    if (error == QCBOR_SUCCESS) {
-        if (optional_uint > UINT8_MAX) return -1;
-        out_msg->setting_type = (uint8_t)optional_uint;
-        out_msg->has_setting_type = 1;
-    } else if (error != QCBOR_ERR_LABEL_NOT_FOUND) return -1;
-
-    QCBORDecode_GetBoolInMapN(&context, CBOR_KEY_WRITABLE, &optional_bool);
-    error = QCBORDecode_GetAndResetError(&context);
-    if (error == QCBOR_SUCCESS) {
-        out_msg->setting_writable = optional_bool;
-        out_msg->has_setting_writable = 1;
-    } else if (error != QCBOR_ERR_LABEL_NOT_FOUND) return -1;
-
-    error = get_optional_uint(&context, CBOR_KEY_CONFIG_REVISION,
-                              &optional_uint);
-    if (error == QCBOR_SUCCESS) {
-        if (optional_uint > UINT32_MAX) return -1;
-        out_msg->config_revision = (uint32_t)optional_uint;
-        out_msg->has_config_revision = 1;
-    } else if (error != QCBOR_ERR_LABEL_NOT_FOUND) return -1;
-
-    error = get_optional_text(&context, CBOR_KEY_GROUP, &optional_value);
+    error = get_optional_text(&context, GW_KEY_SETTINGS_GROUP, &optional_value);
     if (error == QCBOR_SUCCESS) {
         if (copy_text(optional_value, out_msg->setting_group,
                       sizeof(out_msg->setting_group), true) != 0) return -1;
         out_msg->has_setting_group = 1;
     } else if (error != QCBOR_ERR_LABEL_NOT_FOUND) return -1;
 
-    error = get_optional_uint(&context, CBOR_KEY_GROUP_ORDER, &optional_uint);
+    error = get_optional_uint(&context, GW_KEY_SETTINGS_TYPE, &optional_uint);
     if (error == QCBOR_SUCCESS) {
-        if (optional_uint > UINT8_MAX) return -1;
-        out_msg->setting_group_order = (uint8_t)optional_uint;
-        out_msg->has_setting_group_order = 1;
+        if (optional_uint > GW_SETTING_TYPE_ENUM) return -1;
+        out_msg->setting_type = (uint8_t)optional_uint;
+        out_msg->has_setting_type = 1;
     } else if (error != QCBOR_ERR_LABEL_NOT_FOUND) return -1;
 
-    error = get_optional_uint(&context, CBOR_KEY_STRING_MAX_LEN,
+    error = get_optional_uint(&context, GW_KEY_SETTINGS_FLAGS, &optional_uint);
+    if (error == QCBOR_SUCCESS) {
+        if (optional_uint > UINT16_MAX) return -1;
+        out_msg->setting_flags = (uint16_t)optional_uint;
+        out_msg->has_setting_flags = 1;
+    } else if (error != QCBOR_ERR_LABEL_NOT_FOUND) return -1;
+
+    if (out_msg->has_setting_type) {
+        switch (out_msg->setting_type) {
+        case GW_SETTING_TYPE_BOOL:
+            QCBORDecode_GetBoolInMapN(&context, GW_KEY_SETTINGS_VALUE,
+                                      &out_msg->setting_value.setting_value_bool);
+            error = QCBORDecode_GetAndResetError(&context);
+            break;
+        case GW_SETTING_TYPE_INT:
+            error = get_optional_int(&context, GW_KEY_SETTINGS_VALUE, &optional_int);
+            if (error == QCBOR_SUCCESS) {
+                if (optional_int < INT32_MIN || optional_int > INT32_MAX) return -1;
+                out_msg->setting_value.setting_value_int = (int32_t)optional_int;
+            }
+            break;
+        case GW_SETTING_TYPE_STRING:
+            error = get_optional_text(&context, GW_KEY_SETTINGS_VALUE, &optional_value);
+            if (error == QCBOR_SUCCESS &&
+                copy_text(optional_value, out_msg->setting_value.setting_value_string,
+                          sizeof(out_msg->setting_value.setting_value_string), true) != 0) {
+                return -1;
+            }
+            break;
+        case GW_SETTING_TYPE_ENUM:
+            error = get_optional_uint(&context, GW_KEY_SETTINGS_VALUE, &optional_uint);
+            if (error == QCBOR_SUCCESS) {
+                if (optional_uint > UINT8_MAX) return -1;
+                out_msg->setting_value.setting_value_enum = (uint8_t)optional_uint;
+            }
+            break;
+        default:
+            error = QCBOR_ERR_LABEL_NOT_FOUND;
+            break;
+        }
+        if (error == QCBOR_SUCCESS) {
+            out_msg->has_setting_value = 1;
+        } else if (error != QCBOR_ERR_LABEL_NOT_FOUND) {
+            return -1;
+        }
+    }
+
+    error = get_optional_uint(&context, GW_KEY_SETTINGS_TRANSACTION_ID,
+                              &out_msg->settings_transaction_id);
+    if (error == QCBOR_SUCCESS) {
+        out_msg->has_settings_transaction_id = 1;
+    } else if (error != QCBOR_ERR_LABEL_NOT_FOUND) return -1;
+
+    error = get_optional_uint(&context, GW_KEY_SETTINGS_EXPECTED_REVISION,
                               &optional_uint);
     if (error == QCBOR_SUCCESS) {
         if (optional_uint > UINT32_MAX) return -1;
-        out_msg->string_max_len = (uint32_t)optional_uint;
-        out_msg->has_string_max_len = 1;
+        out_msg->settings_expected_revision = (uint32_t)optional_uint;
+        out_msg->has_settings_expected_revision = 1;
     } else if (error != QCBOR_ERR_LABEL_NOT_FOUND) return -1;
 
-    error = get_optional_text(&context, CBOR_KEY_DEPENDENCY_ID,
-                              &optional_value);
+    error = get_optional_uint(&context, GW_KEY_SETTINGS_NEW_REVISION,
+                              &optional_uint);
     if (error == QCBOR_SUCCESS) {
-        if (copy_text(optional_value, out_msg->dependency_id,
-                      sizeof(out_msg->dependency_id), false) != 0) return -1;
-        out_msg->has_dependency_id = 1;
+        if (optional_uint > UINT32_MAX) return -1;
+        out_msg->settings_new_revision = (uint32_t)optional_uint;
+        out_msg->has_settings_new_revision = 1;
     } else if (error != QCBOR_ERR_LABEL_NOT_FOUND) return -1;
 
-    error = get_optional_uint(&context, CBOR_KEY_DEPENDENCY_OP, &optional_uint);
+    error = get_optional_uint(&context, GW_KEY_SETTINGS_OPTION_INDEX,
+                              &optional_uint);
     if (error == QCBOR_SUCCESS) {
         if (optional_uint > UINT8_MAX) return -1;
-        out_msg->dependency_op = (uint8_t)optional_uint;
-        out_msg->has_dependency_op = 1;
+        out_msg->settings_option_index = (uint8_t)optional_uint;
+        out_msg->has_settings_option_index = 1;
     } else if (error != QCBOR_ERR_LABEL_NOT_FOUND) return -1;
 
-    error = get_optional_int(&context, CBOR_KEY_DEPENDENCY_VAL, &optional_int);
+    error = get_optional_uint(&context, GW_KEY_SETTINGS_MAX_LENGTH,
+                              &optional_uint);
     if (error == QCBOR_SUCCESS) {
-        if (optional_int < INT32_MIN || optional_int > INT32_MAX) return -1;
-        out_msg->dependency_val = (int32_t)optional_int;
-        out_msg->has_dependency_val = 1;
+        if (optional_uint > UINT16_MAX) return -1;
+        out_msg->settings_max_length = (uint16_t)optional_uint;
+        out_msg->has_settings_max_length = 1;
+    } else if (error != QCBOR_ERR_LABEL_NOT_FOUND) return -1;
+
+    error = get_optional_uint(&context, GW_KEY_SETTINGS_OPTION_COUNT,
+                              &optional_uint);
+    if (error == QCBOR_SUCCESS) {
+        if (optional_uint > UINT16_MAX) return -1;
+        out_msg->settings_option_count = (uint16_t)optional_uint;
+        out_msg->has_settings_option_count = 1;
+    } else if (error != QCBOR_ERR_LABEL_NOT_FOUND) return -1;
+
+    error = get_optional_uint(&context, GW_KEY_SETTINGS_SEQUENCE, &optional_uint);
+    if (error == QCBOR_SUCCESS) {
+        if (optional_uint > UINT16_MAX) return -1;
+        out_msg->settings_sequence = (uint16_t)optional_uint;
+        out_msg->has_settings_sequence = 1;
     } else if (error != QCBOR_ERR_LABEL_NOT_FOUND) return -1;
 
     QCBORDecode_ExitMap(&context);

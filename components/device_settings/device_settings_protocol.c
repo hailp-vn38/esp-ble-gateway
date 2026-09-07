@@ -26,7 +26,7 @@ static ds_values_builder_t s_values_builder;
 static void handle_begin(const char *device_id, const gw_message_t *msg)
 {
     if (!msg->has_device_id || !msg->has_snapshot_id ||
-        !msg->has_total || !msg->has_capability_revision) {
+        !msg->has_total || !msg->has_settings_schema_revision) {
         return;
     }
 
@@ -41,7 +41,7 @@ static void handle_begin(const char *device_id, const gw_message_t *msg)
              device_id,
              (unsigned long)msg->snapshot_id,
              (unsigned)msg->total,
-             (unsigned long)msg->capability_revision);
+             (unsigned long)msg->settings_schema_revision);
 
     ds_device_record_t *rec = device_settings_find_or_create_record(device_id);
     if (rec == NULL) {
@@ -57,7 +57,7 @@ static void handle_begin(const char *device_id, const gw_message_t *msg)
         rec->schema_state = DS_SCHEMA_ERROR;
         return;
     }
-    s_schema_builder.schema_revision = msg->capability_revision;
+    s_schema_builder.schema_revision = msg->settings_schema_revision;
 
     rec->schema_state = DS_SCHEMA_DISCOVERING;
     rec->schema_stream_active = true;
@@ -157,8 +157,7 @@ static void handle_item(const char *device_id, const gw_message_t *msg)
         .group_off = group_off,
         .unit_off = 0,
         .type = msg->setting_type,
-        .flags = msg->has_setting_writable && msg->setting_writable
-                     ? DS_FLAG_WRITABLE : 0,
+        .flags = msg->has_setting_flags ? msg->setting_flags : 0,
         .option_count = 0,
         .option_index = 0,
     };
@@ -254,7 +253,7 @@ static void handle_values_begin(const char *device_id,
                                 const gw_message_t *msg)
 {
     if (!msg->has_device_id || !msg->has_snapshot_id ||
-        !msg->has_total || !msg->has_config_revision) {
+        !msg->has_total || !msg->has_capability_revision) {
         return;
     }
 
@@ -262,7 +261,7 @@ static void handle_values_begin(const char *device_id,
              device_id,
              (unsigned long)msg->snapshot_id,
              (unsigned)msg->total,
-             (unsigned long)msg->config_revision);
+             (unsigned long)msg->capability_revision);
 
     ds_device_record_t *rec = device_settings_find_record(device_id);
     if (rec == NULL) return;
@@ -288,7 +287,7 @@ static void handle_values_begin(const char *device_id,
                  device_id);
         return;
     }
-    s_values_builder.config_revision = msg->config_revision;
+    s_values_builder.config_revision = msg->capability_revision;
 
     rec->values_stream_active = true;
     rec->staging_expected_count = msg->total;
@@ -362,21 +361,24 @@ static void handle_values_value(const char *device_id,
         .has_value = true,
     };
 
+    if (!msg->has_setting_value) {
+        ESP_LOGW(TAG, "[%s] VALUES_VALUE missing typed value", device_id);
+        rec->values_stream_active = false;
+        return;
+    }
+
     switch (msg->setting_type) {
     case DS_TYPE_BOOL:
-        entry.bool_val = msg->has_int_value && msg->int_value != 0;
+        entry.bool_val = msg->setting_value.setting_value_bool;
         break;
     case DS_TYPE_INT:
-        entry.int_val = msg->has_int_value ? msg->int_value : 0;
-        break;
-    case DS_TYPE_FLOAT:
-        entry.float_val = msg->has_int_value ? (float)msg->int_value : 0.0f;
+        entry.int_val = msg->setting_value.setting_value_int;
         break;
     case DS_TYPE_STRING:
         entry.string_off = 0;
         break;
     case DS_TYPE_ENUM:
-        entry.enum_val = msg->has_int_value ? msg->int_value : 0;
+        entry.enum_val = msg->setting_value.setting_value_enum;
         break;
     default:
         entry.has_value = false;
