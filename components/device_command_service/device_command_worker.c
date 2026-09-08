@@ -4,6 +4,7 @@
 
 #include "esp_log.h"
 #include "esp_timer.h"
+#include "gw_settings_view.h"
 
 static void complete_event(const dcs_event_t *event, device_command_status_t status)
 {
@@ -69,9 +70,46 @@ static void handle_submit(const dcs_event_t *event)
     taskEXIT_CRITICAL(&g_dcs.stats_mux);
 
     dcs_build_wire_message(request, slot->request_id, &wire_message);
-    ESP_LOGI(DCS_TAG, "[SEND] device=%s request_id=%lu command=%s origin=%d",
-             slot->device_id, (unsigned long)slot->request_id,
-             slot->command, slot->origin);
+    if (request->origin == DEVICE_CMD_ORIGIN_SETTINGS) {
+        const device_command_settings_payload_t *settings = &request->settings;
+        if (strcmp(request->command, GW_SETTINGS_CMD_TX_BEGIN) == 0) {
+            ESP_LOGI(DCS_TAG, "[TX_BEGIN] device=%s request_id=%lu tx_id=%llu expected_rev=%lu",
+                     slot->device_id, (unsigned long)slot->request_id,
+                     (unsigned long long)settings->transaction_id,
+                     (unsigned long)settings->expected_revision);
+        } else if (strcmp(request->command, GW_SETTINGS_CMD_TX_SET) == 0) {
+            if (settings->setting_type == GW_SETTING_TYPE_STRING) {
+                ESP_LOGI(DCS_TAG, "[TX_SET] device=%s request_id=%lu tx_id=%llu id=%s type=%u str_len=%u",
+                         slot->device_id, (unsigned long)slot->request_id,
+                         (unsigned long long)settings->transaction_id, settings->setting_id,
+                         (unsigned)settings->setting_type,
+                         (unsigned)strnlen(settings->value.string_value,
+                                          sizeof(settings->value.string_value)));
+            } else {
+                ESP_LOGI(DCS_TAG, "[TX_SET] device=%s request_id=%lu tx_id=%llu id=%s type=%u",
+                         slot->device_id, (unsigned long)slot->request_id,
+                         (unsigned long long)settings->transaction_id, settings->setting_id,
+                         (unsigned)settings->setting_type);
+            }
+        } else if (strcmp(request->command, GW_SETTINGS_CMD_TX_COMMIT) == 0) {
+            ESP_LOGI(DCS_TAG, "[TX_COMMIT] device=%s request_id=%lu tx_id=%llu",
+                     slot->device_id, (unsigned long)slot->request_id,
+                     (unsigned long long)settings->transaction_id);
+        } else if (strcmp(request->command, GW_SETTINGS_CMD_COMMIT_CONFIRM) == 0) {
+            ESP_LOGI(DCS_TAG, "[TX_CONFIRM] device=%s request_id=%lu tx_id=%llu new_rev=%lu",
+                     slot->device_id, (unsigned long)slot->request_id,
+                     (unsigned long long)settings->transaction_id,
+                     (unsigned long)settings->new_revision);
+        } else {
+            ESP_LOGI(DCS_TAG, "[SEND] device=%s request_id=%lu command=%s origin=%d",
+                     slot->device_id, (unsigned long)slot->request_id,
+                     slot->command, slot->origin);
+        }
+    } else {
+        ESP_LOGI(DCS_TAG, "[SEND] device=%s request_id=%lu command=%s origin=%d",
+                 slot->device_id, (unsigned long)slot->request_id,
+                 slot->command, slot->origin);
+    }
     if (g_dcs.hooks.send_command(slot->device_id, &wire_message) != 0) {
         ESP_LOGW(DCS_TAG, "[SEND_FAILED] device=%s request_id=%lu",
                  slot->device_id, (unsigned long)slot->request_id);

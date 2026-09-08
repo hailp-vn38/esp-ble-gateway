@@ -9,6 +9,7 @@
 #include "freertos/task.h"
 #include "device_schema.h"
 #include "device_store.h"
+#include "gw_settings_view.h"
 #include "unity.h"
 
 /* ── Mock transport ──────────────────────────────────────────────────── */
@@ -206,7 +207,186 @@ static gw_message_t make_ack(const char *device_id, const char *command,
     return ack;
 }
 
+static device_command_request_t make_settings_request(const char *command)
+{
+    device_command_request_t req = {0};
+    req.origin = DEVICE_CMD_ORIGIN_SETTINGS;
+    strlcpy(req.device_id, "settings-dev", sizeof(req.device_id));
+    strlcpy(req.command, command, sizeof(req.command));
+    return req;
+}
+
+static gw_message_t build_valid_settings_request(
+    const device_command_request_t *request)
+{
+    gw_message_t message;
+    dcs_build_wire_message(request, 77, &message);
+    TEST_ASSERT_EQUAL(DEVICE_CMD_STATUS_OK,
+                      dcs_validate_request(request, &message));
+    return message;
+}
+
 /* ── Tests ───────────────────────────────────────────────────────────── */
+
+TEST_CASE("DS-CMD-001 describe Settings validates without payload",
+          "[device_command_service][g6]")
+{
+    device_command_request_t req =
+        make_settings_request(GW_SETTINGS_CMD_DESCRIBE_SETTINGS);
+    gw_message_t message = build_valid_settings_request(&req);
+    TEST_ASSERT_FALSE(message.has_setting_id);
+    TEST_ASSERT_FALSE(message.has_settings_transaction_id);
+}
+
+TEST_CASE("DS-CMD-002 read Settings validates without payload",
+          "[device_command_service][g6]")
+{
+    device_command_request_t req = make_settings_request(GW_SETTINGS_CMD_READ_SETTINGS);
+    gw_message_t message = build_valid_settings_request(&req);
+    TEST_ASSERT_FALSE(message.has_setting_value);
+}
+
+TEST_CASE("DS-CMD-003 begin emits transaction and expected revision",
+          "[device_command_service][g6]")
+{
+    device_command_request_t req = make_settings_request(GW_SETTINGS_CMD_TX_BEGIN);
+    req.settings.has_transaction_id = true;
+    req.settings.transaction_id = 0x123456789ULL;
+    req.settings.has_expected_revision = true;
+    req.settings.expected_revision = 41;
+    gw_message_t message = build_valid_settings_request(&req);
+    TEST_ASSERT_TRUE(message.has_settings_transaction_id);
+    TEST_ASSERT_EQUAL_UINT64(req.settings.transaction_id, message.settings_transaction_id);
+    TEST_ASSERT_TRUE(message.has_settings_expected_revision);
+    TEST_ASSERT_EQUAL_UINT32(41, message.settings_expected_revision);
+}
+
+TEST_CASE("DS-CMD-004 bool set emits canonical Settings fields",
+          "[device_command_service][g6]")
+{
+    device_command_request_t req = make_settings_request(GW_SETTINGS_CMD_TX_SET);
+    req.settings.has_transaction_id = true;
+    req.settings.transaction_id = 1;
+    req.settings.has_setting_id = true;
+    strlcpy(req.settings.setting_id, "enabled", sizeof(req.settings.setting_id));
+    req.settings.has_setting_value = true;
+    req.settings.setting_type = GW_SETTING_TYPE_BOOL;
+    req.settings.value.bool_value = true;
+    gw_message_t message = build_valid_settings_request(&req);
+    TEST_ASSERT_TRUE(message.has_setting_id);
+    TEST_ASSERT_EQUAL_STRING("enabled", message.setting_id);
+    TEST_ASSERT_EQUAL_UINT8(GW_SETTING_TYPE_BOOL, message.setting_type);
+    TEST_ASSERT_TRUE(message.setting_value.setting_value_bool);
+    TEST_ASSERT_FALSE(message.has_feature_id);
+    TEST_ASSERT_FALSE(message.has_property_id);
+}
+
+TEST_CASE("DS-CMD-005 int set emits canonical Settings value",
+          "[device_command_service][g6]")
+{
+    device_command_request_t req = make_settings_request(GW_SETTINGS_CMD_TX_SET);
+    req.settings.has_transaction_id = true;
+    req.settings.transaction_id = 2;
+    req.settings.has_setting_id = true;
+    strlcpy(req.settings.setting_id, "level", sizeof(req.settings.setting_id));
+    req.settings.has_setting_value = true;
+    req.settings.setting_type = GW_SETTING_TYPE_INT;
+    req.settings.value.int_value = -21;
+    gw_message_t message = build_valid_settings_request(&req);
+    TEST_ASSERT_EQUAL_INT32(-21, message.setting_value.setting_value_int);
+}
+
+TEST_CASE("DS-CMD-006 string set preserves bounded value",
+          "[device_command_service][g6]")
+{
+    device_command_request_t req = make_settings_request(GW_SETTINGS_CMD_TX_SET);
+    req.settings.has_transaction_id = true;
+    req.settings.transaction_id = 3;
+    req.settings.has_setting_id = true;
+    strlcpy(req.settings.setting_id, "label", sizeof(req.settings.setting_id));
+    req.settings.has_setting_value = true;
+    req.settings.setting_type = GW_SETTING_TYPE_STRING;
+    strlcpy(req.settings.value.string_value, "gateway label",
+            sizeof(req.settings.value.string_value));
+    gw_message_t message = build_valid_settings_request(&req);
+    TEST_ASSERT_EQUAL_STRING("gateway label", message.setting_value.setting_value_string);
+}
+
+TEST_CASE("DS-CMD-007 enum set emits canonical Settings value",
+          "[device_command_service][g6]")
+{
+    device_command_request_t req = make_settings_request(GW_SETTINGS_CMD_TX_SET);
+    req.settings.has_transaction_id = true;
+    req.settings.transaction_id = 4;
+    req.settings.has_setting_id = true;
+    strlcpy(req.settings.setting_id, "mode", sizeof(req.settings.setting_id));
+    req.settings.has_setting_value = true;
+    req.settings.setting_type = GW_SETTING_TYPE_ENUM;
+    req.settings.value.enum_value = 7;
+    gw_message_t message = build_valid_settings_request(&req);
+    TEST_ASSERT_EQUAL_UINT8(7, message.setting_value.setting_value_enum);
+}
+
+TEST_CASE("DS-CMD-008 commit emits transaction only",
+          "[device_command_service][g6]")
+{
+    device_command_request_t req = make_settings_request(GW_SETTINGS_CMD_TX_COMMIT);
+    req.settings.has_transaction_id = true;
+    req.settings.transaction_id = 5;
+    gw_message_t message = build_valid_settings_request(&req);
+    TEST_ASSERT_TRUE(message.has_settings_transaction_id);
+    TEST_ASSERT_FALSE(message.has_settings_new_revision);
+}
+
+TEST_CASE("DS-CMD-009 abort emits transaction only",
+          "[device_command_service][g6]")
+{
+    device_command_request_t req = make_settings_request(GW_SETTINGS_CMD_TX_ABORT);
+    req.settings.has_transaction_id = true;
+    req.settings.transaction_id = 6;
+    gw_message_t message = build_valid_settings_request(&req);
+    TEST_ASSERT_TRUE(message.has_settings_transaction_id);
+}
+
+TEST_CASE("DS-CMD-010 confirm emits transaction and new revision",
+          "[device_command_service][g6]")
+{
+    device_command_request_t req = make_settings_request(GW_SETTINGS_CMD_COMMIT_CONFIRM);
+    req.settings.has_transaction_id = true;
+    req.settings.transaction_id = 7;
+    req.settings.has_new_revision = true;
+    req.settings.new_revision = 42;
+    gw_message_t message = build_valid_settings_request(&req);
+    TEST_ASSERT_TRUE(message.has_settings_new_revision);
+    TEST_ASSERT_EQUAL_UINT32(42, message.settings_new_revision);
+}
+
+TEST_CASE("DS-CMD-011 oversized Settings string is rejected",
+          "[device_command_service][g6]")
+{
+    device_command_request_t req = make_settings_request(GW_SETTINGS_CMD_TX_SET);
+    req.settings.has_transaction_id = true;
+    req.settings.has_setting_id = true;
+    strlcpy(req.settings.setting_id, "label", sizeof(req.settings.setting_id));
+    req.settings.has_setting_value = true;
+    req.settings.setting_type = GW_SETTING_TYPE_STRING;
+    memset(req.settings.value.string_value, 'x',
+           sizeof(req.settings.value.string_value));
+    gw_message_t message;
+    dcs_build_wire_message(&req, 0, &message);
+    TEST_ASSERT_EQUAL(DEVICE_CMD_STATUS_INVALID_ARGUMENT,
+                      dcs_validate_request(&req, &message));
+}
+
+TEST_CASE("DS-CMD-012 transaction commands require transaction ID",
+          "[device_command_service][g6]")
+{
+    device_command_request_t req = make_settings_request(GW_SETTINGS_CMD_TX_COMMIT);
+    gw_message_t message;
+    dcs_build_wire_message(&req, 0, &message);
+    TEST_ASSERT_EQUAL(DEVICE_CMD_STATUS_INVALID_ARGUMENT,
+                      dcs_validate_request(&req, &message));
+}
 
 TEST_CASE("service init/deinit", "[device_command_service]")
 {

@@ -28,6 +28,11 @@ extern "C" {
 #define GW_SETTINGS_CMD_GET_SETTINGS       "get_settings"
 #define GW_SETTINGS_CMD_SET_SETTINGS       "set_settings"
 #define GW_SETTINGS_CMD_COMMIT_SETTINGS    "commit_settings"
+#define GW_SETTINGS_CMD_TX_BEGIN            "settings_tx_begin"
+#define GW_SETTINGS_CMD_TX_SET              "settings_tx_set"
+#define GW_SETTINGS_CMD_TX_COMMIT           "settings_tx_commit"
+#define GW_SETTINGS_CMD_TX_ABORT            "settings_tx_abort"
+#define GW_SETTINGS_CMD_COMMIT_CONFIRM      "settings_commit_confirm"
 
 #define GW_SETTINGS_MAX_ENUM_OPTIONS  16
 #define GW_SETTINGS_MAX_ID_LEN        32

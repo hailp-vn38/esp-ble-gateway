@@ -16,7 +16,7 @@
 #define GW_MSG_CAP_UNIT_LEN      12
 #define GW_FEATURE_ID_LEN        DEVICE_FEATURE_ID_MAX_LEN
 #define GW_SETTINGS_CBOR_MAX_ID_LEN 32
-#define GW_SETTINGS_VALUE_MAX_LEN   32
+#define GW_SETTINGS_VALUE_MAX_LEN   64
 #define GW_PROTOCOL_VERSION      4
 
 /* Settings Protocol v4 keys. These values mirror the Device contract and
@@ -165,7 +165,6 @@ typedef struct {
     int has_settings_schema_revision;
     char setting_id[GW_SETTINGS_CBOR_MAX_ID_LEN];
     int has_setting_id;
-    char setting_group[32];
     int has_setting_group;
     uint8_t setting_type;
     int has_setting_type;
@@ -194,11 +193,12 @@ typedef struct {
     int has_settings_sequence;
 } gw_message_t;
 
-/* Settings title/unit reuse the capability metadata buffers. These message
- * families are mutually exclusive, which preserves the bounded gw_message_t
- * footprint while still carrying all Protocol v4 metadata. Empty means absent. */
+/* Settings title/unit/group reuse fields from mutually exclusive capability
+ * and feature message families. This preserves the bounded gw_message_t
+ * footprint while carrying the complete Protocol v4 Settings metadata. */
 #define setting_title capability_label
 #define setting_unit  capability_unit
+#define setting_group feature_id
 
 int cbor_codec_decode(const uint8_t *buf, size_t len, gw_message_t *out_msg);
 int cbor_codec_encode(const gw_message_t *msg, uint8_t *out_buf, size_t out_buf_cap);

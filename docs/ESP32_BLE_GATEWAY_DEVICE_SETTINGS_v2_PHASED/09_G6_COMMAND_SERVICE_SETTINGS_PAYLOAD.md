@@ -1,4 +1,4 @@
-# Phase G6 — Command Service Settings Payload
+# Phase G6 — Command Service Settings Payload ✅ DONE (2026-09-08)
 
 **Document set:** ESP32 BLE Gateway ↔ Device Settings v2  
 **Version:** v2.1 phased documents  
@@ -295,10 +295,10 @@ DS-CMD-012 missing tx_id reject
 # 11. Exit gate
 
 ```text
-[ ] typed Settings payload exists
-[ ] no Settings transaction path relies on feature_id/property_id overload
-[ ] validators use canonical command requirements
-[ ] wire builder emits keys 34/38/40/41/42/43 correctly
-[ ] string bounds enforced
-[ ] logs redact secrets
+[x] typed Settings payload exists
+[x] no Settings transaction path relies on feature_id/property_id overload
+[x] validators use canonical command requirements
+[x] wire builder emits keys 34/38/40/41/42/43 correctly
+[x] string bounds enforced
+[x] logs redact secrets
 ```

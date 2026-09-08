@@ -19,6 +19,34 @@ typedef enum {
 
 /* ── Typed request ───────────────────────────────────────────────────── */
 
+/* Settings values have the same bounded string representation as the
+ * Protocol v4 CBOR message.  Keep this payload separate from feature fields:
+ * settings transaction keys 34 and 38--43 are not feature semantics. */
+#define GW_SETTINGS_VALUE_STR_LEN GW_SETTINGS_VALUE_MAX_LEN
+
+typedef struct {
+    bool has_transaction_id;
+    uint64_t transaction_id;
+
+    bool has_expected_revision;
+    uint32_t expected_revision;
+
+    bool has_new_revision;
+    uint32_t new_revision;
+
+    bool has_setting_id;
+    char setting_id[GW_FEATURE_ID_LEN];
+
+    bool has_setting_value;
+    uint8_t setting_type;
+    union {
+        bool bool_value;
+        int32_t int_value;
+        uint8_t enum_value;
+        char string_value[GW_SETTINGS_VALUE_STR_LEN];
+    } value;
+} device_command_settings_payload_t;
+
 typedef struct {
     device_command_origin_t origin;
 
@@ -36,6 +64,8 @@ typedef struct {
 
     bool has_property_id;
     uint8_t property_id;
+
+    device_command_settings_payload_t settings;
 } device_command_request_t;
 
 /* ── Result status ───────────────────────────────────────────────────── */

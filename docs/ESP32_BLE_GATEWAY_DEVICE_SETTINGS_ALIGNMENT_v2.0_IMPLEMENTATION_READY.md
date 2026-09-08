@@ -1067,7 +1067,7 @@ M1 pass criteria:
 
 ---
 
-# 14. Phase G6 — Command-service Settings payload
+# 14. Phase G6 — Command-service Settings payload ✅ DONE (2026-09-08)
 
 Current request model is too generic for transaction Settings.
 

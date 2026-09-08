@@ -77,9 +77,7 @@ void dcs_pending_complete(dcs_pending_slot_t *slot,
 {
     device_command_completion_fn completion = slot->completion;
     void *context = slot->context;
-    slot->in_use = false;
-    slot->completion = NULL;
-    slot->context = NULL;
+    memset(slot, 0, sizeof(*slot));
     if (completion != NULL) {
         completion(result, context);
     }
