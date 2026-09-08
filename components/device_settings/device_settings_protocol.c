@@ -9,13 +9,13 @@
 
 static const char *TAG = "ds_protocol";
 
-/* ── Schema builder (stack-allocated during stream) ───────────────────
- * The builder accumulates descriptors in internal SRAM during the
- * settings_begin → settings_item → settings_end stream.  On commit
- * it allocates the final ds_schema_t in PSRAM and transfers string
- * pool ownership. */
+/* ── Schema builder (PSRAM during stream) ─────────────────────────────
+ * The builder contains the worst-case descriptor and enum-option arrays
+ * (~1.5 KiB).  It exists only for a settings_begin → settings_end stream,
+ * so keep it in PSRAM rather than permanently reserving internal SRAM.
+ * The final immutable ds_schema_t is also PSRAM-backed. */
 
-static ds_schema_builder_t s_schema_builder;
+static ds_schema_builder_t *s_schema_builder;
 static char s_schema_owner[GW_MSG_DEVICE_ID_LEN];
 static uint32_t s_schema_request_id;
 static uint8_t s_declared_option_count[DEVICE_SETTINGS_MAX_SETTINGS];
@@ -46,7 +46,11 @@ static void publish_settings_state(const char *device_id,
 
 static void schema_builder_discard(void)
 {
-    ds_schema_builder_reset(&s_schema_builder);
+    if (s_schema_builder != NULL) {
+        ds_schema_builder_reset(s_schema_builder);
+        ds_settings_free(s_schema_builder);
+        s_schema_builder = NULL;
+    }
     s_schema_owner[0] = '\0';
     s_schema_request_id = 0;
     memset(s_declared_option_count, UINT8_MAX,
@@ -132,7 +136,10 @@ static void handle_begin(const char *device_id, const gw_message_t *msg)
         return;
     }
 
-    if (ds_schema_builder_init(&s_schema_builder) != ESP_OK) {
+    s_schema_builder = ds_settings_alloc(sizeof(*s_schema_builder));
+    if (s_schema_builder == NULL ||
+        ds_schema_builder_init(s_schema_builder) != ESP_OK) {
+        schema_builder_discard();
         ESP_LOGE(TAG, "[REJECT reason=builder_alloc] device_id=%s", device_id);
         rec->schema_state = rec->schema != NULL ? DS_SCHEMA_READY
                                                 : DS_SCHEMA_ERROR;
@@ -141,7 +148,7 @@ static void handle_begin(const char *device_id, const gw_message_t *msg)
                                rec->schema_rev, rec->config_rev);
         return;
     }
-    s_schema_builder.schema_revision = msg->has_settings_schema_revision
+    s_schema_builder->schema_revision = msg->has_settings_schema_revision
                                             ? msg->settings_schema_revision
                                             : rec->advertised_schema_rev;
     strlcpy(s_schema_owner, device_id, sizeof(s_schema_owner));
@@ -154,12 +161,12 @@ static void handle_begin(const char *device_id, const gw_message_t *msg)
     rec->staging_expected_count = msg->total;
     rec->staging_received_count = 0;
     publish_settings_state(device_id, GW_SETTINGS_EVENT_STATE_DISCOVERING,
-                           s_schema_builder.schema_revision, rec->config_rev);
+                           s_schema_builder->schema_revision, rec->config_rev);
 
     ESP_LOGI(TAG, "[SCHEMA_BEGIN] device_id=%s request_id=%lu command=%s total=%u revision=%u",
              device_id, (unsigned long)msg->request_id, msg->command,
              (unsigned)msg->total,
-             (unsigned)s_schema_builder.schema_revision);
+             (unsigned)s_schema_builder->schema_revision);
 }
 
 /* ── settings_item handler ─────────────────────────────────────────── */
@@ -193,8 +200,8 @@ static void handle_item(const char *device_id, const gw_message_t *msg)
     /* Check for duplicate setting_id. */
     for (uint16_t i = 0; i < rec->staging_received_count; i++) {
         const char *existing_id = ds_string_pool_get(
-            &s_schema_builder.strings,
-            s_schema_builder.descriptors[i].id_off);
+            &s_schema_builder->strings,
+            s_schema_builder->descriptors[i].id_off);
         if (existing_id != NULL &&
             strcmp(existing_id, msg->setting_id) == 0) {
             schema_reject(device_id, rec, "duplicate_setting_id");
@@ -204,7 +211,7 @@ static void handle_item(const char *device_id, const gw_message_t *msg)
 
     /* Add setting ID string to pool. */
     uint16_t id_off = 0;
-    if (ds_schema_builder_add_string(&s_schema_builder, msg->setting_id,
+    if (ds_schema_builder_add_string(s_schema_builder, msg->setting_id,
                                      &id_off) != ESP_OK) {
         schema_reject(device_id, rec, "id_pool_exhausted");
         return;
@@ -212,7 +219,7 @@ static void handle_item(const char *device_id, const gw_message_t *msg)
 
     uint16_t title_off = id_off;
     if (msg->setting_title[0] != '\0' &&
-        ds_schema_builder_add_string(&s_schema_builder, msg->setting_title,
+        ds_schema_builder_add_string(s_schema_builder, msg->setting_title,
                                      &title_off) != ESP_OK) {
         schema_reject(device_id, rec, "title_pool_exhausted");
         return;
@@ -221,7 +228,7 @@ static void handle_item(const char *device_id, const gw_message_t *msg)
     /* Add group string to pool (if present). */
     uint16_t group_off = 0;
     if (msg->has_setting_group && msg->setting_group[0] != '\0') {
-        if (ds_schema_builder_add_string(&s_schema_builder,
+        if (ds_schema_builder_add_string(s_schema_builder,
                                          msg->setting_group,
                                          &group_off) != ESP_OK) {
             schema_reject(device_id, rec, "group_pool_exhausted");
@@ -231,7 +238,7 @@ static void handle_item(const char *device_id, const gw_message_t *msg)
 
     uint16_t unit_off = 0;
     if (msg->setting_unit[0] != '\0' &&
-        ds_schema_builder_add_string(&s_schema_builder, msg->setting_unit,
+        ds_schema_builder_add_string(s_schema_builder, msg->setting_unit,
                                      &unit_off) != ESP_OK) {
         schema_reject(device_id, rec, "unit_pool_exhausted");
         return;
@@ -249,7 +256,7 @@ static void handle_item(const char *device_id, const gw_message_t *msg)
         .max_length = msg->has_settings_max_length
                           ? msg->settings_max_length : 0,
         .option_count = 0,
-        .option_index = s_schema_builder.enum_option_count,
+        .option_index = s_schema_builder->enum_option_count,
     };
 
     if (msg->has_min_value) desc.min_value = msg->min_value;
@@ -266,7 +273,7 @@ static void handle_item(const char *device_id, const gw_message_t *msg)
             (uint8_t)msg->settings_option_count;
     }
 
-    if (ds_schema_builder_add_setting(&s_schema_builder, &desc) != ESP_OK) {
+    if (ds_schema_builder_add_setting(s_schema_builder, &desc) != ESP_OK) {
         schema_reject(device_id, rec, "descriptor_limit");
         return;
     }
@@ -298,7 +305,7 @@ static void handle_option_item(const char *device_id, const gw_message_t *msg)
     }
 
     ds_setting_desc_t *parent =
-        &s_schema_builder.descriptors[msg->settings_sequence];
+        &s_schema_builder->descriptors[msg->settings_sequence];
     if (parent->type != DS_TYPE_ENUM) {
         schema_reject(device_id, rec, "option_on_non_enum");
         return;
@@ -308,7 +315,7 @@ static void handle_option_item(const char *device_id, const gw_message_t *msg)
         return;
     }
     for (uint8_t i = 0; i < parent->option_count; i++) {
-        if (s_schema_builder.enum_options[parent->option_index + i].value ==
+        if (s_schema_builder->enum_options[parent->option_index + i].value ==
             msg->settings_option_index) {
             schema_reject(device_id, rec, "duplicate_option_index");
             return;
@@ -316,7 +323,7 @@ static void handle_option_item(const char *device_id, const gw_message_t *msg)
     }
 
     uint16_t option_slot = 0;
-    if (ds_schema_builder_add_enum_option(&s_schema_builder,
+    if (ds_schema_builder_add_enum_option(s_schema_builder,
                                           msg->settings_option_index,
                                           msg->setting_title,
                                           &option_slot) != ESP_OK) {
@@ -334,13 +341,13 @@ static void handle_option_item(const char *device_id, const gw_message_t *msg)
                                           parent->option_count);
     if (insert_at < option_slot) {
         ds_enum_option_t appended =
-            s_schema_builder.enum_options[option_slot];
-        memmove(&s_schema_builder.enum_options[insert_at + 1],
-                &s_schema_builder.enum_options[insert_at],
+            s_schema_builder->enum_options[option_slot];
+        memmove(&s_schema_builder->enum_options[insert_at + 1],
+                &s_schema_builder->enum_options[insert_at],
                 (option_slot - insert_at) * sizeof(ds_enum_option_t));
-        s_schema_builder.enum_options[insert_at] = appended;
-        for (uint16_t i = 0; i < s_schema_builder.setting_count; i++) {
-            ds_setting_desc_t *other = &s_schema_builder.descriptors[i];
+        s_schema_builder->enum_options[insert_at] = appended;
+        for (uint16_t i = 0; i < s_schema_builder->setting_count; i++) {
+            ds_setting_desc_t *other = &s_schema_builder->descriptors[i];
             if (other != parent && other->option_count > 0 &&
                 other->option_index >= insert_at) {
                 other->option_index++;
@@ -366,10 +373,10 @@ static void handle_end(const char *device_id, const gw_message_t *msg)
         schema_reject(device_id, rec, "end_total_mismatch");
         return;
     }
-    for (uint16_t i = 0; i < s_schema_builder.setting_count; i++) {
+    for (uint16_t i = 0; i < s_schema_builder->setting_count; i++) {
         if (s_declared_option_count[i] != UINT8_MAX &&
             s_declared_option_count[i] !=
-                s_schema_builder.descriptors[i].option_count) {
+                s_schema_builder->descriptors[i].option_count) {
             schema_reject(device_id, rec, "option_count_mismatch");
             return;
         }
@@ -380,7 +387,7 @@ static void handle_end(const char *device_id, const gw_message_t *msg)
              (unsigned)msg->total);
 
     /* Commit schema builder → PSRAM snapshot. */
-    ds_schema_t *schema = ds_schema_builder_commit(&s_schema_builder);
+    ds_schema_t *schema = ds_schema_builder_commit(s_schema_builder);
     if (schema == NULL) {
         schema_reject(device_id, rec, "commit_alloc");
         return;
