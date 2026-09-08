@@ -259,7 +259,9 @@ esp_err_t ds_values_builder_init(ds_values_builder_t *builder)
         ds_settings_alloc(DEVICE_SETTINGS_MAX_STRING_POOL);
     if (builder->string_pool.pool == NULL) return ESP_ERR_NO_MEM;
     builder->string_pool.capacity = DEVICE_SETTINGS_MAX_STRING_POOL;
-    builder->string_pool.total_size = 0;
+    /* Offset zero represents an unavailable value (not a retained string). */
+    builder->string_pool.pool[0] = '\0';
+    builder->string_pool.total_size = 4;
     return ESP_OK;
 }
 

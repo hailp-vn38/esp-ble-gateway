@@ -65,7 +65,7 @@ H1  HIL/fault/memory/soak qualification
 | 4 | `04_G2_SETTINGS_CAPABILITY_DETECTION.md` | Gateway | Detect support/revision correctly |
 | 5 | `05_G3_SETTINGS_WORKER_COORDINATOR.md` | Gateway | Execute queued Settings operations safely ✅ DONE (2026-09-07) |
 | 6 | `06_G4_SETTINGS_SCHEMA_DISCOVERY.md` | Gateway | Decode and commit descriptors/options ✅ DONE (2026-09-07) |
-| 7 | `07_G5_SETTINGS_VALUES_DISCOVERY.md` | Gateway | Decode and commit typed values |
+| 7 | `07_G5_SETTINGS_VALUES_DISCOVERY.md` | Gateway | Decode and commit typed values ✅ DONE (2026-09-08) |
 | 8 | `08_M1_READ_DISPLAY_ACCEPTANCE.md` | Both | End-to-end read/display gate |
 | 9 | `09_G6_COMMAND_SERVICE_SETTINGS_PAYLOAD.md` | Gateway | Add typed Settings command payload |
 | 10 | `10_G7_SETTINGS_TRANSACTION_FLOW.md` | Gateway + Device | BEGIN/SET/COMMIT/CONFIRM/reconcile |

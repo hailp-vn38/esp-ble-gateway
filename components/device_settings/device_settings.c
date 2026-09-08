@@ -171,6 +171,29 @@ esp_err_t device_settings_commit_schema(const char *device_id,
     return ESP_OK;
 }
 
+esp_err_t device_settings_commit_values(const char *device_id,
+                                        ds_values_t *values)
+{
+    if (device_id == NULL || device_id[0] == '\0' || values == NULL) {
+        return ESP_ERR_INVALID_ARG;
+    }
+    if (!lock()) return ESP_ERR_TIMEOUT;
+
+    ds_device_record_t *rec = device_settings_find_record(device_id);
+    if (rec == NULL) {
+        unlock();
+        return ESP_ERR_NOT_FOUND;
+    }
+
+    ds_values_t *old_values = rec->values;
+    rec->values = values;
+    rec->config_rev = values->config_revision;
+    unlock();
+
+    if (old_values != NULL) ds_values_ref_release(old_values);
+    return ESP_OK;
+}
+
 const ds_values_t *device_settings_values_acquire(const char *device_id)
 {
     if (device_id == NULL || device_id[0] == '\0') return NULL;

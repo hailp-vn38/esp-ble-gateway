@@ -1,4 +1,4 @@
-# Phase G5 — Settings Values Discovery
+# Phase G5 — Settings Values Discovery ✅ DONE (2026-09-08)
 
 **Document set:** ESP32 BLE Gateway ↔ Device Settings v2  
 **Version:** v2.1 phased documents  
@@ -277,12 +277,12 @@ DS-VAL-012 old values retained on failed refresh
 # 12. Exit gate
 
 ```text
-[ ] BOOL/INT/STRING/ENUM decode correctly
-[ ] key40 is authoritative
-[ ] stream response command asymmetry handled
-[ ] config revision normalized locally from key21
-[ ] schema type validation active
-[ ] failed refresh keeps old values
-[ ] strings copied safely
-[ ] secrets not exposed
+[x] BOOL/INT/STRING/ENUM decode correctly
+[x] key40 is authoritative
+[x] stream response command asymmetry handled
+[x] config revision normalized locally from key21
+[x] schema type validation active
+[x] failed refresh keeps old values
+[x] strings copied safely
+[x] secrets not exposed
 ```

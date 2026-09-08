@@ -464,6 +464,8 @@ ds_device_record_t *device_settings_find_or_create_record(
     const char *device_id);
 esp_err_t device_settings_commit_schema(const char *device_id,
                                         ds_schema_t *schema);
+esp_err_t device_settings_commit_values(const char *device_id,
+                                        ds_values_t *values);
 
 /* ── Memory helpers (exposed for testing) ──────────────────────────── */
 

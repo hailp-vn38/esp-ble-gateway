@@ -966,7 +966,7 @@ and reached `gateway_ready`.
 
 ---
 
-# 12. Phase G5 — Values parser
+# 12. Phase G5 — Values parser ✅ DONE (2026-09-08)
 
 ## `settings_values_begin`
 
@@ -1014,6 +1014,12 @@ active request/device
 ```
 
 Commit atomically and retain old values on failed refresh.
+
+**G5 verification (2026-09-08):** the connected ESP32-S3 passed the targeted
+typed key40 values suite (BOOL, INT, STRING and ENUM), request/sequence
+rejection, old-snapshot retention, and ENUM range rejection (`3 Tests,
+0 Failures, 0 Ignored`). The production firmware built, flashed, initialized
+PSRAM/Settings/worker/BLE/Web/MCP, and reached `gateway_ready`.
 
 ---
 

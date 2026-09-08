@@ -23,6 +23,9 @@ static uint8_t s_declared_option_count[DEVICE_SETTINGS_MAX_SETTINGS];
 /* ── Values builder ─────────────────────────────────────────────────── */
 
 static ds_values_builder_t s_values_builder;
+static char s_values_owner[GW_MSG_DEVICE_ID_LEN];
+static uint32_t s_values_request_id;
+static uint32_t s_values_config_revision;
 
 /* ── settings_begin handler ────────────────────────────────────────── */
 
@@ -386,35 +389,117 @@ void device_settings_protocol_on_disconnect(const char *device_id)
         (device_id == NULL || strcmp(device_id, s_schema_owner) == 0)) {
         schema_builder_discard();
     }
+    if (s_values_owner[0] != '\0' &&
+        (device_id == NULL || strcmp(device_id, s_values_owner) == 0)) {
+        ds_values_builder_reset(&s_values_builder);
+        s_values_owner[0] = '\0';
+        s_values_request_id = 0;
+        s_values_config_revision = 0;
+    }
 }
 
 /* ── settings_values_begin handler ─────────────────────────────────── */
 
+static void values_builder_discard(void)
+{
+    ds_values_builder_reset(&s_values_builder);
+    s_values_owner[0] = '\0';
+    s_values_request_id = 0;
+    s_values_config_revision = 0;
+}
+
+static void values_reject(const char *device_id, ds_device_record_t *rec,
+                          const char *reason)
+{
+    ESP_LOGW(TAG, "[VALUES_REJECT reason=%s] device_id=%s request_id=%lu",
+             reason, device_id, (unsigned long)s_values_request_id);
+    if (rec != NULL && rec->values_stream_active &&
+        strcmp(s_values_owner, device_id) == 0) {
+        rec->values_stream_active = false;
+        rec->staging_expected_count = 0;
+        rec->staging_received_count = 0;
+        values_builder_discard();
+        DS_DIAG_INC(discovery_values_fail);
+    }
+}
+
+static bool values_frame_matches(const char *device_id,
+                                 const gw_message_t *msg,
+                                 ds_device_record_t **out_rec)
+{
+    ds_device_record_t *rec = device_settings_find_record(device_id);
+    *out_rec = rec;
+    if (rec == NULL || !rec->values_stream_active ||
+        s_values_owner[0] == '\0') {
+        ESP_LOGW(TAG, "[VALUES_REJECT reason=no_active_stream] device_id=%s",
+                 device_id);
+        return false;
+    }
+    if (strcmp(s_values_owner, device_id) != 0) {
+        ESP_LOGW(TAG, "[VALUES_REJECT reason=wrong_device] device_id=%s owner=%s",
+                 device_id, s_values_owner);
+        return false;
+    }
+    if (!msg->has_request_id || msg->request_id != s_values_request_id) {
+        values_reject(device_id, rec, "request_id_mismatch");
+        return false;
+    }
+    return true;
+}
+
+static const ds_setting_desc_t *find_descriptor(const ds_schema_t *schema,
+                                                 const char *setting_id)
+{
+    if (schema == NULL || setting_id == NULL) return NULL;
+    for (uint16_t i = 0; i < schema->setting_count; i++) {
+        const ds_setting_desc_t *desc = &schema->descriptors[i];
+        if (strcmp(ds_string_pool_get(&schema->strings, desc->id_off),
+                   setting_id) == 0) {
+            return desc;
+        }
+    }
+    return NULL;
+}
+
+static bool enum_value_allowed(const ds_schema_t *schema,
+                               const ds_setting_desc_t *desc, uint8_t value)
+{
+    for (uint8_t i = 0; i < desc->option_count; i++) {
+        if (schema->enum_option_pool[desc->option_index + i].value == value) {
+            return true;
+        }
+    }
+    return false;
+}
+
 static void handle_values_begin(const char *device_id,
                                 const gw_message_t *msg)
 {
-    if (!msg->has_device_id || !msg->has_snapshot_id ||
+    if (msg->protocol_version != GW_PROTOCOL_VERSION || !msg->has_request_id ||
         !msg->has_total || !msg->has_capability_revision) {
+        ESP_LOGW(TAG, "[VALUES_REJECT reason=invalid_begin] device_id=%s",
+                 device_id);
         return;
     }
 
-    ESP_LOGI(TAG, "[%s] VALUES_BEGIN snapshot=%lu total=%u config_rev=%lu",
-             device_id,
-             (unsigned long)msg->snapshot_id,
-             (unsigned)msg->total,
-             (unsigned long)msg->capability_revision);
+    if (s_values_owner[0] != '\0') {
+        ESP_LOGW(TAG, "[VALUES_REJECT reason=builder_busy] device_id=%s owner=%s",
+                 device_id, s_values_owner);
+        return;
+    }
 
     ds_device_record_t *rec = device_settings_find_record(device_id);
     if (rec == NULL) return;
 
     /* Must have committed schema first. */
     if (rec->schema_state != DS_SCHEMA_READY || rec->schema == NULL) {
-        ESP_LOGW(TAG, "[%s] VALUES_BEGIN but schema not ready", device_id);
+        ESP_LOGW(TAG, "[VALUES_REJECT reason=schema_not_ready] device_id=%s",
+                 device_id);
         return;
     }
 
     if (msg->total > rec->schema->setting_count) {
-        ESP_LOGW(TAG, "[%s] VALUES_BEGIN total=%u exceeds schema count=%u",
+        ESP_LOGW(TAG, "[VALUES_REJECT reason=total_exceeds_schema] device_id=%s total=%u schema_count=%u",
                  device_id,
                  (unsigned)msg->total,
                  (unsigned)rec->schema->setting_count);
@@ -422,18 +507,24 @@ static void handle_values_begin(const char *device_id,
     }
 
     /* Initialize values builder. */
-    ds_values_builder_reset(&s_values_builder);
     if (ds_values_builder_init(&s_values_builder) != ESP_OK) {
-        ESP_LOGE(TAG, "[%s] VALUES_BEGIN builder init failed (PSRAM?)",
+        ESP_LOGE(TAG, "[VALUES_REJECT reason=builder_alloc] device_id=%s",
                  device_id);
+        DS_DIAG_INC(discovery_values_fail);
         return;
     }
     s_values_builder.config_revision = msg->capability_revision;
+    strlcpy(s_values_owner, device_id, sizeof(s_values_owner));
+    s_values_request_id = msg->request_id;
+    s_values_config_revision = msg->capability_revision;
 
     rec->values_stream_active = true;
     rec->staging_expected_count = msg->total;
     rec->staging_received_count = 0;
-    rec->staging_snapshot_id = msg->snapshot_id;
+    rec->staging_snapshot_id = 0;
+    ESP_LOGI(TAG, "[VALUES_BEGIN] device_id=%s request_id=%lu total=%u config_rev=%lu",
+             device_id, (unsigned long)msg->request_id, (unsigned)msg->total,
+             (unsigned long)msg->capability_revision);
 }
 
 /* ── settings_values_value handler ─────────────────────────────────── */
@@ -441,72 +532,42 @@ static void handle_values_begin(const char *device_id,
 static void handle_values_value(const char *device_id,
                                 const gw_message_t *msg)
 {
-    if (!msg->has_device_id || !msg->has_snapshot_id ||
-        !msg->has_setting_id || !msg->has_setting_type) {
-        return;
-    }
-
-    ds_device_record_t *rec = device_settings_find_record(device_id);
-    if (rec == NULL || !rec->values_stream_active) {
-        return;
-    }
-
-    /* Validate snapshot. */
-    if (msg->snapshot_id != rec->staging_snapshot_id) {
-        ESP_LOGW(TAG, "[%s] VALUES_VALUE snapshot mismatch", device_id);
+    ds_device_record_t *rec = NULL;
+    if (!values_frame_matches(device_id, msg, &rec)) return;
+    if (!msg->has_settings_sequence || !msg->has_setting_id ||
+        msg->setting_id[0] == '\0' || !msg->has_setting_type ||
+        !msg->has_setting_value) {
+        values_reject(device_id, rec, "invalid_value");
         return;
     }
 
     /* Validate count. */
     if (rec->staging_received_count >= rec->staging_expected_count) {
-        ESP_LOGW(TAG, "[%s] VALUES_VALUE count overflow", device_id);
-        rec->values_stream_active = false;
+        values_reject(device_id, rec, "count_overflow");
+        return;
+    }
+    if (msg->settings_sequence != rec->staging_received_count) {
+        values_reject(device_id, rec,
+                      msg->settings_sequence < rec->staging_received_count
+                          ? "duplicate_sequence" : "sequence_gap");
         return;
     }
 
-    /* Validate setting_id exists in committed schema and type matches. */
-    bool found = false;
-    uint16_t id_off = 0;
-    for (uint16_t i = 0; i < rec->schema->setting_count; i++) {
-        const char *schema_id = ds_string_pool_get(
-            &rec->schema->strings,
-            rec->schema->descriptors[i].id_off);
-        if (schema_id != NULL && strcmp(schema_id, msg->setting_id) == 0) {
-            if (rec->schema->descriptors[i].type != msg->setting_type) {
-                ESP_LOGW(TAG, "[%s] VALUES_VALUE type mismatch: schema=%u "
-                         "value=%u for '%s'",
-                         device_id,
-                         (unsigned)rec->schema->descriptors[i].type,
-                         (unsigned)msg->setting_type,
-                         msg->setting_id);
-                rec->values_stream_active = false;
-                return;
-            }
-            id_off = rec->schema->descriptors[i].id_off;
-            found = true;
-            break;
-        }
+    const ds_setting_desc_t *desc = find_descriptor(rec->schema, msg->setting_id);
+    if (desc == NULL) {
+        values_reject(device_id, rec, "unknown_setting_id");
+        return;
     }
-
-    if (!found) {
-        ESP_LOGW(TAG, "[%s] VALUES_VALUE id='%s' not in schema",
-                 device_id, msg->setting_id);
-        rec->values_stream_active = false;
+    if (desc->type != msg->setting_type) {
+        values_reject(device_id, rec, "type_mismatch");
         return;
     }
 
-    /* Build value entry. */
     ds_value_entry_t entry = {
-        .id_off = id_off,
+        .id_off = desc->id_off,
         .type = msg->setting_type,
-        .has_value = true,
+        .has_value = (desc->flags & DS_FLAG_SECRET) == 0,
     };
-
-    if (!msg->has_setting_value) {
-        ESP_LOGW(TAG, "[%s] VALUES_VALUE missing typed value", device_id);
-        rec->values_stream_active = false;
-        return;
-    }
 
     switch (msg->setting_type) {
     case DS_TYPE_BOOL:
@@ -516,28 +577,66 @@ static void handle_values_value(const char *device_id,
         entry.int_val = msg->setting_value.setting_value_int;
         break;
     case DS_TYPE_STRING:
-        entry.string_off = 0;
+        if (strlen(msg->setting_value.setting_value_string) >
+            GW_SETTINGS_VALUE_MAX_LEN - 1 ||
+            (desc->max_length != 0 &&
+             strlen(msg->setting_value.setting_value_string) > desc->max_length)) {
+            values_reject(device_id, rec, "string_too_long");
+            return;
+        }
+        if (entry.has_value && ds_string_pool_add(
+                &s_values_builder.string_pool,
+                msg->setting_value.setting_value_string,
+                &entry.string_off) != ESP_OK) {
+            values_reject(device_id, rec, "string_pool_exhausted");
+            return;
+        }
         break;
     case DS_TYPE_ENUM:
         entry.enum_val = msg->setting_value.setting_value_enum;
+        if (!enum_value_allowed(rec->schema, desc,
+                                msg->setting_value.setting_value_enum)) {
+            values_reject(device_id, rec, "enum_out_of_range");
+            return;
+        }
         break;
     default:
+        values_reject(device_id, rec, "unsupported_type");
+        return;
+    }
+
+    /* A secret frame may be structurally valid, but its raw value must not
+     * survive the receive callback. Keep only the descriptor identity and
+     * an unavailable marker in the committed snapshot. */
+    if (desc->flags & DS_FLAG_SECRET) {
         entry.has_value = false;
-        break;
+        entry.bool_val = false; /* clears the value union without logging it */
     }
 
     if (ds_values_builder_add(&s_values_builder, &entry) != ESP_OK) {
-        ESP_LOGE(TAG, "[%s] VALUES_VALUE builder add failed", device_id);
-        rec->values_stream_active = false;
+        values_reject(device_id, rec, "builder_add");
         return;
     }
 
     rec->staging_received_count++;
-    ESP_LOGD(TAG, "[%s] VALUES_VALUE %u/%u id='%s'",
-             device_id,
-             (unsigned)rec->staging_received_count,
-             (unsigned)rec->staging_expected_count,
-             msg->setting_id);
+    if (desc->flags & DS_FLAG_SECRET) {
+        ESP_LOGD(TAG, "[VALUE] device_id=%s request_id=%lu sequence=%u/%u id=%s value=<redacted>",
+                 device_id, (unsigned long)msg->request_id,
+                 (unsigned)msg->settings_sequence,
+                 (unsigned)rec->staging_expected_count, msg->setting_id);
+    } else if (msg->setting_type == DS_TYPE_STRING) {
+        ESP_LOGD(TAG, "[VALUE] device_id=%s request_id=%lu sequence=%u/%u id=%s STRING len=%u",
+                 device_id, (unsigned long)msg->request_id,
+                 (unsigned)msg->settings_sequence,
+                 (unsigned)rec->staging_expected_count, msg->setting_id,
+                 (unsigned)strlen(msg->setting_value.setting_value_string));
+    } else {
+        ESP_LOGD(TAG, "[VALUE] device_id=%s request_id=%lu sequence=%u/%u id=%s type=%u",
+                 device_id, (unsigned long)msg->request_id,
+                 (unsigned)msg->settings_sequence,
+                 (unsigned)rec->staging_expected_count, msg->setting_id,
+                 (unsigned)msg->setting_type);
+    }
 }
 
 /* ── settings_values_end handler ───────────────────────────────────── */
@@ -545,51 +644,48 @@ static void handle_values_value(const char *device_id,
 static void handle_values_end(const char *device_id,
                               const gw_message_t *msg)
 {
-    if (!msg->has_device_id || !msg->has_snapshot_id || !msg->has_total) {
-        return;
-    }
-
-    ds_device_record_t *rec = device_settings_find_record(device_id);
-    if (rec == NULL || !rec->values_stream_active) {
+    ds_device_record_t *rec = NULL;
+    if (!values_frame_matches(device_id, msg, &rec)) return;
+    if (!msg->has_total || !msg->has_capability_revision) {
+        values_reject(device_id, rec, "invalid_end");
         return;
     }
 
     /* Validate count. */
     if (msg->total != rec->staging_expected_count ||
         rec->staging_received_count != rec->staging_expected_count) {
-        ESP_LOGW(TAG, "[%s] VALUES_END mismatch: total=%u expected=%u "
-                 "received=%u",
-                 device_id,
-                 (unsigned)msg->total,
-                 (unsigned)rec->staging_expected_count,
-                 (unsigned)rec->staging_received_count);
-        rec->values_stream_active = false;
-        DS_DIAG_INC(discovery_values_fail);
+        values_reject(device_id, rec, "end_total_mismatch");
         return;
     }
+    if (msg->capability_revision != s_values_config_revision) {
+        values_reject(device_id, rec, "revision_mismatch");
+        return;
+    }
+
+    ESP_LOGI(TAG, "[VALUES_END] device_id=%s request_id=%lu total=%u config_rev=%lu",
+             device_id, (unsigned long)msg->request_id, (unsigned)msg->total,
+             (unsigned long)msg->capability_revision);
 
     /* Commit values builder → PSRAM snapshot. */
     ds_values_t *values = ds_values_builder_commit(&s_values_builder);
     if (values == NULL) {
-        ESP_LOGE(TAG, "[%s] VALUES_END commit failed (PSRAM?)", device_id);
-        rec->values_stream_active = false;
-        DS_DIAG_INC(discovery_values_fail);
+        values_reject(device_id, rec, "commit_alloc");
         return;
     }
 
-    /* Atomic swap: free old, install new. */
-    if (rec->values != NULL) {
-        ds_values_ref_release(rec->values);
+    if (device_settings_commit_values(device_id, values) != ESP_OK) {
+        ds_values_ref_release(values);
+        values_reject(device_id, rec, "commit_swap");
+        return;
     }
-    rec->values = values;
-    rec->config_rev = values->config_revision;
     rec->values_stream_active = false;
     DS_DIAG_INC(discovery_values_success);
 
-    ESP_LOGI(TAG, "[%s] VALUES committed: %u values, config_rev=%lu",
-             device_id,
+    ESP_LOGI(TAG, "[VALUES_COMMIT] device_id=%s request_id=%lu count=%u config_rev=%lu",
+             device_id, (unsigned long)msg->request_id,
              (unsigned)values->value_count,
              (unsigned long)values->config_revision);
+    values_builder_discard();
 
     /* Publish settings changed event. */
     {

@@ -1339,3 +1339,171 @@ TEST_CASE("sizeof(ds_setting_desc_t) <= 28 bytes",
     /* Compact descriptor must be small. */
     TEST_ASSERT_TRUE(sizeof(ds_setting_desc_t) <= 28);
 }
+
+/* ── G5 values stream fixtures ─────────────────────────────────────── */
+
+#define VALUES_REQUEST_ID 5151
+
+static gw_message_t values_message(const char *type)
+{
+    gw_message_t msg = {0};
+    msg.protocol_version = GW_PROTOCOL_VERSION;
+    strlcpy(msg.type, type, sizeof(msg.type));
+    /* The stream intentionally uses get_settings, not the outbound
+     * read_settings command. */
+    strlcpy(msg.command, GW_SETTINGS_CMD_GET_SETTINGS, sizeof(msg.command));
+    msg.request_id = VALUES_REQUEST_ID;
+    msg.has_request_id = 1;
+    msg.capability_revision = 11;
+    msg.has_capability_revision = 1;
+    return msg;
+}
+
+static gw_message_t values_begin(uint16_t total)
+{
+    gw_message_t msg = values_message(GW_SETTINGS_MSG_SETTINGS_VALUES_BEGIN);
+    msg.total = total;
+    msg.has_total = 1;
+    return msg;
+}
+
+static gw_message_t values_value(uint16_t sequence, const char *id,
+                                 uint8_t type)
+{
+    gw_message_t msg = values_message(GW_SETTINGS_MSG_SETTINGS_VALUES_VALUE);
+    msg.settings_sequence = sequence;
+    msg.has_settings_sequence = 1;
+    strlcpy(msg.setting_id, id, sizeof(msg.setting_id));
+    msg.has_setting_id = 1;
+    msg.setting_type = type;
+    msg.has_setting_type = 1;
+    msg.has_setting_value = 1;
+    return msg;
+}
+
+static gw_message_t values_end(uint16_t total)
+{
+    gw_message_t msg = values_message(GW_SETTINGS_MSG_SETTINGS_VALUES_END);
+    msg.total = total;
+    msg.has_total = 1;
+    return msg;
+}
+
+static void values_install_schema(gw_message_t *item)
+{
+    const ds_schema_t *schema = schema_send_single(item);
+    TEST_ASSERT_NOT_NULL(schema);
+    device_settings_schema_release(schema);
+}
+
+TEST_CASE("DS-VAL-001..004: BOOL INT STRING ENUM decode key40",
+          "[device_settings][g5]")
+{
+    schema_test_setup();
+    gw_message_t begin_schema = schema_begin(4);
+    gw_message_t bool_item = schema_item(0, 4, "enabled", DS_TYPE_BOOL);
+    gw_message_t int_item = schema_item(1, 4, "level", DS_TYPE_INT);
+    gw_message_t string_item = schema_item(2, 4, "name", DS_TYPE_STRING);
+    string_item.settings_max_length = 12;
+    string_item.has_settings_max_length = 1;
+    gw_message_t enum_item = schema_item(3, 4, "mode", DS_TYPE_ENUM);
+    gw_message_t enum_opt = schema_option(3, 2, "Eco");
+    gw_message_t end_schema = schema_end(4);
+    device_settings_on_notify(SCHEMA_DEVICE, &begin_schema);
+    device_settings_on_notify(SCHEMA_DEVICE, &bool_item);
+    device_settings_on_notify(SCHEMA_DEVICE, &int_item);
+    device_settings_on_notify(SCHEMA_DEVICE, &string_item);
+    device_settings_on_notify(SCHEMA_DEVICE, &enum_item);
+    device_settings_on_notify(SCHEMA_DEVICE, &enum_opt);
+    device_settings_on_notify(SCHEMA_DEVICE, &end_schema);
+
+    gw_message_t begin = values_begin(4);
+    gw_message_t boolean = values_value(0, "enabled", DS_TYPE_BOOL);
+    boolean.setting_value.setting_value_bool = true;
+    gw_message_t integer = values_value(1, "level", DS_TYPE_INT);
+    integer.setting_value.setting_value_int = -9;
+    gw_message_t string = values_value(2, "name", DS_TYPE_STRING);
+    strlcpy(string.setting_value.setting_value_string, "gateway",
+            sizeof(string.setting_value.setting_value_string));
+    gw_message_t enumeration = values_value(3, "mode", DS_TYPE_ENUM);
+    enumeration.setting_value.setting_value_enum = 2;
+    gw_message_t end = values_end(4);
+    device_settings_on_notify(SCHEMA_DEVICE, &begin);
+    device_settings_on_notify(SCHEMA_DEVICE, &boolean);
+    device_settings_on_notify(SCHEMA_DEVICE, &integer);
+    device_settings_on_notify(SCHEMA_DEVICE, &string);
+    device_settings_on_notify(SCHEMA_DEVICE, &enumeration);
+    device_settings_on_notify(SCHEMA_DEVICE, &end);
+
+    const ds_values_t *values = device_settings_values_acquire(SCHEMA_DEVICE);
+    TEST_ASSERT_NOT_NULL(values);
+    TEST_ASSERT_EQUAL_UINT32(11, values->config_revision);
+    TEST_ASSERT_EQUAL_UINT16(4, values->value_count);
+    TEST_ASSERT_TRUE(values->values[0].bool_val);
+    TEST_ASSERT_EQUAL_INT32(-9, values->values[1].int_val);
+    TEST_ASSERT_EQUAL_STRING("gateway", ds_string_pool_get(
+        &values->string_pool, values->values[2].string_off));
+    TEST_ASSERT_EQUAL_INT32(2, values->values[3].enum_val);
+    device_settings_values_release(values);
+    schema_test_teardown();
+}
+
+TEST_CASE("DS-VAL-005..011: invalid frame retains old values",
+          "[device_settings][g5]")
+{
+    schema_test_setup();
+    gw_message_t item = schema_item(0, 1, "enabled", DS_TYPE_BOOL);
+    values_install_schema(&item);
+
+    gw_message_t good_begin = values_begin(1);
+    gw_message_t good_value = values_value(0, "enabled", DS_TYPE_BOOL);
+    good_value.setting_value.setting_value_bool = true;
+    gw_message_t good_end = values_end(1);
+    device_settings_on_notify(SCHEMA_DEVICE, &good_begin);
+    device_settings_on_notify(SCHEMA_DEVICE, &good_value);
+    device_settings_on_notify(SCHEMA_DEVICE, &good_end);
+    const ds_values_t *old_values = device_settings_values_acquire(SCHEMA_DEVICE);
+    TEST_ASSERT_NOT_NULL(old_values);
+
+    gw_message_t bad_begin = values_begin(1);
+    gw_message_t bad_value = values_value(0, "unknown", DS_TYPE_BOOL);
+    bad_value.setting_value.setting_value_bool = false;
+    device_settings_on_notify(SCHEMA_DEVICE, &bad_begin);
+    device_settings_on_notify(SCHEMA_DEVICE, &bad_value);
+    const ds_values_t *still_values = device_settings_values_acquire(SCHEMA_DEVICE);
+    TEST_ASSERT_EQUAL_PTR(old_values, still_values);
+    device_settings_values_release(still_values);
+    device_settings_values_release(old_values);
+
+    /* request_id and sequence are mandatory and generic int_value is ignored. */
+    gw_message_t mismatch_begin = values_begin(1);
+    gw_message_t mismatch_value = values_value(1, "enabled", DS_TYPE_BOOL);
+    mismatch_value.int_value = 7;
+    mismatch_value.has_int_value = 1;
+    device_settings_on_notify(SCHEMA_DEVICE, &mismatch_begin);
+    device_settings_on_notify(SCHEMA_DEVICE, &mismatch_value);
+    const ds_values_t *preserved = device_settings_values_acquire(SCHEMA_DEVICE);
+    TEST_ASSERT_NOT_NULL(preserved);
+    device_settings_values_release(preserved);
+    schema_test_teardown();
+}
+
+TEST_CASE("DS-VAL-007: ENUM out of range is rejected", "[device_settings][g5]")
+{
+    schema_test_setup();
+    gw_message_t begin_schema = schema_begin(1);
+    gw_message_t item = schema_item(0, 1, "mode", DS_TYPE_ENUM);
+    gw_message_t option = schema_option(0, 1, "One");
+    gw_message_t end_schema = schema_end(1);
+    device_settings_on_notify(SCHEMA_DEVICE, &begin_schema);
+    device_settings_on_notify(SCHEMA_DEVICE, &item);
+    device_settings_on_notify(SCHEMA_DEVICE, &option);
+    device_settings_on_notify(SCHEMA_DEVICE, &end_schema);
+    gw_message_t begin = values_begin(1);
+    gw_message_t value = values_value(0, "mode", DS_TYPE_ENUM);
+    value.setting_value.setting_value_enum = 2;
+    device_settings_on_notify(SCHEMA_DEVICE, &begin);
+    device_settings_on_notify(SCHEMA_DEVICE, &value);
+    TEST_ASSERT_NULL(device_settings_values_acquire(SCHEMA_DEVICE));
+    schema_test_teardown();
+}
