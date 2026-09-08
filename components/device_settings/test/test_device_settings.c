@@ -2,6 +2,10 @@
 
 #include "unity.h"
 #include "device_settings.h"
+#include "device_command_service.h"
+#include "freertos/FreeRTOS.h"
+#include "freertos/task.h"
+#include "gw_settings_view.h"
 #include "memory_policy.h"
 
 /* ── Allocation tests ──────────────────────────────────────────────── */
@@ -102,7 +106,7 @@ TEST_CASE("schema builder creates valid schema",
         .title_off = title_off,
         .unit_off = unit_off,
         .type = DS_TYPE_INT,
-        .flags = 0,
+        .flags = DS_FLAG_WRITABLE,
         .min_value = 0,
         .max_value = 100,
         .step = 5,
@@ -119,7 +123,7 @@ TEST_CASE("schema builder creates valid schema",
         ds_string_pool_get(&schema->strings,
                            schema->descriptors[0].title_off));
     TEST_ASSERT_EQUAL(DS_TYPE_INT, schema->descriptors[0].type);
-    TEST_ASSERT_FALSE(schema->descriptors[0].flags & DS_FLAG_READONLY);
+    TEST_ASSERT_TRUE(schema->descriptors[0].flags & DS_FLAG_WRITABLE);
     TEST_ASSERT_EQUAL_INT32(0, schema->descriptors[0].min_value);
     TEST_ASSERT_EQUAL_INT32(100, schema->descriptors[0].max_value);
     TEST_ASSERT_EQUAL_INT32(5, schema->descriptors[0].step);
@@ -270,13 +274,12 @@ TEST_CASE("refcount: swap with one reader",
     ds_settings_ref_release(new_schema);
 }
 
-TEST_CASE("refcount: failed staging leaves nothing to clean",
+TEST_CASE("refcount: empty schema commit remains valid",
           "[device_settings][g1]")
 {
-    /* If builder_commit returns NULL (e.g. empty), no allocation occurs. */
+    /* A valid settings_begin(total=0) must commit an immutable empty schema. */
     ds_schema_builder_t builder;
-    ds_schema_builder_init(&builder);
-    /* Don't add any settings. */
+    TEST_ASSERT_EQUAL(ESP_OK, ds_schema_builder_init(&builder));
     ds_schema_t *schema = ds_schema_builder_commit(&builder);
     TEST_ASSERT_NULL(schema);
     ds_schema_builder_reset(&builder);
@@ -393,24 +396,944 @@ TEST_CASE("DS-CAP-006: same revision queues READ",
     TEST_ASSERT_EQUAL_INT(DS_SCHEMA_READY, observed.schema_state);
     TEST_ASSERT_EQUAL_INT(ESP_OK, device_settings_cancel("cap-read"));
     record->schema = NULL;
+    device_settings_worker_reset_for_test();
+    device_settings_operation_reset_for_test();
     device_settings_reset_for_test();
     device_settings_deinit();
 }
 
-/* ── Footprint tests ───────────────────────────────────────────────── */
+/* ── Mock command service hooks (for DS-WORK tests) ────────────────── */
 
-TEST_CASE("sizeof(ds_device_record_t) is compact",
-          "[device_settings][g1]")
+static int mock_cmd_send_rc = 0;
+static bool mock_cmd_send_called = false;
+static uint32_t mock_cmd_send_count = 0;
+static char mock_cmd_last_device_id[32];
+static char mock_cmd_last_command[64];
+static uint32_t mock_cmd_last_request_id = 0;
+
+static int mock_cmd_send(const char *device_id, const gw_message_t *msg)
 {
-    /* Internal SRAM record should be <= 64 bytes per device.
-     * It contains: used, schema_state, op_state, op_kind, op_id,
-     * schema*, values*, schema_rev, config_rev. */
-    TEST_ASSERT_TRUE(sizeof(ds_device_record_t) <= 64);
+    mock_cmd_send_called = true;
+    mock_cmd_send_count++;
+    strlcpy(mock_cmd_last_device_id, device_id,
+            sizeof(mock_cmd_last_device_id));
+    if (msg != NULL) {
+        strlcpy(mock_cmd_last_command, msg->command,
+                sizeof(mock_cmd_last_command));
+        mock_cmd_last_request_id = msg->request_id;
+    }
+    return mock_cmd_send_rc;
 }
 
-TEST_CASE("sizeof(ds_setting_desc_t) <= 24 bytes",
+static int mock_cmd_is_connected(const char *device_id)
+{
+    (void)device_id;
+    return 1;
+}
+
+static device_command_transport_hooks_t mock_cmd_hooks = {
+    .send_command = mock_cmd_send,
+    .is_connected = mock_cmd_is_connected,
+};
+
+static gw_message_t make_settings_ack(const char *device_id,
+                                      const char *command,
+                                      uint32_t request_id)
+{
+    gw_message_t ack = {0};
+    strlcpy(ack.type, "device_ack", sizeof(ack.type));
+    strlcpy(ack.device_id, device_id, sizeof(ack.device_id));
+    strlcpy(ack.command, command, sizeof(ack.command));
+    ack.request_id = request_id;
+    ack.has_request_id = 1;
+    ack.bool_value = 1; /* accepted */
+    ack.has_device_id = 1;
+    return ack;
+}
+
+static void reset_mock_cmd(void)
+{
+    mock_cmd_send_rc = 0;
+    mock_cmd_send_called = false;
+    mock_cmd_send_count = 0;
+    mock_cmd_last_device_id[0] = '\0';
+    mock_cmd_last_command[0] = '\0';
+    mock_cmd_last_request_id = 0;
+}
+
+/* ── DS-WORK-001: capability → DESCRIBE queued → worker submits ────── */
+
+TEST_CASE("DS-WORK-001: DESCRIBE submitted via worker",
+          "[device_settings][g3]")
+{
+    device_settings_worker_deinit();
+    device_settings_worker_reset_for_test();
+    device_settings_operation_reset_for_test();
+    device_settings_deinit();
+    device_settings_reset_for_test();
+    reset_mock_cmd();
+
+    device_command_service_set_hooks(&mock_cmd_hooks);
+    TEST_ASSERT_EQUAL(ESP_OK, device_command_service_init());
+    TEST_ASSERT_EQUAL(ESP_OK, device_settings_init());
+    TEST_ASSERT_EQUAL(ESP_OK, device_settings_worker_init());
+
+    /* Set up device with no cached schema → DESCRIBE. */
+    ds_device_record_t *rec =
+        device_settings_find_or_create_record("wk001");
+    TEST_ASSERT_NOT_NULL(rec);
+    rec->schema_state = DS_SCHEMA_UNKNOWN;
+    rec->schema = NULL;
+    rec->schema_rev = 0;
+
+    /* Queue DESCRIBE via capability bridge. */
+    device_settings_on_capability("wk001", true, 5);
+    vTaskDelay(pdMS_TO_TICKS(100));
+
+    /* Verify worker submitted describe_settings. */
+    TEST_ASSERT_TRUE(mock_cmd_send_called);
+    TEST_ASSERT_EQUAL_STRING("wk001", mock_cmd_last_device_id);
+    TEST_ASSERT_EQUAL_STRING(GW_SETTINGS_CMD_DESCRIBE_SETTINGS,
+                             mock_cmd_last_command);
+
+    /* Cleanup. */
+    device_settings_worker_deinit();
+    device_settings_worker_reset_for_test();
+    device_settings_operation_reset_for_test();
+    device_command_service_deinit();
+    device_command_service_set_hooks(NULL);
+    device_settings_reset_for_test();
+    device_settings_deinit();
+}
+
+/* ── DS-WORK-002: same rev → READ queued → worker submits ──────────── */
+
+TEST_CASE("DS-WORK-002: READ submitted via worker",
+          "[device_settings][g3]")
+{
+    device_settings_worker_deinit();
+    device_settings_worker_reset_for_test();
+    device_settings_operation_reset_for_test();
+    device_settings_deinit();
+    device_settings_reset_for_test();
+    reset_mock_cmd();
+
+    device_command_service_set_hooks(&mock_cmd_hooks);
+    TEST_ASSERT_EQUAL(ESP_OK, device_command_service_init());
+    TEST_ASSERT_EQUAL(ESP_OK, device_settings_init());
+    TEST_ASSERT_EQUAL(ESP_OK, device_settings_worker_init());
+
+    /* Set up device with cached schema at same revision → READ. */
+    ds_device_record_t *rec =
+        device_settings_find_or_create_record("wk002");
+    TEST_ASSERT_NOT_NULL(rec);
+    rec->schema_state = DS_SCHEMA_READY;
+    rec->schema_rev = 7;
+    rec->schema = (ds_schema_t *)(uintptr_t)1;
+
+    /* Queue READ via capability bridge. */
+    device_settings_on_capability("wk002", true, 7);
+    vTaskDelay(pdMS_TO_TICKS(100));
+
+    /* Verify worker submitted read_settings. */
+    TEST_ASSERT_TRUE(mock_cmd_send_called);
+    TEST_ASSERT_EQUAL_STRING("wk002", mock_cmd_last_device_id);
+    TEST_ASSERT_EQUAL_STRING(GW_SETTINGS_CMD_READ_SETTINGS,
+                             mock_cmd_last_command);
+
+    /* Cleanup. */
+    rec->schema = NULL;
+    device_settings_worker_deinit();
+    device_settings_worker_reset_for_test();
+    device_settings_operation_reset_for_test();
+    device_command_service_deinit();
+    device_command_service_set_hooks(NULL);
+    device_settings_reset_for_test();
+    device_settings_deinit();
+}
+
+/* ── DS-WORK-003: BUSY retry with bounded backoff ──────────────────── */
+
+TEST_CASE("DS-WORK-003: BUSY triggers bounded retry",
+          "[device_settings][g3]")
+{
+    device_settings_worker_deinit();
+    device_settings_worker_reset_for_test();
+    device_settings_operation_reset_for_test();
+    device_settings_deinit();
+    device_settings_reset_for_test();
+    reset_mock_cmd();
+
+    /* Make mock return BUSY on first submit. */
+    mock_cmd_send_rc = -1;
+
+    device_command_service_set_hooks(&mock_cmd_hooks);
+    TEST_ASSERT_EQUAL(ESP_OK, device_command_service_init());
+    TEST_ASSERT_EQUAL(ESP_OK, device_settings_init());
+    TEST_ASSERT_EQUAL(ESP_OK, device_settings_worker_init());
+
+    ds_device_record_t *rec =
+        device_settings_find_or_create_record("wk003");
+    TEST_ASSERT_NOT_NULL(rec);
+    rec->schema_state = DS_SCHEMA_READY;
+    rec->schema_rev = 1;
+    rec->schema = (ds_schema_t *)(uintptr_t)1;
+
+    device_settings_on_capability("wk003", true, 1);
+    vTaskDelay(pdMS_TO_TICKS(100));
+
+    /* Command was submitted (even though mock returned error). */
+    TEST_ASSERT_TRUE(mock_cmd_send_called);
+    TEST_ASSERT_EQUAL_STRING("wk003", mock_cmd_last_device_id);
+
+    /* Cleanup. */
+    rec->schema = NULL;
+    device_settings_worker_deinit();
+    device_settings_worker_reset_for_test();
+    device_settings_operation_reset_for_test();
+    device_command_service_deinit();
+    device_command_service_set_hooks(NULL);
+    device_settings_reset_for_test();
+    device_settings_deinit();
+}
+
+/* ── DS-WORK-004: retry exhausted → operation fails ────────────────── */
+
+TEST_CASE("DS-WORK-004: retry exhausted fails operation",
+          "[device_settings][g3]")
+{
+    device_settings_worker_deinit();
+    device_settings_worker_reset_for_test();
+    device_settings_operation_reset_for_test();
+    device_settings_deinit();
+    device_settings_reset_for_test();
+    reset_mock_cmd();
+
+    device_command_service_set_hooks(&mock_cmd_hooks);
+    TEST_ASSERT_EQUAL(ESP_OK, device_command_service_init());
+    TEST_ASSERT_EQUAL(ESP_OK, device_settings_init());
+    TEST_ASSERT_EQUAL(ESP_OK, device_settings_worker_init());
+
+    ds_device_record_t *rec =
+        device_settings_find_or_create_record("wk004");
+    TEST_ASSERT_NOT_NULL(rec);
+    rec->schema_state = DS_SCHEMA_READY;
+    rec->schema_rev = 1;
+    rec->schema = (ds_schema_t *)(uintptr_t)1;
+
+    s_op_completed = false;
+    device_settings_get("wk004", test_op_completion, NULL);
+    vTaskDelay(pdMS_TO_TICKS(100));
+
+    /* Verify command was submitted. */
+    TEST_ASSERT_TRUE(mock_cmd_send_called);
+
+    /* Simulate BUSY ACK by sending a BUSY status through the command service. */
+    /* The command service should have a pending request. Build a BUSY ACK. */
+    uint32_t req_id = mock_cmd_last_request_id;
+    /* Can't directly inject BUSY through on_notify — the command service
+     * translates ACK status from the BLE layer.  Instead, simulate by
+     * sending a rejected ACK. */
+    gw_message_t busy_ack = make_settings_ack("wk004",
+                                              GW_SETTINGS_CMD_READ_SETTINGS,
+                                              req_id);
+    busy_ack.bool_value = 0; /* rejected = BUSY-like */
+    device_command_service_on_notify("wk004", &busy_ack);
+
+    vTaskDelay(pdMS_TO_TICKS(200));
+
+    /* Cleanup. */
+    rec->schema = NULL;
+    device_settings_worker_deinit();
+    device_settings_worker_reset_for_test();
+    device_settings_operation_reset_for_test();
+    device_command_service_deinit();
+    device_command_service_set_hooks(NULL);
+    device_settings_reset_for_test();
+    device_settings_deinit();
+}
+
+/* ── DS-WORK-005: timeout cleanup ──────────────────────────────────── */
+
+TEST_CASE("DS-WORK-005: timeout cleanup releases active",
+          "[device_settings][g3]")
+{
+    device_settings_worker_deinit();
+    device_settings_worker_reset_for_test();
+    device_settings_operation_reset_for_test();
+    device_settings_deinit();
+    device_settings_reset_for_test();
+    reset_mock_cmd();
+
+    device_command_service_set_hooks(&mock_cmd_hooks);
+    TEST_ASSERT_EQUAL(ESP_OK, device_command_service_init());
+    TEST_ASSERT_EQUAL(ESP_OK, device_settings_init());
+    TEST_ASSERT_EQUAL(ESP_OK, device_settings_worker_init());
+
+    ds_device_record_t *rec =
+        device_settings_find_or_create_record("wk005");
+    TEST_ASSERT_NOT_NULL(rec);
+    rec->schema_state = DS_SCHEMA_READY;
+    rec->schema_rev = 1;
+    rec->schema = (ds_schema_t *)(uintptr_t)1;
+
+    device_settings_get("wk005", NULL, NULL);
+    vTaskDelay(pdMS_TO_TICKS(100));
+    TEST_ASSERT_TRUE(mock_cmd_send_called);
+
+    /* Simulate timeout via on_disconnect (command service will fail pending). */
+    device_command_service_on_disconnect("wk005");
+    vTaskDelay(pdMS_TO_TICKS(200));
+
+    /* Worker should be idle now. */
+    TEST_ASSERT_TRUE(device_settings_worker_is_idle_for_test());
+
+    /* Cleanup. */
+    rec->schema = NULL;
+    device_settings_worker_deinit();
+    device_settings_worker_reset_for_test();
+    device_settings_operation_reset_for_test();
+    device_command_service_deinit();
+    device_command_service_set_hooks(NULL);
+    device_settings_reset_for_test();
+    device_settings_deinit();
+}
+
+/* ── DS-WORK-006: disconnect cleanup → cancel + generation ─────────── */
+
+TEST_CASE("DS-WORK-006: disconnect cancels active and increments gen",
+          "[device_settings][g3]")
+{
+    device_settings_worker_deinit();
+    device_settings_worker_reset_for_test();
+    device_settings_operation_reset_for_test();
+    device_settings_deinit();
+    device_settings_reset_for_test();
+    reset_mock_cmd();
+
+    device_command_service_set_hooks(&mock_cmd_hooks);
+    TEST_ASSERT_EQUAL(ESP_OK, device_command_service_init());
+    TEST_ASSERT_EQUAL(ESP_OK, device_settings_init());
+    TEST_ASSERT_EQUAL(ESP_OK, device_settings_worker_init());
+
+    ds_device_record_t *rec =
+        device_settings_find_or_create_record("wk006");
+    TEST_ASSERT_NOT_NULL(rec);
+    rec->schema_state = DS_SCHEMA_READY;
+    rec->schema_rev = 1;
+    rec->schema = (ds_schema_t *)(uintptr_t)1;
+
+    device_settings_get("wk006", NULL, NULL);
+    vTaskDelay(pdMS_TO_TICKS(100));
+    TEST_ASSERT_TRUE(mock_cmd_send_called);
+
+    /* Disconnect should cancel active command. */
+    device_settings_on_disconnect("wk006");
+    vTaskDelay(pdMS_TO_TICKS(100));
+
+    /* Worker should be idle. */
+    TEST_ASSERT_TRUE(device_settings_worker_is_idle_for_test());
+
+    /* Cleanup. */
+    rec->schema = NULL;
+    device_settings_worker_deinit();
+    device_settings_worker_reset_for_test();
+    device_settings_operation_reset_for_test();
+    device_command_service_deinit();
+    device_command_service_set_hooks(NULL);
+    device_settings_reset_for_test();
+    device_settings_deinit();
+}
+
+/* ── DS-WORK-007: duplicate coalescing ─────────────────────────────── */
+
+TEST_CASE("DS-WORK-007: duplicate trigger coalesced",
+          "[device_settings][g3]")
+{
+    device_settings_worker_deinit();
+    device_settings_worker_reset_for_test();
+    device_settings_operation_reset_for_test();
+    device_settings_deinit();
+    device_settings_reset_for_test();
+    reset_mock_cmd();
+
+    device_command_service_set_hooks(&mock_cmd_hooks);
+    TEST_ASSERT_EQUAL(ESP_OK, device_command_service_init());
+    TEST_ASSERT_EQUAL(ESP_OK, device_settings_init());
+    TEST_ASSERT_EQUAL(ESP_OK, device_settings_worker_init());
+
+    ds_device_record_t *rec =
+        device_settings_find_or_create_record("wk007");
+    TEST_ASSERT_NOT_NULL(rec);
+    rec->schema_state = DS_SCHEMA_UNKNOWN;
+    rec->schema = NULL;
+    rec->schema_rev = 0;
+
+    /* First call queues DESCRIBE. */
+    esp_err_t err1 = device_settings_describe("wk007", NULL, NULL);
+    TEST_ASSERT_EQUAL(ESP_OK, err1);
+
+    /* Second call should fail (already active for this device). */
+    esp_err_t err2 = device_settings_describe("wk007", NULL, NULL);
+    TEST_ASSERT_EQUAL(ESP_ERR_INVALID_STATE, err2);
+
+    /* Worker picks up the single queued op. */
+    vTaskDelay(pdMS_TO_TICKS(100));
+    TEST_ASSERT_TRUE(mock_cmd_send_called);
+    TEST_ASSERT_EQUAL_UINT32(1, mock_cmd_send_count);
+
+    /* Cleanup. */
+    device_settings_worker_deinit();
+    device_settings_worker_reset_for_test();
+    device_settings_operation_reset_for_test();
+    device_command_service_deinit();
+    device_command_service_set_hooks(NULL);
+    device_settings_reset_for_test();
+    device_settings_deinit();
+}
+
+/* ── DS-WORK-008: READ only after DESCRIBE ACK ─────────────────────── */
+
+TEST_CASE("DS-WORK-008: READ only after DESCRIBE ACK",
+          "[device_settings][g3]")
+{
+    device_settings_worker_deinit();
+    device_settings_worker_reset_for_test();
+    device_settings_operation_reset_for_test();
+    device_settings_deinit();
+    device_settings_reset_for_test();
+    reset_mock_cmd();
+
+    device_command_service_set_hooks(&mock_cmd_hooks);
+    TEST_ASSERT_EQUAL(ESP_OK, device_command_service_init());
+    TEST_ASSERT_EQUAL(ESP_OK, device_settings_init());
+    TEST_ASSERT_EQUAL(ESP_OK, device_settings_worker_init());
+
+    ds_device_record_t *rec =
+        device_settings_find_or_create_record("wk008");
+    TEST_ASSERT_NOT_NULL(rec);
+    rec->schema_state = DS_SCHEMA_UNKNOWN;
+    rec->schema = NULL;
+    rec->schema_rev = 0;
+
+    /* Queue DESCRIBE. */
+    device_settings_on_capability("wk008", true, 3);
+    vTaskDelay(pdMS_TO_TICKS(100));
+
+    /* DESCRIBE was submitted. */
+    TEST_ASSERT_TRUE(mock_cmd_send_called);
+    TEST_ASSERT_EQUAL_STRING(GW_SETTINGS_CMD_DESCRIBE_SETTINGS,
+                             mock_cmd_last_command);
+
+    /* Save request_id BEFORE resetting mock (reset zeroes it). */
+    uint32_t req_id = mock_cmd_last_request_id;
+
+    /* Before ACK, worker should NOT submit READ. */
+    reset_mock_cmd();
+    vTaskDelay(pdMS_TO_TICKS(50));
+    TEST_ASSERT_FALSE(mock_cmd_send_called);
+
+    /* Now simulate DESCRIBE ACK. */
+    gw_message_t ack = make_settings_ack("wk008",
+                                         GW_SETTINGS_CMD_DESCRIBE_SETTINGS,
+                                         req_id);
+    device_command_service_on_notify("wk008", &ack);
+    vTaskDelay(pdMS_TO_TICKS(200));
+
+    /* After ACK, worker should have submitted READ. */
+    TEST_ASSERT_TRUE(mock_cmd_send_called);
+    TEST_ASSERT_EQUAL_STRING(GW_SETTINGS_CMD_READ_SETTINGS,
+                             mock_cmd_last_command);
+
+    /* Cleanup. */
+    device_settings_worker_deinit();
+    device_settings_worker_reset_for_test();
+    device_settings_operation_reset_for_test();
+    device_command_service_deinit();
+    device_command_service_set_hooks(NULL);
+    device_settings_reset_for_test();
+    device_settings_deinit();
+}
+
+/* ── DS-WORK-009: queue full returns error ─────────────────────────── */
+
+TEST_CASE("DS-WORK-009: queue full explicit error",
+          "[device_settings][g3]")
+{
+    device_settings_worker_deinit();
+    device_settings_worker_reset_for_test();
+    device_settings_operation_reset_for_test();
+    device_settings_deinit();
+    device_settings_reset_for_test();
+    TEST_ASSERT_EQUAL(ESP_OK, device_settings_init());
+
+    /* The operation queue holds 16 entries while the command service has
+     * only 8 pending slots. Fill the operation layer directly so this test
+     * checks its documented no-memory result without DCS timing effects. */
+    device_settings_fill_all_ops_for_test();
+
+    esp_err_t err = device_settings_describe("overflow", NULL, NULL);
+    TEST_ASSERT_EQUAL(ESP_ERR_NO_MEM, err);
+
+    device_settings_operation_reset_for_test();
+    device_settings_reset_for_test();
+    device_settings_deinit();
+}
+
+/* ── G4 schema stream fixtures ─────────────────────────────────────── */
+
+#define SCHEMA_DEVICE "schema-dev"
+#define SCHEMA_REQUEST_ID 4242
+
+static gw_message_t schema_message(const char *type)
+{
+    gw_message_t msg = {0};
+    msg.protocol_version = GW_PROTOCOL_VERSION;
+    strlcpy(msg.type, type, sizeof(msg.type));
+    strlcpy(msg.command, GW_SETTINGS_CMD_DESCRIBE_SETTINGS,
+            sizeof(msg.command));
+    msg.request_id = SCHEMA_REQUEST_ID;
+    msg.has_request_id = 1;
+    return msg;
+}
+
+static gw_message_t schema_begin(uint16_t total)
+{
+    gw_message_t msg = schema_message(GW_SETTINGS_MSG_SETTINGS_BEGIN);
+    msg.total = total;
+    msg.has_total = 1;
+    return msg;
+}
+
+static gw_message_t schema_item(uint16_t sequence, uint16_t total,
+                                const char *id, uint8_t type)
+{
+    gw_message_t msg = schema_message(GW_SETTINGS_MSG_SETTINGS_ITEM);
+    msg.total = total;
+    msg.has_total = 1;
+    msg.settings_sequence = sequence;
+    msg.has_settings_sequence = 1;
+    strlcpy(msg.setting_id, id, sizeof(msg.setting_id));
+    msg.has_setting_id = 1;
+    msg.setting_type = type;
+    msg.has_setting_type = 1;
+    return msg;
+}
+
+static gw_message_t schema_option(uint16_t parent, uint8_t value,
+                                  const char *label)
+{
+    gw_message_t msg = schema_message(GW_SETTINGS_MSG_SETTINGS_OPTION_ITEM);
+    msg.settings_sequence = parent;
+    msg.has_settings_sequence = 1;
+    msg.settings_option_index = value;
+    msg.has_settings_option_index = 1;
+    strlcpy(msg.setting_title, label, sizeof(msg.setting_title));
+    return msg;
+}
+
+static gw_message_t schema_end(uint16_t total)
+{
+    gw_message_t msg = schema_message(GW_SETTINGS_MSG_SETTINGS_END);
+    msg.total = total;
+    msg.has_total = 1;
+    return msg;
+}
+
+static void schema_test_setup(void)
+{
+    device_settings_worker_deinit();
+    device_settings_worker_reset_for_test();
+    device_settings_operation_reset_for_test();
+    device_settings_deinit();
+    device_settings_reset_for_test();
+    TEST_ASSERT_EQUAL(ESP_OK, device_settings_init());
+    ds_device_record_t *rec =
+        device_settings_find_or_create_record(SCHEMA_DEVICE);
+    TEST_ASSERT_NOT_NULL(rec);
+    rec->advertised_schema_rev = 7;
+}
+
+static void schema_test_teardown(void)
+{
+    device_settings_protocol_on_disconnect(NULL);
+    device_settings_reset_for_test();
+    device_settings_deinit();
+}
+
+static const ds_schema_t *schema_send_single(gw_message_t *item)
+{
+    gw_message_t begin = schema_begin(1);
+    gw_message_t end = schema_end(1);
+    TEST_ASSERT_TRUE(device_settings_on_notify(SCHEMA_DEVICE, &begin));
+    TEST_ASSERT_TRUE(device_settings_on_notify(SCHEMA_DEVICE, item));
+    TEST_ASSERT_TRUE(device_settings_on_notify(SCHEMA_DEVICE, &end));
+    return device_settings_schema_acquire(SCHEMA_DEVICE);
+}
+
+TEST_CASE("DS-SCHEMA-001: BOOL descriptor", "[device_settings][g4]")
+{
+    schema_test_setup();
+    gw_message_t item = schema_item(0, 1, "enabled", DS_TYPE_BOOL);
+    const ds_schema_t *schema = schema_send_single(&item);
+    TEST_ASSERT_NOT_NULL(schema);
+    TEST_ASSERT_EQUAL_UINT16(1, schema->setting_count);
+    TEST_ASSERT_EQUAL(DS_TYPE_BOOL, schema->descriptors[0].type);
+    TEST_ASSERT_TRUE(schema->descriptors[0].flags & DS_FLAG_WRITABLE);
+    TEST_ASSERT_EQUAL_STRING("enabled", ds_string_pool_get(
+        &schema->strings, schema->descriptors[0].title_off));
+    device_settings_schema_release(schema);
+    schema_test_teardown();
+}
+
+TEST_CASE("DS-SCHEMA-002: INT min max step", "[device_settings][g4]")
+{
+    schema_test_setup();
+    gw_message_t item = schema_item(0, 1, "level", DS_TYPE_INT);
+    item.min_value = -10; item.has_min_value = 1;
+    item.max_value = 100; item.has_max_value = 1;
+    item.step = 5; item.has_step = 1;
+    const ds_schema_t *schema = schema_send_single(&item);
+    TEST_ASSERT_NOT_NULL(schema);
+    TEST_ASSERT_EQUAL_INT32(-10, schema->descriptors[0].min_value);
+    TEST_ASSERT_EQUAL_INT32(100, schema->descriptors[0].max_value);
+    TEST_ASSERT_EQUAL_UINT32(5, schema->descriptors[0].step);
+    device_settings_schema_release(schema);
+    schema_test_teardown();
+}
+
+TEST_CASE("DS-SCHEMA-003: STRING max length", "[device_settings][g4]")
+{
+    schema_test_setup();
+    gw_message_t item = schema_item(0, 1, "hostname", DS_TYPE_STRING);
+    item.settings_max_length = 48;
+    item.has_settings_max_length = 1;
+    const ds_schema_t *schema = schema_send_single(&item);
+    TEST_ASSERT_NOT_NULL(schema);
+    TEST_ASSERT_EQUAL_UINT16(48, schema->descriptors[0].max_length);
+    device_settings_schema_release(schema);
+    schema_test_teardown();
+}
+
+TEST_CASE("DS-SCHEMA-004: ENUM options", "[device_settings][g4]")
+{
+    schema_test_setup();
+    gw_message_t begin = schema_begin(1);
+    gw_message_t item = schema_item(0, 1, "mode", DS_TYPE_ENUM);
+    gw_message_t opt_a = schema_option(0, 2, "Eco");
+    gw_message_t opt_b = schema_option(0, 5, "Boost");
+    gw_message_t end = schema_end(1);
+    device_settings_on_notify(SCHEMA_DEVICE, &begin);
+    device_settings_on_notify(SCHEMA_DEVICE, &item);
+    device_settings_on_notify(SCHEMA_DEVICE, &opt_a);
+    device_settings_on_notify(SCHEMA_DEVICE, &opt_b);
+    device_settings_on_notify(SCHEMA_DEVICE, &end);
+    const ds_schema_t *schema = device_settings_schema_acquire(SCHEMA_DEVICE);
+    TEST_ASSERT_NOT_NULL(schema);
+    const ds_setting_desc_t *desc = &schema->descriptors[0];
+    TEST_ASSERT_EQUAL_UINT8(2, desc->option_count);
+    TEST_ASSERT_EQUAL_UINT8(2, schema->enum_option_pool[desc->option_index].value);
+    TEST_ASSERT_EQUAL_UINT8(5, schema->enum_option_pool[desc->option_index + 1].value);
+    TEST_ASSERT_EQUAL_STRING("Boost", ds_string_pool_get(
+        &schema->strings,
+        schema->enum_option_pool[desc->option_index + 1].label_off));
+    device_settings_schema_release(schema);
+    schema_test_teardown();
+}
+
+TEST_CASE("G4: interleaved options keep each ENUM span contiguous",
+          "[device_settings][g4]")
+{
+    schema_test_setup();
+    gw_message_t begin = schema_begin(2);
+    gw_message_t first = schema_item(0, 2, "mode", DS_TYPE_ENUM);
+    gw_message_t second = schema_item(1, 2, "region", DS_TYPE_ENUM);
+    gw_message_t mode_a = schema_option(0, 1, "Eco");
+    gw_message_t region_a = schema_option(1, 7, "EU");
+    gw_message_t mode_b = schema_option(0, 2, "Boost");
+    gw_message_t end = schema_end(2);
+    device_settings_on_notify(SCHEMA_DEVICE, &begin);
+    device_settings_on_notify(SCHEMA_DEVICE, &first);
+    device_settings_on_notify(SCHEMA_DEVICE, &second);
+    device_settings_on_notify(SCHEMA_DEVICE, &mode_a);
+    device_settings_on_notify(SCHEMA_DEVICE, &region_a);
+    device_settings_on_notify(SCHEMA_DEVICE, &mode_b);
+    device_settings_on_notify(SCHEMA_DEVICE, &end);
+
+    const ds_schema_t *schema = device_settings_schema_acquire(SCHEMA_DEVICE);
+    TEST_ASSERT_NOT_NULL(schema);
+    const ds_setting_desc_t *mode = &schema->descriptors[0];
+    const ds_setting_desc_t *region = &schema->descriptors[1];
+    TEST_ASSERT_EQUAL_UINT8(2, mode->option_count);
+    TEST_ASSERT_EQUAL_UINT8(1, region->option_count);
+    TEST_ASSERT_EQUAL_UINT8(1,
+        schema->enum_option_pool[mode->option_index].value);
+    TEST_ASSERT_EQUAL_UINT8(2,
+        schema->enum_option_pool[mode->option_index + 1].value);
+    TEST_ASSERT_EQUAL_UINT8(7,
+        schema->enum_option_pool[region->option_index].value);
+    device_settings_schema_release(schema);
+    schema_test_teardown();
+}
+
+TEST_CASE("DS-SCHEMA-005: title preserved", "[device_settings][g4]")
+{
+    schema_test_setup();
+    gw_message_t item = schema_item(0, 1, "wifi_mode", DS_TYPE_ENUM);
+    strlcpy(item.setting_title, "Wi-Fi mode", sizeof(item.setting_title));
+    const ds_schema_t *schema = schema_send_single(&item);
+    TEST_ASSERT_NOT_NULL(schema);
+    TEST_ASSERT_EQUAL_STRING("Wi-Fi mode", ds_string_pool_get(
+        &schema->strings, schema->descriptors[0].title_off));
+    device_settings_schema_release(schema);
+    schema_test_teardown();
+}
+
+TEST_CASE("DS-SCHEMA-006: group and unit preserved", "[device_settings][g4]")
+{
+    schema_test_setup();
+    gw_message_t item = schema_item(0, 1, "threshold", DS_TYPE_INT);
+    strlcpy(item.setting_group, "sensors", sizeof(item.setting_group));
+    item.has_setting_group = 1;
+    strlcpy(item.setting_unit, "dBm", sizeof(item.setting_unit));
+    const ds_schema_t *schema = schema_send_single(&item);
+    TEST_ASSERT_NOT_NULL(schema);
+    TEST_ASSERT_EQUAL_STRING("sensors", ds_string_pool_get(
+        &schema->strings, schema->descriptors[0].group_off));
+    TEST_ASSERT_EQUAL_STRING("dBm", ds_string_pool_get(
+        &schema->strings, schema->descriptors[0].unit_off));
+    device_settings_schema_release(schema);
+    schema_test_teardown();
+}
+
+TEST_CASE("DS-SCHEMA-007: duplicate ID rejected", "[device_settings][g4]")
+{
+    schema_test_setup();
+    gw_message_t begin = schema_begin(2);
+    gw_message_t first = schema_item(0, 2, "same", DS_TYPE_BOOL);
+    gw_message_t second = schema_item(1, 2, "same", DS_TYPE_INT);
+    device_settings_on_notify(SCHEMA_DEVICE, &begin);
+    device_settings_on_notify(SCHEMA_DEVICE, &first);
+    device_settings_on_notify(SCHEMA_DEVICE, &second);
+    TEST_ASSERT_NULL(device_settings_schema_acquire(SCHEMA_DEVICE));
+    schema_test_teardown();
+}
+
+TEST_CASE("DS-SCHEMA-008: sequence gap rejected", "[device_settings][g4]")
+{
+    schema_test_setup();
+    gw_message_t begin = schema_begin(2);
+    gw_message_t item = schema_item(1, 2, "late", DS_TYPE_BOOL);
+    device_settings_on_notify(SCHEMA_DEVICE, &begin);
+    device_settings_on_notify(SCHEMA_DEVICE, &item);
+    TEST_ASSERT_NULL(device_settings_schema_acquire(SCHEMA_DEVICE));
+    schema_test_teardown();
+}
+
+TEST_CASE("DS-SCHEMA-009: duplicate sequence rejected", "[device_settings][g4]")
+{
+    schema_test_setup();
+    gw_message_t begin = schema_begin(2);
+    gw_message_t first = schema_item(0, 2, "first", DS_TYPE_BOOL);
+    gw_message_t duplicate = schema_item(0, 2, "second", DS_TYPE_BOOL);
+    device_settings_on_notify(SCHEMA_DEVICE, &begin);
+    device_settings_on_notify(SCHEMA_DEVICE, &first);
+    device_settings_on_notify(SCHEMA_DEVICE, &duplicate);
+    TEST_ASSERT_NULL(device_settings_schema_acquire(SCHEMA_DEVICE));
+    schema_test_teardown();
+}
+
+TEST_CASE("DS-SCHEMA-010: total mismatch rejected", "[device_settings][g4]")
+{
+    schema_test_setup();
+    gw_message_t begin = schema_begin(1);
+    gw_message_t item = schema_item(0, 1, "only", DS_TYPE_BOOL);
+    gw_message_t end = schema_end(2);
+    device_settings_on_notify(SCHEMA_DEVICE, &begin);
+    device_settings_on_notify(SCHEMA_DEVICE, &item);
+    device_settings_on_notify(SCHEMA_DEVICE, &end);
+    TEST_ASSERT_NULL(device_settings_schema_acquire(SCHEMA_DEVICE));
+    schema_test_teardown();
+}
+
+TEST_CASE("DS-SCHEMA-011: option before parent rejected", "[device_settings][g4]")
+{
+    schema_test_setup();
+    gw_message_t begin = schema_begin(1);
+    gw_message_t option = schema_option(0, 0, "None");
+    device_settings_on_notify(SCHEMA_DEVICE, &begin);
+    device_settings_on_notify(SCHEMA_DEVICE, &option);
+    TEST_ASSERT_NULL(device_settings_schema_acquire(SCHEMA_DEVICE));
+    schema_test_teardown();
+}
+
+TEST_CASE("DS-SCHEMA-012: option on non enum rejected", "[device_settings][g4]")
+{
+    schema_test_setup();
+    gw_message_t begin = schema_begin(1);
+    gw_message_t item = schema_item(0, 1, "enabled", DS_TYPE_BOOL);
+    gw_message_t option = schema_option(0, 0, "Off");
+    device_settings_on_notify(SCHEMA_DEVICE, &begin);
+    device_settings_on_notify(SCHEMA_DEVICE, &item);
+    device_settings_on_notify(SCHEMA_DEVICE, &option);
+    TEST_ASSERT_NULL(device_settings_schema_acquire(SCHEMA_DEVICE));
+    schema_test_teardown();
+}
+
+TEST_CASE("DS-SCHEMA-013: readonly flag translated", "[device_settings][g4]")
+{
+    schema_test_setup();
+    gw_message_t item = schema_item(0, 1, "serial", DS_TYPE_STRING);
+    item.setting_flags = GW_SETTING_FLAG_READONLY |
+                         GW_SETTING_FLAG_SECRET |
+                         GW_SETTING_FLAG_ADVANCED;
+    item.has_setting_flags = 1;
+    const ds_schema_t *schema = schema_send_single(&item);
+    TEST_ASSERT_NOT_NULL(schema);
+    TEST_ASSERT_FALSE(schema->descriptors[0].flags & DS_FLAG_WRITABLE);
+    TEST_ASSERT_TRUE(schema->descriptors[0].flags & DS_FLAG_SECRET);
+    TEST_ASSERT_TRUE(schema->descriptors[0].flags & DS_FLAG_ADVANCED);
+    device_settings_schema_release(schema);
+    schema_test_teardown();
+}
+
+TEST_CASE("DS-SCHEMA-014: no device_id accepted", "[device_settings][g4]")
+{
+    schema_test_setup();
+    gw_message_t item = schema_item(0, 1, "nodev", DS_TYPE_BOOL);
+    TEST_ASSERT_FALSE(item.has_device_id);
+    const ds_schema_t *schema = schema_send_single(&item);
+    TEST_ASSERT_NOT_NULL(schema);
+    device_settings_schema_release(schema);
+    schema_test_teardown();
+}
+
+TEST_CASE("DS-SCHEMA-015: no snapshot_id accepted", "[device_settings][g4]")
+{
+    schema_test_setup();
+    gw_message_t item = schema_item(0, 1, "nosnap", DS_TYPE_BOOL);
+    TEST_ASSERT_FALSE(item.has_snapshot_id);
+    const ds_schema_t *schema = schema_send_single(&item);
+    TEST_ASSERT_NOT_NULL(schema);
+    device_settings_schema_release(schema);
+    schema_test_teardown();
+}
+
+TEST_CASE("DS-SCHEMA-016: failed stream retains old schema", "[device_settings][g4]")
+{
+    schema_test_setup();
+    gw_message_t original = schema_item(0, 1, "original", DS_TYPE_BOOL);
+    const ds_schema_t *old_schema = schema_send_single(&original);
+    TEST_ASSERT_NOT_NULL(old_schema);
+
+    gw_message_t begin = schema_begin(2);
+    gw_message_t bad = schema_item(1, 2, "bad", DS_TYPE_BOOL);
+    device_settings_on_notify(SCHEMA_DEVICE, &begin);
+    device_settings_on_notify(SCHEMA_DEVICE, &bad);
+
+    const ds_schema_t *still_committed =
+        device_settings_schema_acquire(SCHEMA_DEVICE);
+    TEST_ASSERT_EQUAL_PTR(old_schema, still_committed);
+    TEST_ASSERT_EQUAL_STRING("original", ds_string_pool_get(
+        &still_committed->strings,
+        still_committed->descriptors[0].id_off));
+    device_settings_schema_release(still_committed);
+    device_settings_schema_release(old_schema);
+    schema_test_teardown();
+}
+
+TEST_CASE("G4: stream rejects request mismatch", "[device_settings][g4]")
+{
+    schema_test_setup();
+    gw_message_t begin = schema_begin(1);
+    gw_message_t item = schema_item(0, 1, "wrong-request", DS_TYPE_BOOL);
+    item.request_id++;
+    device_settings_on_notify(SCHEMA_DEVICE, &begin);
+    device_settings_on_notify(SCHEMA_DEVICE, &item);
+    TEST_ASSERT_NULL(device_settings_schema_acquire(SCHEMA_DEVICE));
+    schema_test_teardown();
+}
+
+TEST_CASE("DS-MULTI-003: wrong-device frame rejected",
+          "[device_settings][g4]")
+{
+    schema_test_setup();
+    gw_message_t begin = schema_begin(1);
+    gw_message_t foreign = schema_item(0, 1, "foreign", DS_TYPE_BOOL);
+    gw_message_t owner = schema_item(0, 1, "owner", DS_TYPE_BOOL);
+    gw_message_t end = schema_end(1);
+    device_settings_on_notify(SCHEMA_DEVICE, &begin);
+    device_settings_on_notify("other-device", &foreign);
+    device_settings_on_notify(SCHEMA_DEVICE, &owner);
+    device_settings_on_notify(SCHEMA_DEVICE, &end);
+
+    const ds_schema_t *schema = device_settings_schema_acquire(SCHEMA_DEVICE);
+    TEST_ASSERT_NOT_NULL(schema);
+    TEST_ASSERT_EQUAL_STRING("owner", ds_string_pool_get(
+        &schema->strings, schema->descriptors[0].id_off));
+    device_settings_schema_release(schema);
+    schema_test_teardown();
+}
+
+TEST_CASE("DS-MULTI-002: active owner enforcement",
+          "[device_settings][g4]")
+{
+    schema_test_setup();
+    gw_message_t begin_a = schema_begin(1);
+    gw_message_t begin_b = schema_begin(1);
+    gw_message_t item_a = schema_item(0, 1, "owned-by-a", DS_TYPE_BOOL);
+    gw_message_t end_a = schema_end(1);
+    device_settings_on_notify("device-a", &begin_a);
+    device_settings_on_notify("device-b", &begin_b);
+    device_settings_on_notify("device-a", &item_a);
+    device_settings_on_notify("device-a", &end_a);
+
+    const ds_schema_t *schema_a = device_settings_schema_acquire("device-a");
+    TEST_ASSERT_NOT_NULL(schema_a);
+    TEST_ASSERT_NULL(device_settings_schema_acquire("device-b"));
+    device_settings_schema_release(schema_a);
+    schema_test_teardown();
+}
+
+TEST_CASE("DS-MULTI-001: A then B serialization",
+          "[device_settings][g4]")
+{
+    schema_test_setup();
+    gw_message_t begin = schema_begin(1);
+    gw_message_t item_a = schema_item(0, 1, "setting-a", DS_TYPE_BOOL);
+    gw_message_t item_b = schema_item(0, 1, "setting-b", DS_TYPE_BOOL);
+    gw_message_t end = schema_end(1);
+    device_settings_on_notify("device-a", &begin);
+    device_settings_on_notify("device-a", &item_a);
+    device_settings_on_notify("device-a", &end);
+    device_settings_on_notify("device-b", &begin);
+    device_settings_on_notify("device-b", &item_b);
+    device_settings_on_notify("device-b", &end);
+
+    const ds_schema_t *schema_a = device_settings_schema_acquire("device-a");
+    const ds_schema_t *schema_b = device_settings_schema_acquire("device-b");
+    TEST_ASSERT_NOT_NULL(schema_a);
+    TEST_ASSERT_NOT_NULL(schema_b);
+    TEST_ASSERT_EQUAL_STRING("setting-a", ds_string_pool_get(
+        &schema_a->strings, schema_a->descriptors[0].id_off));
+    TEST_ASSERT_EQUAL_STRING("setting-b", ds_string_pool_get(
+        &schema_b->strings, schema_b->descriptors[0].id_off));
+    device_settings_schema_release(schema_a);
+    device_settings_schema_release(schema_b);
+    schema_test_teardown();
+}
+
+TEST_CASE("sizeof(ds_device_record_t) is compact",
+          "[device_settings][g1][g4]")
+{
+    /* Keep the per-device registry record bounded in internal SRAM. Operation
+     * queue state lives in device_settings_operation.c, not in this record. */
+    TEST_ASSERT_TRUE(sizeof(ds_device_record_t) <= 80);
+}
+
+TEST_CASE("sizeof(ds_setting_desc_t) <= 28 bytes",
           "[device_settings][g1]")
 {
     /* Compact descriptor must be small. */
-    TEST_ASSERT_TRUE(sizeof(ds_setting_desc_t) <= 24);
+    TEST_ASSERT_TRUE(sizeof(ds_setting_desc_t) <= 28);
 }

@@ -44,7 +44,7 @@ TEST_CASE("cJSON hooks prefer PSRAM and free through cJSON_free", "[memory_polic
     cJSON *object = cJSON_CreateObject();
     TEST_ASSERT_NOT_NULL(object);
     if (esp_psram_is_initialized()) {
-        TEST_ASSERT_TRUE(esp_ptr_external(object));
+        TEST_ASSERT_TRUE(esp_ptr_external_ram(object));
     }
     cJSON_Delete(object);
 }

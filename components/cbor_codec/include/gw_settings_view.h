@@ -17,6 +17,7 @@ extern "C" {
 
 #define GW_SETTINGS_MSG_SETTINGS_BEGIN       "settings_begin"
 #define GW_SETTINGS_MSG_SETTINGS_ITEM        "settings_item"
+#define GW_SETTINGS_MSG_SETTINGS_OPTION_ITEM "settings_option_item"
 #define GW_SETTINGS_MSG_SETTINGS_END         "settings_end"
 #define GW_SETTINGS_MSG_SETTINGS_VALUES_BEGIN "settings_values_begin"
 #define GW_SETTINGS_MSG_SETTINGS_VALUES_VALUE "settings_values_value"

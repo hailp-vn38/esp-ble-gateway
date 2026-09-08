@@ -29,9 +29,11 @@ extern "C" {
 #define DS_TYPE_STRING GW_SETTING_TYPE_STRING
 #define DS_TYPE_ENUM   GW_SETTING_TYPE_ENUM
 
-#define DS_FLAG_READONLY GW_SETTING_FLAG_READONLY
-#define DS_FLAG_SECRET   GW_SETTING_FLAG_SECRET
-#define DS_FLAG_ADVANCED GW_SETTING_FLAG_ADVANCED
+/* Internal descriptor flags. Wire READONLY is deliberately translated into
+ * the inverse WRITABLE capability when a descriptor is decoded. */
+#define DS_FLAG_WRITABLE (1u << 0)
+#define DS_FLAG_SECRET   (1u << 1)
+#define DS_FLAG_ADVANCED (1u << 2)
 
 /* ── Schema states ─────────────────────────────────────────────────── */
 
@@ -168,17 +170,18 @@ typedef struct {
     uint16_t unit_off;       /* offset into string_pool, 0 = no unit */
     int32_t  min_value;
     int32_t  max_value;
-    int32_t  step;
-    uint16_t flags;          /* DS_FLAG_* */
+    uint32_t step;
+    uint16_t flags;          /* internal DS_FLAG_* (never raw wire flags) */
+    uint16_t max_length;     /* for DS_TYPE_STRING */
+    uint16_t option_index;   /* index into enum_option_pool */
     uint8_t  type;           /* DS_TYPE_* */
     uint8_t  option_count;   /* for DS_TYPE_ENUM */
-    uint16_t option_index;   /* index into enum_option_pool */
 } ds_setting_desc_t;
 
 /* ── Enum option ───────────────────────────────────────────────────── */
 
 typedef struct {
-    int32_t  value;
+    uint8_t  value;
     uint16_t label_off;      /* offset into string_pool */
 } ds_enum_option_t;
 
@@ -232,13 +235,6 @@ typedef struct {
     bool               used;
     char               device_id[32]; /* device_store identity */
     ds_schema_state_t  schema_state;
-    ds_op_state_t      op_state;
-    ds_op_kind_t       op_kind;
-    uint32_t           op_id;
-
-    /* Staging area — built during discovery, committed atomically. */
-    ds_schema_t       *staging_schema;
-    ds_values_t       *staging_values;
 
     /* Schema/values ownership — refcounted snapshots (PSRAM). */
     ds_schema_t       *schema;
@@ -295,7 +291,7 @@ esp_err_t ds_schema_builder_add_string(ds_schema_builder_t *builder,
 esp_err_t ds_schema_builder_add_setting(ds_schema_builder_t *builder,
                                         const ds_setting_desc_t *desc);
 esp_err_t ds_schema_builder_add_enum_option(ds_schema_builder_t *builder,
-                                            int32_t value,
+                                            uint8_t value,
                                             const char *label,
                                             uint16_t *out_index);
 ds_schema_t *ds_schema_builder_commit(ds_schema_builder_t *builder);

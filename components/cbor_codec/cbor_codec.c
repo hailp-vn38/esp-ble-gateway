@@ -240,8 +240,16 @@ int cbor_codec_encode(const gw_message_t *msg, uint8_t *out_buf, size_t out_buf_
     if (msg->has_setting_id) {
         QCBOREncode_AddSZStringToMapN(&context, GW_KEY_SETTINGS_ID, msg->setting_id);
     }
+    if (msg->setting_title[0] != '\0') {
+        QCBOREncode_AddSZStringToMapN(&context, GW_KEY_SETTINGS_TITLE,
+                                      msg->setting_title);
+    }
     if (msg->has_setting_group) {
         QCBOREncode_AddSZStringToMapN(&context, GW_KEY_SETTINGS_GROUP, msg->setting_group);
+    }
+    if (msg->setting_unit[0] != '\0') {
+        QCBOREncode_AddSZStringToMapN(&context, GW_KEY_SETTINGS_UNIT,
+                                      msg->setting_unit);
     }
     if (msg->has_setting_type) {
         QCBOREncode_AddUInt64ToMapN(&context, GW_KEY_SETTINGS_TYPE, msg->setting_type);
@@ -612,11 +620,23 @@ int cbor_codec_decode(const uint8_t *buf, size_t len, gw_message_t *out_msg)
         out_msg->has_setting_id = 1;
     } else if (error != QCBOR_ERR_LABEL_NOT_FOUND) return -1;
 
+    error = get_optional_text(&context, GW_KEY_SETTINGS_TITLE, &optional_value);
+    if (error == QCBOR_SUCCESS) {
+        if (copy_text(optional_value, out_msg->setting_title,
+                      sizeof(out_msg->setting_title), true) != 0) return -1;
+    } else if (error != QCBOR_ERR_LABEL_NOT_FOUND) return -1;
+
     error = get_optional_text(&context, GW_KEY_SETTINGS_GROUP, &optional_value);
     if (error == QCBOR_SUCCESS) {
         if (copy_text(optional_value, out_msg->setting_group,
                       sizeof(out_msg->setting_group), true) != 0) return -1;
         out_msg->has_setting_group = 1;
+    } else if (error != QCBOR_ERR_LABEL_NOT_FOUND) return -1;
+
+    error = get_optional_text(&context, GW_KEY_SETTINGS_UNIT, &optional_value);
+    if (error == QCBOR_SUCCESS) {
+        if (copy_text(optional_value, out_msg->setting_unit,
+                      sizeof(out_msg->setting_unit), true) != 0) return -1;
     } else if (error != QCBOR_ERR_LABEL_NOT_FOUND) return -1;
 
     error = get_optional_uint(&context, GW_KEY_SETTINGS_TYPE, &optional_uint);

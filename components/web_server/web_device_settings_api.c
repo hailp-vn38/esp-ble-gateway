@@ -151,7 +151,7 @@ static esp_err_t settings_get_handler(httpd_req_t *request)
         }
         cJSON_AddStringToObject(item, "type", settings_type_name(desc->type));
         cJSON_AddBoolToObject(item, "readonly",
-                              (desc->flags & DS_FLAG_READONLY) != 0);
+                              (desc->flags & DS_FLAG_WRITABLE) == 0);
 
         if (unit != NULL && unit[0] != '\0') {
             cJSON_AddStringToObject(item, "unit", unit);

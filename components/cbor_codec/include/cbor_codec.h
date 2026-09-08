@@ -194,6 +194,12 @@ typedef struct {
     int has_settings_sequence;
 } gw_message_t;
 
+/* Settings title/unit reuse the capability metadata buffers. These message
+ * families are mutually exclusive, which preserves the bounded gw_message_t
+ * footprint while still carrying all Protocol v4 metadata. Empty means absent. */
+#define setting_title capability_label
+#define setting_unit  capability_unit
+
 int cbor_codec_decode(const uint8_t *buf, size_t len, gw_message_t *out_msg);
 int cbor_codec_encode(const gw_message_t *msg, uint8_t *out_buf, size_t out_buf_cap);
 int cbor_codec_msg_to_json(const gw_message_t *msg, char *out_json, size_t out_json_cap);

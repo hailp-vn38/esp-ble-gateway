@@ -292,6 +292,11 @@ void app_main(void)
         return;
     }
     gw_memory_log_checkpoint("device_settings_ready");
+    if (device_settings_worker_init() != ESP_OK) {
+        ESP_LOGE(TAG, "Settings worker initialization failed");
+        return;
+    }
+    gw_memory_log_checkpoint("ds_worker_ready");
     if (mcp_tool_exposure_init() != ESP_OK) {
         ESP_LOGE(TAG, "MCP tool exposure initialization failed");
         return;

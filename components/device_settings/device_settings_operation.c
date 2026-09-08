@@ -19,12 +19,17 @@ typedef struct {
     ds_op_kind_t          kind;
     ds_op_state_t         state;
     uint32_t              op_id;
+    uint32_t              generation;
     ds_op_completion_fn   completion;
     void                 *context;
 } ds_op_record_t;
 
 static ds_op_record_t s_ops[DEVICE_SETTINGS_MAX_DEVICES];
 static uint32_t       s_next_op_id = 1;
+
+/* Worker-visible arrays (extern in header). */
+bool     s_ops_active[DEVICE_SETTINGS_MAX_DEVICES];
+uint32_t s_ops_generation[DEVICE_SETTINGS_MAX_DEVICES];
 
 /* ── Internal helpers ──────────────────────────────────────────────── */
 
@@ -47,6 +52,9 @@ static ds_op_record_t *alloc_op(void)
             memset(&s_ops[i], 0, sizeof(s_ops[i]));
             s_ops[i].active = true;
             s_ops[i].op_id = s_next_op_id++;
+            s_ops[i].generation = 1;
+            s_ops_active[i] = true;
+            s_ops_generation[i] = 1;
             return &s_ops[i];
         }
     }
@@ -60,9 +68,65 @@ static void complete_op(ds_op_record_t *op, ds_op_result_t result)
     void *ctx = op->context;
     op->active = false;
     op->state = DS_OP_IDLE;
+    /* Sync extern arrays. */
+    for (int i = 0; i < DEVICE_SETTINGS_MAX_DEVICES; i++) {
+        if (&s_ops[i] == op) {
+            s_ops_active[i] = false;
+            break;
+        }
+    }
     if (cb != NULL) {
         cb(result, ctx);
     }
+}
+
+/* ── Worker accessor functions ─────────────────────────────────────── */
+
+void s_ops_invoke_completion(int slot, ds_op_result_t result)
+{
+    if (slot < 0 || slot >= DEVICE_SETTINGS_MAX_DEVICES) return;
+    ds_op_record_t *op = &s_ops[slot];
+    if (!op->active) return;
+
+    ds_op_completion_fn cb = op->completion;
+    void *ctx = op->context;
+    op->active = false;
+    op->state = DS_OP_IDLE;
+    s_ops_active[slot] = false;
+
+    if (cb != NULL) {
+        cb(result, ctx);
+    }
+}
+
+const char *s_ops_get_device_id(int slot)
+{
+    if (slot < 0 || slot >= DEVICE_SETTINGS_MAX_DEVICES) return "";
+    return s_ops[slot].device_id;
+}
+
+ds_op_kind_t s_ops_get_kind(int slot)
+{
+    if (slot < 0 || slot >= DEVICE_SETTINGS_MAX_DEVICES) return DS_OP_NONE;
+    return s_ops[slot].kind;
+}
+
+ds_op_state_t s_ops_get_state(int slot)
+{
+    if (slot < 0 || slot >= DEVICE_SETTINGS_MAX_DEVICES) return DS_OP_IDLE;
+    return s_ops[slot].state;
+}
+
+void s_ops_set_state(int slot, ds_op_state_t state)
+{
+    if (slot < 0 || slot >= DEVICE_SETTINGS_MAX_DEVICES) return;
+    s_ops[slot].state = state;
+}
+
+void s_ops_set_kind(int slot, ds_op_kind_t kind)
+{
+    if (slot < 0 || slot >= DEVICE_SETTINGS_MAX_DEVICES) return;
+    s_ops[slot].kind = kind;
 }
 
 /* ── Public API ────────────────────────────────────────────────────── */
@@ -103,6 +167,9 @@ esp_err_t device_settings_describe(const char *device_id,
 
     ESP_LOGI(TAG, "[%s] DESCRIBE queued op_id=%lu",
              device_id, (unsigned long)op->op_id);
+
+    /* Signal worker to process. */
+    device_settings_worker_submit();
     return ESP_OK;
 }
 
@@ -135,6 +202,9 @@ esp_err_t device_settings_get(const char *device_id,
 
     ESP_LOGI(TAG, "[%s] GET queued op_id=%lu",
              device_id, (unsigned long)op->op_id);
+
+    /* Signal worker to process. */
+    device_settings_worker_submit();
     return ESP_OK;
 }
 
@@ -158,6 +228,22 @@ void device_settings_operation_reset_for_test(void)
 {
     for (int i = 0; i < DEVICE_SETTINGS_MAX_DEVICES; i++) {
         s_ops[i].active = false;
+        s_ops_active[i] = false;
+        s_ops_generation[i] = 0;
     }
     s_next_op_id = 1;
+}
+
+void device_settings_fill_all_ops_for_test(void)
+{
+    for (int i = 0; i < DEVICE_SETTINGS_MAX_DEVICES; i++) {
+        memset(&s_ops[i], 0, sizeof(s_ops[i]));
+        s_ops[i].active = true;
+        s_ops[i].kind = DS_OP_DESCRIBE;
+        s_ops[i].state = DS_OP_RUNNING;
+        strlcpy(s_ops[i].device_id, "fill_dummy",
+                sizeof(s_ops[i].device_id));
+        s_ops_active[i] = true;
+        s_ops_generation[i] = 1;
+    }
 }

@@ -162,7 +162,9 @@ esp_err_t ds_schema_builder_init(ds_schema_builder_t *builder)
     builder->strings.pool = ds_settings_alloc(DEVICE_SETTINGS_MAX_STRING_POOL);
     if (builder->strings.pool == NULL) return ESP_ERR_NO_MEM;
     builder->strings.capacity = DEVICE_SETTINGS_MAX_STRING_POOL;
-    builder->strings.total_size = 0;
+    /* Offset zero is the canonical "metadata absent" string. */
+    builder->strings.pool[0] = '\0';
+    builder->strings.total_size = 4;
     return ESP_OK;
 }
 
@@ -197,7 +199,7 @@ esp_err_t ds_schema_builder_add_setting(ds_schema_builder_t *builder,
 }
 
 esp_err_t ds_schema_builder_add_enum_option(ds_schema_builder_t *builder,
-                                            int32_t value,
+                                            uint8_t value,
                                             const char *label,
                                             uint16_t *out_index)
 {
@@ -224,8 +226,6 @@ esp_err_t ds_schema_builder_add_enum_option(ds_schema_builder_t *builder,
 ds_schema_t *ds_schema_builder_commit(ds_schema_builder_t *builder)
 {
     if (builder == NULL) return NULL;
-    if (builder->setting_count == 0) return NULL;
-
     /* Allocate the schema with refcount header. */
     ds_schema_t *schema = alloc_with_refcount(sizeof(ds_schema_t));
     if (schema == NULL) return NULL;

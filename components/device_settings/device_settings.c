@@ -49,16 +49,10 @@ void device_settings_deinit(void)
 {
     if (!s_initialized) return;
 
+    device_settings_protocol_on_disconnect(NULL);
+
     for (int i = 0; i < DEVICE_SETTINGS_MAX_DEVICES; i++) {
         ds_device_record_t *r = &s_records[i];
-        if (r->staging_schema != NULL) {
-            ds_settings_ref_release(r->staging_schema);
-            r->staging_schema = NULL;
-        }
-        if (r->staging_values != NULL) {
-            ds_values_ref_release(r->staging_values);
-            r->staging_values = NULL;
-        }
         if (r->schema != NULL) {
             ds_settings_ref_release(r->schema);
             r->schema = NULL;
@@ -153,6 +147,30 @@ void device_settings_schema_release(const ds_schema_t *schema)
     ds_settings_ref_release((ds_schema_t *)schema);
 }
 
+esp_err_t device_settings_commit_schema(const char *device_id,
+                                        ds_schema_t *schema)
+{
+    if (device_id == NULL || device_id[0] == '\0' || schema == NULL) {
+        return ESP_ERR_INVALID_ARG;
+    }
+    if (!lock()) return ESP_ERR_TIMEOUT;
+
+    ds_device_record_t *rec = device_settings_find_record(device_id);
+    if (rec == NULL) {
+        unlock();
+        return ESP_ERR_NOT_FOUND;
+    }
+
+    ds_schema_t *old_schema = rec->schema;
+    rec->schema = schema;
+    rec->schema_rev = schema->schema_revision;
+    rec->schema_state = DS_SCHEMA_READY;
+    unlock();
+
+    if (old_schema != NULL) ds_settings_ref_release(old_schema);
+    return ESP_OK;
+}
+
 const ds_values_t *device_settings_values_acquire(const char *device_id)
 {
     if (device_id == NULL || device_id[0] == '\0') return NULL;
@@ -200,6 +218,7 @@ void device_settings_on_capability(const char *device_id,
 
     const bool needs_describe = rec->schema == NULL ||
                                 rec->schema_rev != schema_revision;
+    rec->advertised_schema_rev = schema_revision;
     rec->schema_state = needs_describe ? DS_SCHEMA_DISCOVERING
                                        : DS_SCHEMA_READY;
     ESP_LOGI(TAG, "[%s] [CAPABILITY] supported=1 schema_rev=%u cached_rev=%lu action=%s",
@@ -223,20 +242,14 @@ void device_settings_on_disconnect(const char *device_id)
 {
     if (device_id == NULL || device_id[0] == '\0') return;
 
+    device_settings_protocol_on_disconnect(device_id);
+
     if (!lock()) return;
 
     ds_device_record_t *rec = device_settings_find_record(device_id);
     if (rec != NULL) {
-        /* Free staging snapshots — they were being built but not committed. */
-        if (rec->staging_schema != NULL) {
-            ds_settings_ref_release(rec->staging_schema);
-            rec->staging_schema = NULL;
-        }
-        if (rec->staging_values != NULL) {
-            ds_values_ref_release(rec->staging_values);
-            rec->staging_values = NULL;
-        }
-        /* Reset stream state. */
+        /* Reset stream state. Builders are globally serialized and were
+         * already discarded by device_settings_protocol_on_disconnect(). */
         rec->schema_stream_active = false;
         rec->values_stream_active = false;
         rec->staging_expected_count = 0;
@@ -392,20 +405,13 @@ esp_err_t device_settings_get_record(const char *device_id,
 
 void device_settings_reset_for_test(void)
 {
+    device_settings_protocol_on_disconnect(NULL);
     if (s_mutex != NULL) {
         xSemaphoreTake(s_mutex, pdMS_TO_TICKS(100));
     }
 
     for (int i = 0; i < DEVICE_SETTINGS_MAX_DEVICES; i++) {
         ds_device_record_t *r = &s_records[i];
-        if (r->staging_schema != NULL) {
-            ds_settings_ref_release(r->staging_schema);
-            r->staging_schema = NULL;
-        }
-        if (r->staging_values != NULL) {
-            ds_values_ref_release(r->staging_values);
-            r->staging_values = NULL;
-        }
         if (r->schema != NULL) {
             ds_settings_ref_release(r->schema);
             r->schema = NULL;

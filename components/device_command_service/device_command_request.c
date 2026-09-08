@@ -86,7 +86,8 @@ device_command_status_t dcs_validate_request(
         if (strcmp(request->command, GW_SETTINGS_CMD_SET_SETTINGS) != 0 &&
             strcmp(request->command, GW_SETTINGS_CMD_COMMIT_SETTINGS) != 0 &&
             strcmp(request->command, GW_SETTINGS_CMD_DESCRIBE_SETTINGS) != 0 &&
-            strcmp(request->command, GW_SETTINGS_CMD_GET_SETTINGS) != 0) {
+            strcmp(request->command, GW_SETTINGS_CMD_GET_SETTINGS) != 0 &&
+            strcmp(request->command, GW_SETTINGS_CMD_READ_SETTINGS) != 0) {
             return DEVICE_CMD_STATUS_UNSUPPORTED_COMMAND;
         }
         break;

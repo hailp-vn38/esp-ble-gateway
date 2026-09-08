@@ -470,6 +470,37 @@ TEST_CASE("DS-CBOR-003: decodes schema revision", "[cbor_codec][g1]")
     TEST_ASSERT_EQUAL_UINT16(7, decoded.settings_schema_revision);
 }
 
+TEST_CASE("G4: settings title and unit survive base codec roundtrip",
+          "[cbor_codec][g4]")
+{
+    gw_message_t source = {
+        .protocol_version = GW_PROTOCOL_VERSION,
+        .type = "settings_item",
+        .command = "describe_settings",
+        .request_id = 77,
+        .has_request_id = 1,
+        .total = 1,
+        .has_total = 1,
+        .settings_sequence = 0,
+        .has_settings_sequence = 1,
+        .setting_id = "threshold",
+        .has_setting_id = 1,
+        .setting_type = GW_SETTING_TYPE_INT,
+        .has_setting_type = 1,
+    };
+    strlcpy(source.setting_title, "Signal threshold",
+            sizeof(source.setting_title));
+    strlcpy(source.setting_unit, "dBm", sizeof(source.setting_unit));
+
+    uint8_t buffer[GW_MSG_MAX_LEN];
+    gw_message_t decoded;
+    int len = cbor_codec_encode(&source, buffer, sizeof(buffer));
+    TEST_ASSERT_GREATER_THAN(0, len);
+    TEST_ASSERT_EQUAL_INT(0, cbor_codec_decode(buffer, len, &decoded));
+    TEST_ASSERT_EQUAL_STRING("Signal threshold", decoded.setting_title);
+    TEST_ASSERT_EQUAL_STRING("dBm", decoded.setting_unit);
+}
+
 /* ── G0 Protocol Alignment tests ───────────────────────────────────── */
 
 TEST_CASE("G0: sizeof(gw_message_t) unchanged by Settings work",
@@ -484,13 +515,13 @@ TEST_CASE("G0: sizeof(gw_message_t) unchanged by Settings work",
 TEST_CASE("G0: decoder tolerates unknown future keys (>= 32)",
           "[cbor_codec][g0]")
 {
-    /* {0:4, 1:"t", 3:"c", 4:0, 5:false, 35:"setting_x", 36:2}.
-     * Keys 35–36 are Settings keys; the base decoder must ignore them. */
+    /* {0:4, 1:"t", 3:"c", 4:0, 5:false, 48:"future_x", 49:2}.
+     * Keys above the current Settings range must remain forward-compatible. */
     static const uint8_t WITH_SETTINGS_KEYS[] = {
         0xA7, 0x00, 0x04, 0x01, 0x61, 't', 0x03, 0x61, 'c',
         0x04, 0x00, 0x05, 0xF4,
-        0x23, 0x69, 's', 'e', 't', 't', 'i', 'n', 'g', '_', 'x',
-        0x24, 0x02,
+        0x18, 0x30, 0x68, 'f', 'u', 't', 'u', 'r', 'e', '_', 'x',
+        0x18, 0x31, 0x02,
     };
     gw_message_t decoded;
     TEST_ASSERT_EQUAL_INT(0, cbor_codec_decode(WITH_SETTINGS_KEYS,
