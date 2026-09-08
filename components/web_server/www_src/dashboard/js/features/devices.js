@@ -735,6 +735,11 @@ const devices = {
             const features = Array.isArray(detail.features) ? detail.features : [];
             this.renderSchemaState(detail.schema?.state || 'unknown');
             this.currentFeatures = features;
+            // A feature.state frame can arrive while the REST detail snapshot
+            // is in flight. Reapply only cached frames newer than that
+            // snapshot before rendering, so the older REST value cannot
+            // overwrite the live MCP/BLE update.
+            this._reconcileFeatureCacheAfterSnapshot(device.id, result.eventSeq);
             this.renderFeatures(features, device);
             mcpControls.renderFeatures(device.id, features.map(feature => ({
                 feature_id: feature.feature_id,

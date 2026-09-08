@@ -410,6 +410,7 @@ const featureUi = {
             (isOn ? 'text-green-600' : 'text-gray-500');
         stateBadge.textContent = i18n.t(isOn ? 'feature_state.on' : 'feature_state.off');
         stateSlot.appendChild(stateBadge);
+        stateSlot._stateBadge = stateBadge;
 
         if (!writable) return;
 
@@ -437,7 +438,6 @@ const featureUi = {
 
         // Store reference for incremental update
         controlSlot._toggleInput = input;
-        controlSlot._stateBadge = stateBadge;
     },
 
     /* ── Private: range renderer ────────────────────────────────────── */
@@ -458,6 +458,7 @@ const featureUi = {
             `<span class="text-lg font-semibold text-gray-800">${this.formatNumeric(feature, feature.state?.valid ? feature.state.value_int : 0)}</span>` +
             `<span class="text-xs text-gray-400 font-mono">${min} – ${max}</span>`;
         stateSlot.appendChild(valueLabel);
+        stateSlot._valueLabel = valueLabel;
 
         if (!writable) return;
 
@@ -503,7 +504,6 @@ const featureUi = {
 
         // Store for incremental update
         controlSlot._range = range;
-        controlSlot._valueLabel = valueLabel;
     },
 
     /* ── Private: metric renderer ───────────────────────────────────── */
@@ -575,6 +575,7 @@ const featureUi = {
         valueLabel.className = 'text-lg font-semibold text-gray-800 mb-2';
         valueLabel.textContent = this.formatNumeric(feature, feature.state?.valid ? feature.state.value_int : 0);
         stateSlot.appendChild(valueLabel);
+        stateSlot._valueLabel = valueLabel;
 
         if (!writable) return;
 
@@ -659,7 +660,6 @@ const featureUi = {
         // Store for incremental update
         controlSlot._range = range;
         controlSlot._numberInput = numberInput;
-        controlSlot._valueLabel = valueLabel;
     },
 
     /* ── Private: incremental update per renderer ───────────────────── */
@@ -667,11 +667,13 @@ const featureUi = {
     _updateToggle(controlSlot, stateSlot, feature) {
         const input = controlSlot?._toggleInput;
         const badge = stateSlot?._stateBadge;
-        if (!input || !badge) return;
+        if (!badge) return;
 
         const isOn = feature.state?.valid && feature.state.value_bool;
-        input.checked = !!isOn;
-        input.setAttribute('aria-checked', String(!!isOn));
+        if (input) {
+            input.checked = !!isOn;
+            input.setAttribute('aria-checked', String(!!isOn));
+        }
         badge.textContent = i18n.t(isOn ? 'feature_state.on' : 'feature_state.off');
         badge.className = 'text-xs font-medium ' + (isOn ? 'text-green-600' : 'text-gray-500');
     },
@@ -679,11 +681,11 @@ const featureUi = {
     _updateRange(controlSlot, stateSlot, feature) {
         const range = controlSlot?._range;
         const valueLabel = stateSlot?._valueLabel;
-        if (!range || !valueLabel) return;
+        if (!valueLabel) return;
 
         if (feature.state?.valid && Number.isFinite(feature.state.value_int)) {
             const displayVal = this.rawToDisplay(feature, feature.state.value_int);
-            if (range.dataset.userEditing !== 'true') {
+            if (range && range.dataset.userEditing !== 'true') {
                 range.value = displayVal;
             }
             valueLabel.querySelector('span').textContent =
