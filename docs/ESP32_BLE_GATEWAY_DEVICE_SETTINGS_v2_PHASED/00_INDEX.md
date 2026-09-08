@@ -68,7 +68,7 @@ H1  HIL/fault/memory/soak qualification
 | 7 | `07_G5_SETTINGS_VALUES_DISCOVERY.md` | Gateway | Decode and commit typed values ✅ DONE (2026-09-08) |
 | 8 | `08_M1_READ_DISPLAY_ACCEPTANCE.md` | Both | End-to-end read/display gate |
 | 9 | `09_G6_COMMAND_SERVICE_SETTINGS_PAYLOAD.md` | Gateway | Add typed Settings command payload ✅ DONE (2026-09-08) |
-| 10 | `10_G7_SETTINGS_TRANSACTION_FLOW.md` | Gateway + Device | BEGIN/SET/COMMIT/CONFIRM/reconcile |
+| 10 | `10_G7_SETTINGS_TRANSACTION_FLOW.md` | Gateway + Device | BEGIN/SET/COMMIT/CONFIRM/reconcile ✅ DONE (2026-09-08) |
 | 11 | `11_M2_WRITABLE_ACCEPTANCE.md` | Both | End-to-end writable gate |
 | 12 | `12_H1_HIL_FAULT_MEMORY_SOAK.md` | Both | Final hardening and release qualification |
 | — | `90_SHARED_SETTINGS_LOGGING_CONTRACT.md` | Both | Shared SEND/RX logging contract |

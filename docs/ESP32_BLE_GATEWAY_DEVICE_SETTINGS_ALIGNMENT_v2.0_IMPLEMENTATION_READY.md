@@ -1113,7 +1113,7 @@ for Settings-specific semantics.
 
 ---
 
-# 15. Phase G7 — Transaction state machine
+# 15. Phase G7 — Transaction state machine ✅ DONE (2026-09-08)
 
 Correct flow:
 

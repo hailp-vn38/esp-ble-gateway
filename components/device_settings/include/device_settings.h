@@ -101,12 +101,14 @@ typedef enum {
     DS_TX_BEGIN_SENT,
     DS_TX_SET_SENT,
     DS_TX_COMMIT_SENT,
+    DS_TX_CONFIRM_SENT,
     DS_TX_WAITING_REBOOT,    /* COMMIT ACK received, awaiting reboot + re-read */
     DS_TX_VERIFYING,         /* Reconnecting, values refreshed, verifying */
     DS_TX_SUCCEEDED,
     DS_TX_FAILED,
     DS_TX_CONFLICT,
     DS_TX_CANCELLED,
+    DS_TX_OUTCOME_UNKNOWN,
 } ds_tx_state_t;
 
 /* ── Transaction result ─────────────────────────────────────────────── */
@@ -144,6 +146,9 @@ typedef struct {
     ds_change_request_t *changes;
     uint16_t            change_count;
     uint16_t            next_change_index;
+
+    /* Non-zero transaction correlation ID sent in Settings key 41. */
+    uint64_t            transaction_id;
 
     /* Expected config revision from caller's snapshot. */
     uint32_t            expected_config_rev;

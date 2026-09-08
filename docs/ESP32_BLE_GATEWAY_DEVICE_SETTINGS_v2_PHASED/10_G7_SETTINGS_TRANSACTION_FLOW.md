@@ -1,4 +1,4 @@
-# Phase G7 — Settings Transaction Flow
+# Phase G7 — Settings Transaction Flow ✅ DONE (2026-09-08)
 
 **Document set:** ESP32 BLE Gateway ↔ Device Settings v2  
 **Version:** v2.1 phased documents  
@@ -324,10 +324,10 @@ DS-TX-021 second tx same device busy
 # 15. Exit gate
 
 ```text
-[ ] BEGIN/SET/COMMIT/CONFIRM canonical
-[ ] local validation
-[ ] no success before post-reboot verify
-[ ] ambiguous outcomes represented explicitly
-[ ] reconnect reconciliation implemented
-[ ] transaction logs complete
+[x] BEGIN/SET/COMMIT/CONFIRM canonical
+[x] local validation
+[x] no success before post-reboot verify
+[x] ambiguous outcomes represented explicitly
+[x] reconnect reconciliation implemented
+[x] transaction logs complete
 ```

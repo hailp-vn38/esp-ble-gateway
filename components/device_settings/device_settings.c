@@ -9,6 +9,51 @@
 
 static const char *TAG = "device_settings";
 
+static bool reconciliation_values_match(const ds_device_record_t *rec,
+                                        const ds_transaction_t *tx)
+{
+    if (rec->schema == NULL || rec->values == NULL) return false;
+    for (uint16_t change_index = 0; change_index < tx->change_count; change_index++) {
+        const ds_change_request_t *change = &tx->changes[change_index];
+        const ds_value_entry_t *value = NULL;
+        for (uint16_t value_index = 0; value_index < rec->values->value_count;
+             value_index++) {
+            const ds_value_entry_t *candidate = &rec->values->values[value_index];
+            const char *id = ds_string_pool_get(&rec->schema->strings,
+                                                candidate->id_off);
+            if (id != NULL && strcmp(id, change->setting_id) == 0) {
+                value = candidate;
+                break;
+            }
+        }
+        if (value == NULL || !value->has_value || value->type != change->type) {
+            return false;
+        }
+        switch (change->type) {
+        case DS_TYPE_BOOL:
+            if (value->bool_val != change->bool_val) return false;
+            break;
+        case DS_TYPE_INT:
+            if (value->int_val != change->int_val) return false;
+            break;
+        case DS_TYPE_ENUM:
+            if (value->enum_val != change->enum_val) return false;
+            break;
+        case DS_TYPE_STRING: {
+            const char *actual = ds_string_pool_get(&rec->values->string_pool,
+                                                    value->string_off);
+            if (actual == NULL || strcmp(actual, change->string_val.str) != 0) {
+                return false;
+            }
+            break;
+        }
+        default:
+            return false;
+        }
+    }
+    return true;
+}
+
 /* ── Per-device records (internal SRAM) ────────────────────────────── */
 
 static ds_device_record_t s_records[DEVICE_SETTINGS_MAX_DEVICES];
@@ -334,13 +379,19 @@ void device_settings_reconcile(const char *device_id)
     ds_tx_result_t outcome;
 
     if (current_rev == expected_rev) {
-        /* Revision matches — verify non-secret values.
-         * For V2, if revision matches we consider it succeeded.
-         * Full value verification can be added later if needed. */
-        ESP_LOGI(TAG, "[%s] reconcile: SUCCEEDED (rev matches)",
-                 device_id);
-        DS_DIAG_INC(reconcile_success);
-        outcome = DS_TX_RESULT_OK;
+        tx->state = DS_TX_VERIFYING;
+        ESP_LOGI(TAG, "[VERIFY_BEGIN] device=%s revision=%lu",
+                 device_id, (unsigned long)current_rev);
+        if (reconciliation_values_match(rec, tx)) {
+            ESP_LOGI(TAG, "[VERIFY_OK] device=%s revision=%lu",
+                     device_id, (unsigned long)current_rev);
+            DS_DIAG_INC(reconcile_success);
+            outcome = DS_TX_RESULT_OK;
+        } else {
+            ESP_LOGW(TAG, "[VERIFY_FAIL] device=%s reason=value_mismatch", device_id);
+            DS_DIAG_INC(reconcile_fail);
+            outcome = DS_TX_RESULT_FAILED;
+        }
 
     } else if (current_rev == old_rev) {
         /* Commit did not persist. */
@@ -480,12 +531,14 @@ const char *device_settings_tx_state_name(ds_tx_state_t state)
     case DS_TX_BEGIN_SENT:      return "running";
     case DS_TX_SET_SENT:        return "running";
     case DS_TX_COMMIT_SENT:     return "running";
+    case DS_TX_CONFIRM_SENT:    return "running";
     case DS_TX_WAITING_REBOOT:  return "waiting_reboot";
     case DS_TX_VERIFYING:       return "verifying";
     case DS_TX_SUCCEEDED:       return "succeeded";
     case DS_TX_FAILED:          return "failed";
     case DS_TX_CONFLICT:        return "conflict";
     case DS_TX_CANCELLED:       return "cancelled";
+    case DS_TX_OUTCOME_UNKNOWN: return "outcome_unknown";
     }
     return "unknown";
 }

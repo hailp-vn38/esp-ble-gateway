@@ -14,6 +14,7 @@ static const char *TAG = "ds_tx";
 /* ── Transaction registry (internal SRAM) ───────────────────────────── */
 
 static ds_transaction_t s_txns[DEVICE_SETTINGS_MAX_DEVICES];
+static uint64_t s_next_transaction_id;
 
 /* ── Result registry — last completed result per device ────────────────
  * Stores the outcome of the most recent completed transaction so the
@@ -116,6 +117,18 @@ void ds_tx_reset_for_test(void)
         ds_tx_free(&s_txns[i]);
     }
     memset(s_tx_results, 0, sizeof(s_tx_results));
+    s_next_transaction_id = 0;
+}
+
+static uint64_t next_transaction_id(void)
+{
+    /* Monotonic IDs are unique among active transactions. Zero is reserved
+     * as absent on the Protocol v4 wire. */
+    do {
+        s_next_transaction_id++;
+        if (s_next_transaction_id == 0) s_next_transaction_id++;
+    } while (s_next_transaction_id == 0);
+    return s_next_transaction_id;
 }
 
 /* ── Command completion callback (runs from command service task) ────── */
@@ -138,8 +151,8 @@ static void reconciliation_timeout_cb(TimerHandle_t timer)
 
     if (tx->state != DS_TX_WAITING_REBOOT) return;
 
-    ESP_LOGW(TAG, "[%s] reconciliation timeout — OUTCOME_UNKNOWN",
-             tx->device_id);
+    ESP_LOGW(TAG, "[OUTCOME_UNKNOWN] device=%s tx_id=%llu reason=reconcile_timeout",
+             tx->device_id, (unsigned long long)tx->transaction_id);
     DS_DIAG_INC(outcome_unknown);
 
     ds_device_record_t *rec = device_settings_find_record(tx->device_id);
@@ -197,13 +210,39 @@ static bool prevalidate_change(const ds_schema_t *schema,
 
             /* Type must match. */
             if (desc->type != change->type) return false;
+            if (desc->type == DS_TYPE_FLOAT) return false; /* not a G7 wire value */
 
             /* Range check for INT. */
             if (desc->type == DS_TYPE_INT) {
                 if (change->int_val < desc->min_value ||
-                    change->int_val > desc->max_value) {
+                    change->int_val > desc->max_value ||
+                    (desc->step != 0 &&
+                     ((uint32_t)(change->int_val - desc->min_value) %
+                      desc->step) != 0)) {
                     return false;
                 }
+            }
+            if (desc->type == DS_TYPE_ENUM) {
+                bool found = false;
+                for (uint8_t opt = 0; opt < desc->option_count; opt++) {
+                    if (schema->enum_option_pool[desc->option_index + opt].value ==
+                        change->enum_val) {
+                        found = true;
+                        break;
+                    }
+                }
+                if (!found) return false;
+            }
+            if (desc->type == DS_TYPE_STRING &&
+                (strnlen(change->string_val.str,
+                         sizeof(change->string_val.str)) >=
+                     sizeof(change->string_val.str) ||
+                 strnlen(change->string_val.str,
+                         sizeof(change->string_val.str)) >=
+                     GW_SETTINGS_VALUE_STR_LEN ||
+                 (desc->max_length != 0 &&
+                  strlen(change->string_val.str) > desc->max_length))) {
+                return false;
             }
             return true;
         }
@@ -229,43 +268,42 @@ static void submit_next_command(ds_transaction_t *tx)
 
     /* Check if we have more SETs to send. */
     if (tx->next_change_index < tx->change_count) {
-        /* Build set_settings command with the current change. */
+        /* Build canonical settings_tx_set command with the current change. */
         const ds_change_request_t *ch = &tx->changes[tx->next_change_index];
 
         device_command_request_t req = {0};
         req.origin = DEVICE_CMD_ORIGIN_SETTINGS;
         strlcpy(req.device_id, tx->device_id, sizeof(req.device_id));
-        strlcpy(req.command, GW_SETTINGS_CMD_SET_SETTINGS, sizeof(req.command));
-
-        /* Encode setting_id into feature_id field (repurposed for settings). */
-        strlcpy(req.feature_id, ch->setting_id, sizeof(req.feature_id));
-        req.has_feature_id = true;
-
-        /* Encode value into int_value (bool/int/enum share this). */
+        strlcpy(req.command, GW_SETTINGS_CMD_TX_SET, sizeof(req.command));
+        req.settings.has_transaction_id = true;
+        req.settings.transaction_id = tx->transaction_id;
+        req.settings.has_setting_id = true;
+        strlcpy(req.settings.setting_id, ch->setting_id,
+                sizeof(req.settings.setting_id));
+        req.settings.has_setting_value = true;
+        req.settings.setting_type = ch->type;
         switch (ch->type) {
         case DS_TYPE_BOOL:
-            req.has_bool_value = true;
-            req.bool_value = ch->bool_val;
+            req.settings.value.bool_value = ch->bool_val;
             break;
         case DS_TYPE_INT:
-            req.has_int_value = true;
-            req.int_value = ch->int_val;
-            break;
-        case DS_TYPE_FLOAT:
-            req.has_int_value = true;
-            req.int_value = (int32_t)ch->float_val;
+            req.settings.value.int_value = ch->int_val;
             break;
         case DS_TYPE_ENUM:
-            req.has_int_value = true;
-            req.int_value = ch->enum_val;
+            req.settings.value.enum_value = (uint8_t)ch->enum_val;
+            break;
+        case DS_TYPE_STRING:
+            strlcpy(req.settings.value.string_value, ch->string_val.str,
+                    sizeof(req.settings.value.string_value));
             break;
         default:
             break;
         }
 
         tx->state = DS_TX_SET_SENT;
-        ESP_LOGI(TAG, "[%s] SET %u/%u id='%s'",
+        ESP_LOGI(TAG, "[TX_SET] device=%s tx_id=%llu sequence=%u/%u id=%s",
                  tx->device_id,
+                 (unsigned long long)tx->transaction_id,
                  (unsigned)(tx->next_change_index + 1),
                  (unsigned)tx->change_count,
                  ch->setting_id);
@@ -281,14 +319,17 @@ static void submit_next_command(ds_transaction_t *tx)
         return;
     }
 
-    /* All SETs sent — send COMMIT. */
+    /* All SETs sent — send canonical COMMIT. */
     device_command_request_t req = {0};
     req.origin = DEVICE_CMD_ORIGIN_SETTINGS;
     strlcpy(req.device_id, tx->device_id, sizeof(req.device_id));
-    strlcpy(req.command, GW_SETTINGS_CMD_COMMIT_SETTINGS, sizeof(req.command));
+    strlcpy(req.command, GW_SETTINGS_CMD_TX_COMMIT, sizeof(req.command));
+    req.settings.has_transaction_id = true;
+    req.settings.transaction_id = tx->transaction_id;
 
     tx->state = DS_TX_COMMIT_SENT;
-    ESP_LOGI(TAG, "[%s] COMMIT", tx->device_id);
+    ESP_LOGI(TAG, "[TX_COMMIT] device=%s tx_id=%llu", tx->device_id,
+             (unsigned long long)tx->transaction_id);
 
     esp_err_t err = device_command_service_submit(
         &req, on_cmd_complete, tx);
@@ -318,7 +359,9 @@ static void on_cmd_complete(const device_command_result_t *result,
     switch (result->status) {
     case DEVICE_CMD_STATUS_OK:
         /* Success — advance state machine. */
-        if (tx->state == DS_TX_SET_SENT) {
+        if (tx->state == DS_TX_BEGIN_SENT) {
+            submit_next_command(tx);
+        } else if (tx->state == DS_TX_SET_SENT) {
             tx->next_change_index++;
             submit_next_command(tx);
         } else if (tx->state == DS_TX_COMMIT_SENT) {
@@ -327,10 +370,33 @@ static void on_cmd_complete(const device_command_result_t *result,
             if (result->has_int_value) {
                 tx->new_config_rev = (uint32_t)result->int_value;
             }
+            ESP_LOGI(TAG, "[COMMIT_ACK] device=%s tx_id=%llu new_config_rev=%lu",
+                     tx->device_id,
+                     (unsigned long long)tx->transaction_id,
+                     (unsigned long)tx->new_config_rev);
+
+            device_command_request_t confirm = {0};
+            confirm.origin = DEVICE_CMD_ORIGIN_SETTINGS;
+            strlcpy(confirm.device_id, tx->device_id, sizeof(confirm.device_id));
+            strlcpy(confirm.command, GW_SETTINGS_CMD_COMMIT_CONFIRM,
+                    sizeof(confirm.command));
+            confirm.settings.has_transaction_id = true;
+            confirm.settings.transaction_id = tx->transaction_id;
+            confirm.settings.has_new_revision = true;
+            confirm.settings.new_revision = tx->new_config_rev;
+            tx->state = DS_TX_CONFIRM_SENT;
+            ESP_LOGI(TAG, "[TX_CONFIRM] device=%s tx_id=%llu new_config_rev=%lu",
+                     tx->device_id, (unsigned long long)tx->transaction_id,
+                     (unsigned long)tx->new_config_rev);
+            if (device_command_service_submit(&confirm, on_cmd_complete, tx) != ESP_OK) {
+                tx->state = DS_TX_FAILED;
+                ds_tx_complete(tx, DS_TX_RESULT_INTERNAL, 0);
+            }
+        } else if (tx->state == DS_TX_CONFIRM_SENT) {
             tx->state = DS_TX_WAITING_REBOOT;
             DS_DIAG_INC(tx_success);
-            ESP_LOGI(TAG, "[%s] COMMIT_ACK new_config_rev=%lu — waiting reboot",
-                     tx->device_id,
+            ESP_LOGI(TAG, "[WAIT_REBOOT] device=%s tx_id=%llu new_config_rev=%lu",
+                     tx->device_id, (unsigned long long)tx->transaction_id,
                      (unsigned long)tx->new_config_rev);
 
             /* Set reconciliation state on device record. */
@@ -349,6 +415,12 @@ static void on_cmd_complete(const device_command_result_t *result,
 
     case DEVICE_CMD_STATUS_REJECTED:
         ESP_LOGW(TAG, "[%s] REJECTED in state %d", tx->device_id, tx->state);
+        if (tx->state == DS_TX_BEGIN_SENT) {
+            tx->state = DS_TX_CONFLICT;
+            DS_DIAG_INC(tx_conflict);
+            ds_tx_complete(tx, DS_TX_RESULT_DEVICE_CONFLICT, 0);
+            break;
+        }
         tx->state = DS_TX_FAILED;
         DS_DIAG_INC(tx_fail);
         ds_tx_complete(tx, DS_TX_RESULT_DEVICE_REJECTED, 0);
@@ -364,12 +436,12 @@ static void on_cmd_complete(const device_command_result_t *result,
 
     case DEVICE_CMD_STATUS_TIMEOUT:
         ESP_LOGW(TAG, "[%s] TIMEOUT in state %d", tx->device_id, tx->state);
-        if (tx->state == DS_TX_COMMIT_SENT) {
+        if (tx->state == DS_TX_COMMIT_SENT || tx->state == DS_TX_CONFIRM_SENT) {
             /* Ambiguous — commit may have persisted.  Set up reconciliation. */
             ESP_LOGW(TAG, "[%s] TIMEOUT during COMMIT — OUTCOME_UNKNOWN",
                      tx->device_id);
             DS_DIAG_INC(outcome_unknown);
-            tx->state = DS_TX_WAITING_REBOOT;
+            tx->state = DS_TX_OUTCOME_UNKNOWN;
             ds_device_record_t *rec =
                 device_settings_find_record(tx->device_id);
             if (rec != NULL) {
@@ -377,6 +449,7 @@ static void on_cmd_complete(const device_command_result_t *result,
                 rec->reconciliation_expected_rev = tx->expected_config_rev + 1;
                 rec->reconciliation_old_rev = tx->expected_config_rev;
             }
+            tx->state = DS_TX_WAITING_REBOOT;
             start_reconciliation_timer(tx);
         } else {
             tx->state = DS_TX_FAILED;
@@ -388,12 +461,12 @@ static void on_cmd_complete(const device_command_result_t *result,
     case DEVICE_CMD_STATUS_NOT_CONNECTED:
         ESP_LOGW(TAG, "[%s] DISCONNECTED in state %d",
                  tx->device_id, tx->state);
-        if (tx->state == DS_TX_COMMIT_SENT) {
+        if (tx->state == DS_TX_COMMIT_SENT || tx->state == DS_TX_CONFIRM_SENT) {
             /* Ambiguous — commit may have persisted.  Set up reconciliation. */
             ESP_LOGW(TAG, "[%s] DISCONNECT during COMMIT — OUTCOME_UNKNOWN",
                      tx->device_id);
             DS_DIAG_INC(outcome_unknown);
-            tx->state = DS_TX_WAITING_REBOOT;
+            tx->state = DS_TX_OUTCOME_UNKNOWN;
             ds_device_record_t *rec =
                 device_settings_find_record(tx->device_id);
             if (rec != NULL) {
@@ -401,6 +474,7 @@ static void on_cmd_complete(const device_command_result_t *result,
                 rec->reconciliation_expected_rev = tx->expected_config_rev + 1;
                 rec->reconciliation_old_rev = tx->expected_config_rev;
             }
+            tx->state = DS_TX_WAITING_REBOOT;
             start_reconciliation_timer(tx);
         } else {
             tx->state = DS_TX_FAILED;
@@ -465,6 +539,7 @@ esp_err_t device_settings_save(const char *device_id,
     }
 
     strlcpy(tx->device_id, device_id, sizeof(tx->device_id));
+    tx->transaction_id = next_transaction_id();
     tx->expected_config_rev = expected_config_rev;
 
     /* Deep-copy changes into PSRAM. */
@@ -492,17 +567,19 @@ esp_err_t device_settings_save(const char *device_id,
         }
     }
 
-    ESP_LOGI(TAG, "[%s] SAVE %u changes, config_rev=%lu",
-             device_id, (unsigned)change_count,
+    ESP_LOGI(TAG, "[TX_BEGIN] device=%s tx_id=%llu changes=%u config_rev=%lu",
+             device_id, (unsigned long long)tx->transaction_id, (unsigned)change_count,
              (unsigned long)expected_config_rev);
 
     /* Send BEGIN command. */
     device_command_request_t req = {0};
     req.origin = DEVICE_CMD_ORIGIN_SETTINGS;
     strlcpy(req.device_id, device_id, sizeof(req.device_id));
-    strlcpy(req.command, GW_SETTINGS_CMD_SET_SETTINGS, sizeof(req.command));
-    req.has_int_value = true;
-    req.int_value = (int32_t)expected_config_rev;
+    strlcpy(req.command, GW_SETTINGS_CMD_TX_BEGIN, sizeof(req.command));
+    req.settings.has_transaction_id = true;
+    req.settings.transaction_id = tx->transaction_id;
+    req.settings.has_expected_revision = true;
+    req.settings.expected_revision = expected_config_rev;
 
     tx->state = DS_TX_BEGIN_SENT;
     esp_err_t err = device_command_service_submit(

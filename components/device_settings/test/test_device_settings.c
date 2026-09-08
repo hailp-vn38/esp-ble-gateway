@@ -412,6 +412,7 @@ static uint32_t mock_cmd_send_count = 0;
 static char mock_cmd_last_device_id[32];
 static char mock_cmd_last_command[64];
 static uint32_t mock_cmd_last_request_id = 0;
+static gw_message_t mock_cmd_last_message;
 
 static int mock_cmd_send(const char *device_id, const gw_message_t *msg)
 {
@@ -423,6 +424,7 @@ static int mock_cmd_send(const char *device_id, const gw_message_t *msg)
         strlcpy(mock_cmd_last_command, msg->command,
                 sizeof(mock_cmd_last_command));
         mock_cmd_last_request_id = msg->request_id;
+        mock_cmd_last_message = *msg;
     }
     return mock_cmd_send_rc;
 }
@@ -461,6 +463,116 @@ static void reset_mock_cmd(void)
     mock_cmd_last_device_id[0] = '\0';
     mock_cmd_last_command[0] = '\0';
     mock_cmd_last_request_id = 0;
+    memset(&mock_cmd_last_message, 0, sizeof(mock_cmd_last_message));
+}
+
+static bool tx_completed;
+static ds_tx_result_t tx_result;
+
+static void tx_completion(ds_tx_result_t result, void *context)
+{
+    (void)context;
+    tx_completed = true;
+    tx_result = result;
+}
+
+static ds_device_record_t *setup_tx_schema(const char *device_id,
+                                            uint8_t type, uint16_t flags)
+{
+    ds_schema_builder_t builder;
+    TEST_ASSERT_EQUAL(ESP_OK, ds_schema_builder_init(&builder));
+    uint16_t id_off;
+    TEST_ASSERT_EQUAL(ESP_OK, ds_schema_builder_add_string(&builder, "setting", &id_off));
+    ds_setting_desc_t desc = {
+        .id_off = id_off, .type = type, .flags = flags,
+        .min_value = 0, .max_value = 100, .step = 5, .max_length = 63,
+    };
+    if (type == DS_TYPE_ENUM) {
+        uint16_t label;
+        TEST_ASSERT_EQUAL(ESP_OK, ds_schema_builder_add_enum_option(&builder, 2, "mode", &label));
+        desc.option_index = 0;
+        desc.option_count = 1;
+    }
+    TEST_ASSERT_EQUAL(ESP_OK, ds_schema_builder_add_setting(&builder, &desc));
+    ds_device_record_t *rec = device_settings_find_or_create_record(device_id);
+    TEST_ASSERT_NOT_NULL(rec);
+    rec->schema_state = DS_SCHEMA_READY;
+    rec->schema = ds_schema_builder_commit(&builder);
+    TEST_ASSERT_NOT_NULL(rec->schema);
+    rec->config_rev = 7;
+    return rec;
+}
+
+static void tx_ack(const char *device_id)
+{
+    gw_message_t ack = make_settings_ack(device_id, mock_cmd_last_command,
+                                         mock_cmd_last_request_id);
+    TEST_ASSERT_TRUE(device_command_service_on_notify(device_id, &ack));
+    vTaskDelay(pdMS_TO_TICKS(40));
+}
+
+TEST_CASE("DS-TX-001..015 canonical BEGIN SET COMMIT CONFIRM flow",
+          "[device_settings][g7]")
+{
+    device_settings_deinit();
+    device_settings_reset_for_test();
+    ds_tx_reset_for_test();
+    reset_mock_cmd();
+    tx_completed = false;
+    device_command_service_set_hooks(&mock_cmd_hooks);
+    TEST_ASSERT_EQUAL(ESP_OK, device_command_service_init());
+    TEST_ASSERT_EQUAL(ESP_OK, device_settings_init());
+    ds_device_record_t *rec = setup_tx_schema("tx-g7", DS_TYPE_BOOL, DS_FLAG_WRITABLE);
+    ds_change_request_t change = { .type = DS_TYPE_BOOL, .bool_val = true };
+    strlcpy(change.setting_id, "setting", sizeof(change.setting_id));
+    TEST_ASSERT_EQUAL(ESP_OK, device_settings_save("tx-g7", &change, 1, 7,
+                                                    tx_completion, NULL));
+    vTaskDelay(pdMS_TO_TICKS(40));
+    ds_transaction_t *tx = ds_tx_find("tx-g7");
+    TEST_ASSERT_NOT_NULL(tx);
+    TEST_ASSERT_NOT_EQUAL_UINT64(0, tx->transaction_id);
+    TEST_ASSERT_EQUAL_STRING(GW_SETTINGS_CMD_TX_BEGIN, mock_cmd_last_command);
+    TEST_ASSERT_EQUAL_UINT64(tx->transaction_id,
+                             mock_cmd_last_message.settings_transaction_id);
+    tx_ack("tx-g7");
+    TEST_ASSERT_EQUAL_STRING(GW_SETTINGS_CMD_TX_SET, mock_cmd_last_command);
+    TEST_ASSERT_TRUE(mock_cmd_last_message.has_setting_value);
+    TEST_ASSERT_TRUE(mock_cmd_last_message.setting_value.setting_value_bool);
+    tx_ack("tx-g7");
+    TEST_ASSERT_EQUAL_STRING(GW_SETTINGS_CMD_TX_COMMIT, mock_cmd_last_command);
+    gw_message_t commit_ack = make_settings_ack("tx-g7", mock_cmd_last_command,
+                                                mock_cmd_last_request_id);
+    commit_ack.has_int_value = 1;
+    commit_ack.int_value = 8;
+    TEST_ASSERT_TRUE(device_command_service_on_notify("tx-g7", &commit_ack));
+    vTaskDelay(pdMS_TO_TICKS(40));
+    TEST_ASSERT_EQUAL_STRING(GW_SETTINGS_CMD_COMMIT_CONFIRM, mock_cmd_last_command);
+    TEST_ASSERT_EQUAL_UINT32(8, mock_cmd_last_message.settings_new_revision);
+    tx_ack("tx-g7");
+    TEST_ASSERT_EQUAL(DS_TX_WAITING_REBOOT, tx->state);
+    TEST_ASSERT_FALSE(tx_completed);
+    rec->schema = NULL;
+    ds_tx_reset_for_test();
+    device_command_service_deinit();
+    device_command_service_set_hooks(NULL);
+    device_settings_reset_for_test();
+    device_settings_deinit();
+}
+
+TEST_CASE("DS-TX-008..012 local validation rejects readonly range and enum",
+          "[device_settings][g7]")
+{
+    device_settings_deinit();
+    device_settings_reset_for_test();
+    ds_tx_reset_for_test();
+    TEST_ASSERT_EQUAL(ESP_OK, device_settings_init());
+    setup_tx_schema("tx-invalid", DS_TYPE_INT, 0);
+    ds_change_request_t change = { .type = DS_TYPE_INT, .int_val = 105 };
+    strlcpy(change.setting_id, "setting", sizeof(change.setting_id));
+    TEST_ASSERT_EQUAL(ESP_ERR_INVALID_ARG,
+                      device_settings_save("tx-invalid", &change, 1, 7, NULL, NULL));
+    device_settings_reset_for_test();
+    device_settings_deinit();
 }
 
 /* ── DS-WORK-001: capability → DESCRIBE queued → worker submits ────── */
