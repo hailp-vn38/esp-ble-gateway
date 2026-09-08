@@ -354,6 +354,33 @@ static void enable_all_six_exposures(void)
     }
 }
 
+TEST_CASE("reconcile binds semantic auto-exposure before advertising hints",
+          "[mcp_exposure][regression]")
+{
+    TEST_ASSERT_EQUAL(ESP_OK, mcp_tool_exposure_init());
+    setup_six_control_schema();
+
+    /* The schema commit listener reconciles on the exposure worker. */
+    vTaskDelay(pdMS_TO_TICKS(200));
+
+    mcp_tool_exposure_t exposure = {0};
+    TEST_ASSERT_EQUAL(ESP_OK,
+        mcp_tool_exposure_get_feature(SIX_CTRL_DEV, "plug_main", &exposure));
+    TEST_ASSERT_TRUE(exposure.control_enabled);
+    TEST_ASSERT_TRUE(exposure.feature_bound);
+    TEST_ASSERT_EQUAL(MCP_EXPOSURE_ENABLED, exposure.state);
+
+    mcp_control_hint_t hints[MCP_SEMANTIC_CONTROL_HINT_MAX] = {0};
+    size_t count = 0;
+    bool truncated = false;
+    TEST_ASSERT_EQUAL(ESP_OK,
+        mcp_semantic_control_get_hints(
+            SIX_CTRL_DEV, hints, MCP_SEMANTIC_CONTROL_HINT_MAX,
+            &count, &truncated));
+    TEST_ASSERT_EQUAL_UINT(6, count);
+    TEST_ASSERT_FALSE(truncated);
+}
+
 /* ── Regression test: 6 controls returned (the core bug) ─────────────── */
 
 TEST_CASE("semantic hints return all 6 controls without truncation",

@@ -231,7 +231,11 @@ static void reconcile_device(const char *device_id)
                 rec->state = MCP_EXPOSURE_ENABLED;
                 rec->reason = MCP_EXPOSURE_REASON_NONE;
                 rec->naming_version = MCP_EXP_NAMING_VERSION;
-                rec->flags = 0;
+                /* A semantic record is the explicit grant consumed by
+                 * device_control.  Keep the binding invariant true from
+                 * creation, otherwise hints advertise a writable feature
+                 * that the write policy rejects. */
+                rec->flags = MCP_EXP_FLAG_FEATURE_BOUND;
                 memcpy(rec->capability_digest, digest,
                        MCP_CAPABILITY_DIGEST_LEN);
                 s_persisted_count++;
@@ -249,6 +253,9 @@ static void reconcile_device(const char *device_id)
                     rec->state = MCP_EXPOSURE_NEEDS_REVIEW;
                     rec->reason = MCP_EXPOSURE_REASON_CAPABILITY_CHANGED;
                 }
+                /* Existing records created by compact-mode reconciliation
+                 * before the binding invariant must be repaired too. */
+                rec->flags |= MCP_EXP_FLAG_FEATURE_BOUND;
                 memcpy(rec->capability_digest, digest,
                        MCP_CAPABILITY_DIGEST_LEN);
             }
@@ -416,6 +423,16 @@ static void boot_reconcile(void)
                     mcp_tool_digest_match(digest, rec->capability_digest);
                 if (rec->state == MCP_EXPOSURE_ENABLED && digest_matches) {
                     rec->naming_version = MCP_EXP_NAMING_VERSION;
+                    /* Repair compact semantic records written before
+                     * FEATURE_BOUND became a policy prerequisite. */
+                    for (size_t f = 0; f < cap.feature_count; f++) {
+                        const device_schema_feature_t *feat = &cap.features[f];
+                        if (strcmp(feat->feature_id, rec->feature_id) == 0 &&
+                            feat->writable_tool_index == (int8_t)c) {
+                            rec->flags |= MCP_EXP_FLAG_FEATURE_BOUND;
+                            break;
+                        }
+                    }
                 } else if (!digest_matches) {
                     /* Digest mismatch. */
                     rec->state = MCP_EXPOSURE_NEEDS_REVIEW;
@@ -974,6 +991,7 @@ static bool build_control_hint(const char *device_id,
     if (mcp_tool_exposure_get_feature(device_id, feature->feature_id,
                                       &exposure) != ESP_OK ||
         !exposure.control_enabled ||
+        !exposure.feature_bound ||
         exposure.state != MCP_EXPOSURE_ENABLED) {
         return false;
     }

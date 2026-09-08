@@ -102,6 +102,8 @@ static esp_err_t exposure_get_handler(httpd_req_t *request)
                                                &exposure) == ESP_OK) {
                 cJSON_AddBoolToObject(fitem, "control_enabled",
                                       exposure.control_enabled);
+                cJSON_AddBoolToObject(fitem, "feature_bound",
+                                      exposure.feature_bound);
                 const char *state_str =
                     exposure.state == MCP_EXPOSURE_ENABLED ? "enabled" :
                     exposure.state == MCP_EXPOSURE_NEEDS_REVIEW ? "needs_review" :
@@ -109,6 +111,7 @@ static esp_err_t exposure_get_handler(httpd_req_t *request)
                 cJSON_AddStringToObject(fitem, "health", state_str);
             } else {
                 cJSON_AddBoolToObject(fitem, "control_enabled", false);
+                cJSON_AddBoolToObject(fitem, "feature_bound", false);
                 cJSON_AddStringToObject(fitem, "health", "missing");
             }
 
@@ -268,6 +271,8 @@ static esp_err_t exposure_put_handler(httpd_req_t *request)
         cJSON_AddStringToObject(response, "feature_id", feature_id);
         cJSON_AddBoolToObject(response, "control_enabled",
                               updated.control_enabled);
+        cJSON_AddBoolToObject(response, "feature_bound",
+                              updated.feature_bound);
         cJSON_AddStringToObject(response, "health",
                                 updated.state == MCP_EXPOSURE_ENABLED ? "enabled" :
                                 updated.state == MCP_EXPOSURE_NEEDS_REVIEW ? "needs_review" :
