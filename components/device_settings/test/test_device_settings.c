@@ -281,7 +281,9 @@ TEST_CASE("refcount: empty schema commit remains valid",
     ds_schema_builder_t builder;
     TEST_ASSERT_EQUAL(ESP_OK, ds_schema_builder_init(&builder));
     ds_schema_t *schema = ds_schema_builder_commit(&builder);
-    TEST_ASSERT_NULL(schema);
+    TEST_ASSERT_NOT_NULL(schema);
+    TEST_ASSERT_EQUAL_UINT16(0, schema->setting_count);
+    ds_settings_ref_release(schema);
     ds_schema_builder_reset(&builder);
 }
 

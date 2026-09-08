@@ -246,6 +246,7 @@ typedef struct {
     uint16_t           staging_expected_count;  /* from settings_begin total */
     uint16_t           staging_received_count;  /* items received so far */
     uint32_t           staging_snapshot_id;
+    uint16_t           advertised_schema_rev;
     bool               schema_stream_active;
     bool               values_stream_active;
 
@@ -369,6 +370,25 @@ esp_err_t device_settings_save(const char *device_id,
 
 esp_err_t device_settings_tx_cancel(const char *device_id);
 
+/* ── Operation internals (exposed for worker and testing) ──────────── */
+
+extern bool      s_ops_active[];
+extern uint32_t  s_ops_generation[];
+void      s_ops_invoke_completion(int slot, ds_op_result_t result);
+const char *s_ops_get_device_id(int slot);
+ds_op_kind_t s_ops_get_kind(int slot);
+ds_op_state_t s_ops_get_state(int slot);
+void      s_ops_set_state(int slot, ds_op_state_t state);
+void      s_ops_set_kind(int slot, ds_op_kind_t kind);
+
+/* ── Worker API (G3) ──────────────────────────────────────────────── */
+
+esp_err_t device_settings_worker_init(void);
+void      device_settings_worker_deinit(void);
+void      device_settings_worker_submit(void);
+void      device_settings_worker_on_disconnect(const char *device_id);
+void      device_settings_protocol_on_disconnect(const char *device_id);
+
 /* ── Transaction internals (exposed for testing) ─────────────────── */
 
 ds_transaction_t *ds_tx_find(const char *device_id);
@@ -442,6 +462,8 @@ extern ds_diag_t s_diag;
 ds_device_record_t *device_settings_find_record(const char *device_id);
 ds_device_record_t *device_settings_find_or_create_record(
     const char *device_id);
+esp_err_t device_settings_commit_schema(const char *device_id,
+                                        ds_schema_t *schema);
 
 /* ── Memory helpers (exposed for testing) ──────────────────────────── */
 
@@ -461,6 +483,11 @@ esp_err_t   ds_string_pool_add(ds_string_pool_t *pool, const char *str,
 /* ── Test helpers ──────────────────────────────────────────────────── */
 
 void device_settings_reset_for_test(void);
+void device_settings_operation_reset_for_test(void);
+void device_settings_fill_all_ops_for_test(void);
+void device_settings_worker_reset_for_test(void);
+bool device_settings_worker_is_idle_for_test(void);
+uint32_t device_settings_worker_get_generation_for_test(void);
 
 #ifdef __cplusplus
 }

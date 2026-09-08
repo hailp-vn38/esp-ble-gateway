@@ -265,6 +265,9 @@ void device_settings_on_disconnect(const char *device_id)
     }
 
     unlock();
+
+    /* Notify worker to cancel active commands and invalidate pending ops. */
+    device_settings_worker_on_disconnect(device_id);
 }
 
 /* ── Reconciliation ───────────────────────────────────────────────────
