@@ -2,8 +2,10 @@
 const deviceSettings = {
     _baseline: null,       // { device_id, config_revision, settings: [...] }
     _dirty: new Map(),     // setting_id -> { original, current }
-    _operationId: null,    // device_id when operation is active
-    _pollTimer: null,
+    _operationId: null,
+    _operationDeviceId: null,
+    _savePending: false,
+    _pendingWsEvent: null,
     _staleRevision: false,
 
     /* ── Public lifecycle ──────────────────────────────────────────── */
@@ -39,6 +41,17 @@ const deviceSettings = {
 
     /* ── WS event handling ─────────────────────────────────────────── */
 
+    onSettingsState(ev) {
+        if (!state.selectedDeviceDetail || ev.deviceId !== state.selectedDeviceDetail.id) return;
+        /* settings.changed, not settings.state, is the snapshot refresh
+         * signal.  In particular, READY may precede the terminal event of a
+         * post-reboot transaction; loading here would discard operationId. */
+        if ((ev.state === 'discovering' || ev.state === 'reading') &&
+            !this._operationId && !this._savePending) {
+            this._renderNotAvailable('discovering');
+        }
+    },
+
     onSettingsChanged(ev) {
         if (!state.selectedDeviceDetail) return;
         if (ev.deviceId !== state.selectedDeviceDetail.id) return;
@@ -51,10 +64,8 @@ const deviceSettings = {
             }
         }
 
-        // If an operation was active and it completed, refresh
-        if (this._operationId) {
-            this._checkOperation();
-        }
+        // REST remains the source of truth; this event asks us to refresh it.
+        if (!this._operationId && !this._savePending) void this.load(ev.deviceId);
     },
 
     onConnectionChanged(connected) {
@@ -98,9 +109,13 @@ const deviceSettings = {
 
         const btn = document.getElementById('ds-save-btn');
         this._setButtonLoading(btn, true);
+        this._savePending = true;
+        this._operationDeviceId = device.id;
+        this._pendingWsEvent = null;
+        this._renderOperationState('queued');
 
         try {
-            await api.request('/api/devices/settings', {
+            const result = await api.request('/api/devices/settings', {
                 method: 'PUT',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
@@ -110,15 +125,24 @@ const deviceSettings = {
                 })
             });
 
-            this._operationId = device.id;
+            this._operationId = String(result.operation_id);
+            this._savePending = false;
             this._dirty.clear();
             this._updateSaveButton();
             this._renderOperationState('queued');
             ui.showToast(i18n.t('device_settings.save_queued'), 'success');
 
-            // Start polling operation status
-            this._startPolling();
+            // Transaction progress and completion arrive through /ws/events.
+            if (this._pendingWsEvent) {
+                const earlyEvent = this._pendingWsEvent;
+                this._pendingWsEvent = null;
+                this.onTransaction(earlyEvent);
+            }
         } catch (err) {
+            this._operationId = null;
+            this._operationDeviceId = null;
+            this._savePending = false;
+            this._pendingWsEvent = null;
             const msg = String(err.message || err);
             if (msg.includes('active_transaction')) {
                 ui.showToast(i18n.t('device_settings.save_busy'), 'error');
@@ -132,57 +156,25 @@ const deviceSettings = {
         }
     },
 
-    /* ── Operation polling ─────────────────────────────────────────── */
+    onTransaction(ev) {
+        const device = state.selectedDeviceDetail;
+        if (!device || ev.deviceId !== device.id) return;
 
-    _startPolling() {
-        this._stopPolling();
-        this._pollTimer = setInterval(() => this._checkOperation(), 2000);
-        // Safety timeout: stop after 60s
-        setTimeout(() => this._stopPolling(), 60000);
-    },
-
-    _stopPolling() {
-        if (this._pollTimer) {
-            clearInterval(this._pollTimer);
-            this._pollTimer = null;
-        }
-    },
-
-    async _checkOperation() {
-        if (!this._operationId) {
-            this._stopPolling();
+        // A fast device can publish before PUT's JSON response arrives.
+        if (this._savePending && !this._operationId &&
+            ev.deviceId === this._operationDeviceId) {
+            this._pendingWsEvent = ev;
             return;
         }
+        if (!this._operationId ||
+            String(ev.operationId) !== String(this._operationId)) return;
 
-        try {
-            const data = await api.request(
-                `/api/devices/settings/operations?device_id=${encodeURIComponent(this._operationId)}`
-            );
-
-            if (!data.active) {
-                this._stopPolling();
-                this._operationId = null;
-
-                if (data.error === 'succeeded') {
-                    this._renderOperationState('succeeded');
-                    // Reload fresh settings
-                    const device = state.selectedDeviceDetail;
-                    if (device) await this.load(device.id);
-                } else if (data.error === 'failed') {
-                    this._renderOperationState('failed');
-                } else if (data.error === 'conflict') {
-                    this._renderOperationState('conflict');
-                } else {
-                    this._renderOperationState('unknown');
-                    // Try refresh
-                    const device = state.selectedDeviceDetail;
-                    if (device) await this.load(device.id);
-                }
-            } else {
-                this._renderOperationState(data.state || 'updating');
-            }
-        } catch (_) {
-            // Network error — will retry on next tick
+        const name = typeof ev.state === 'string' ? ev.state : 'unknown';
+        this._renderOperationState(name, ev.current, ev.total);
+        if (['succeeded', 'failed', 'conflict', 'cancelled', 'outcome_unknown'].includes(name)) {
+            this._operationId = null;
+            this._operationDeviceId = null;
+            // A following settings.changed event refreshes the REST snapshot.
         }
     },
 
@@ -505,7 +497,9 @@ const deviceSettings = {
         const card = document.getElementById('device-settings-card');
         if (card) card.classList.add('hidden');
         this._operationId = null;
-        this._stopPolling();
+        this._operationDeviceId = null;
+        this._savePending = false;
+        this._pendingWsEvent = null;
     },
 
     _renderNotAvailable(reason) {
@@ -542,7 +536,13 @@ const deviceSettings = {
         const stateMap = {
             queued:          ['text-blue-600', 'device_settings.op_queued'],
             updating:        ['text-blue-600', 'device_settings.op_updating'],
+            validating:      ['text-blue-600', 'device_settings.op_updating'],
+            starting:        ['text-blue-600', 'device_settings.op_updating'],
+            applying:        ['text-blue-600', 'device_settings.op_updating'],
+            committing:      ['text-blue-600', 'device_settings.op_updating'],
+            confirming:      ['text-blue-600', 'device_settings.op_updating'],
             waiting_reboot:  ['text-amber-600', 'device_settings.op_rebooting'],
+            reconnecting:    ['text-amber-600', 'device_settings.op_rebooting'],
             verifying:       ['text-blue-600', 'device_settings.op_verifying'],
             succeeded:       ['text-green-600', 'device_settings.op_succeeded'],
             failed:          ['text-red-600', 'device_settings.op_failed'],
@@ -585,6 +585,5 @@ const deviceSettings = {
         this._baseline = null;
         this._dirty.clear();
         this._staleRevision = false;
-        this._stopPolling();
     }
 };

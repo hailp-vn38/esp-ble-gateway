@@ -171,10 +171,12 @@ esp_err_t device_state_init(void)
     s_count = 0;
     s_initialized = true;
 
-    esp_err_t err = device_schema_register_commit_listener2(
+    /* State seeding is best-effort and follows the settings reconciliation
+     * listener, so it cannot delay the post-reboot settings read. */
+    esp_err_t err = device_schema_register_commit_listener3(
         on_schema_committed, NULL);
     if (err != ESP_OK) {
-        ESP_LOGW(TAG, "commit listener2 registration failed: %s",
+        ESP_LOGW(TAG, "commit listener3 registration failed: %s",
                  esp_err_to_name(err));
     }
 

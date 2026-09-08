@@ -9,6 +9,39 @@
 
 static const char *TAG = "device_settings";
 
+static void publish_settings_state(const char *device_id,
+                                   gateway_settings_event_state_t state,
+                                   uint32_t schema_revision,
+                                   uint32_t config_revision)
+{
+    gateway_event_t ev = {
+        .type = GW_EVENT_SETTINGS_STATE,
+        .schema_revision = schema_revision,
+        .config_revision = config_revision,
+        .settings_state = state,
+    };
+    strlcpy(ev.device_id, device_id, sizeof(ev.device_id));
+    gateway_events_publish(&ev);
+}
+
+static void publish_transaction_reconnecting(const char *device_id)
+{
+    ds_transaction_t *tx = ds_tx_find(device_id);
+    if (tx == NULL || !tx->active || tx->state != DS_TX_WAITING_REBOOT) return;
+
+    gateway_event_t ev = {
+        .type = GW_EVENT_SETTINGS_TRANSACTION,
+        .transaction_id = tx->transaction_id,
+        .expected_revision = tx->expected_config_rev,
+        .new_revision = tx->new_config_rev,
+        .progress_current = tx->next_change_index,
+        .progress_total = tx->change_count,
+        .settings_tx_state = GW_SETTINGS_TX_RECONNECTING,
+    };
+    strlcpy(ev.device_id, device_id, sizeof(ev.device_id));
+    gateway_events_publish(&ev);
+}
+
 static bool reconciliation_values_match(const ds_device_record_t *rec,
                                         const ds_transaction_t *tx)
 {
@@ -19,7 +52,8 @@ static bool reconciliation_values_match(const ds_device_record_t *rec,
         for (uint16_t value_index = 0; value_index < rec->values->value_count;
              value_index++) {
             const ds_value_entry_t *candidate = &rec->values->values[value_index];
-            const char *id = ds_string_pool_get(&rec->schema->strings,
+            /* id_off is owned by the values snapshot, not the schema. */
+            const char *id = ds_string_pool_get(&rec->values->string_pool,
                                                 candidate->id_off);
             if (id != NULL && strcmp(id, change->setting_id) == 0) {
                 value = candidate;
@@ -27,22 +61,40 @@ static bool reconciliation_values_match(const ds_device_record_t *rec,
             }
         }
         if (value == NULL || !value->has_value || value->type != change->type) {
+            ESP_LOGW(TAG, "[VERIFY_FAIL] device=%s id=%s reason=%s",
+                     tx->device_id, change->setting_id,
+                     value == NULL ? "value_missing" :
+                     (!value->has_value ? "value_unavailable" : "type_mismatch"));
             return false;
         }
         switch (change->type) {
         case DS_TYPE_BOOL:
-            if (value->bool_val != change->bool_val) return false;
+            if (value->bool_val != change->bool_val) {
+                ESP_LOGW(TAG, "[VERIFY_FAIL] device=%s id=%s reason=bool_mismatch",
+                         tx->device_id, change->setting_id);
+                return false;
+            }
             break;
         case DS_TYPE_INT:
-            if (value->int_val != change->int_val) return false;
+            if (value->int_val != change->int_val) {
+                ESP_LOGW(TAG, "[VERIFY_FAIL] device=%s id=%s reason=int_mismatch",
+                         tx->device_id, change->setting_id);
+                return false;
+            }
             break;
         case DS_TYPE_ENUM:
-            if (value->enum_val != change->enum_val) return false;
+            if (value->enum_val != change->enum_val) {
+                ESP_LOGW(TAG, "[VERIFY_FAIL] device=%s id=%s reason=enum_mismatch",
+                         tx->device_id, change->setting_id);
+                return false;
+            }
             break;
         case DS_TYPE_STRING: {
             const char *actual = ds_string_pool_get(&rec->values->string_pool,
                                                     value->string_off);
             if (actual == NULL || strcmp(actual, change->string_val.str) != 0) {
+                ESP_LOGW(TAG, "[VERIFY_FAIL] device=%s id=%s reason=string_mismatch",
+                         tx->device_id, change->setting_id);
                 return false;
             }
             break;
@@ -279,8 +331,12 @@ void device_settings_on_capability(const char *device_id,
 
     if (!supported) {
         rec->schema_state = DS_SCHEMA_UNSUPPORTED;
+        uint32_t current_schema_rev = rec->schema_rev;
+        uint32_t current_config_rev = rec->config_rev;
         ESP_LOGI(TAG, "[%s] [CAPABILITY] supported=0", device_id);
         unlock();
+        publish_settings_state(device_id, GW_SETTINGS_EVENT_STATE_UNSUPPORTED,
+                               current_schema_rev, current_config_rev);
         return;
     }
 
@@ -289,11 +345,18 @@ void device_settings_on_capability(const char *device_id,
     rec->advertised_schema_rev = schema_revision;
     rec->schema_state = needs_describe ? DS_SCHEMA_DISCOVERING
                                        : DS_SCHEMA_READY;
+    uint32_t current_config_rev = rec->config_rev;
     ESP_LOGI(TAG, "[%s] [CAPABILITY] supported=1 schema_rev=%u cached_rev=%lu action=%s",
              device_id, (unsigned)schema_revision,
              (unsigned long)rec->schema_rev,
              needs_describe ? "DESCRIBE" : "READ");
     unlock();
+
+    publish_settings_state(device_id,
+                           needs_describe ? GW_SETTINGS_EVENT_STATE_DISCOVERING
+                                          : GW_SETTINGS_EVENT_STATE_READING,
+                           schema_revision, current_config_rev);
+    publish_transaction_reconnecting(device_id);
 
     esp_err_t err = needs_describe
                         ? device_settings_describe(device_id, NULL, NULL)
@@ -301,6 +364,8 @@ void device_settings_on_capability(const char *device_id,
     if (err != ESP_OK) {
         ESP_LOGW(TAG, "[%s] capability action failed: %s", device_id,
                  esp_err_to_name(err));
+        publish_settings_state(device_id, GW_SETTINGS_EVENT_STATE_ERROR,
+                               schema_revision, current_config_rev);
     }
 }
 
@@ -377,9 +442,11 @@ void device_settings_reconcile(const char *device_id)
              (unsigned long)old_rev);
 
     ds_tx_result_t outcome;
+    bool publish_verifying = false;
 
     if (current_rev == expected_rev) {
         tx->state = DS_TX_VERIFYING;
+        publish_verifying = true;
         ESP_LOGI(TAG, "[VERIFY_BEGIN] device=%s revision=%lu",
                  device_id, (unsigned long)current_rev);
         if (reconciliation_values_match(rec, tx)) {
@@ -414,14 +481,30 @@ void device_settings_reconcile(const char *device_id)
     rec->pending_reconciliation = false;
 
     /* Resolve the transaction. */
-    tx->state = (outcome == DS_TX_RESULT_OK) ? DS_TX_SUCCEEDED
-                                              : DS_TX_FAILED;
+    gateway_event_t tx_event = {
+        .type = GW_EVENT_SETTINGS_TRANSACTION,
+        .transaction_id = tx->transaction_id,
+        .expected_revision = tx->expected_config_rev,
+        .new_revision = tx->new_config_rev,
+        .progress_current = tx->next_change_index,
+        .progress_total = tx->change_count,
+        .settings_tx_state = (outcome == DS_TX_RESULT_OK) ?
+            GW_SETTINGS_TX_SUCCEEDED :
+            (outcome == DS_TX_RESULT_DEVICE_CONFLICT ?
+                GW_SETTINGS_TX_CONFLICT : GW_SETTINGS_TX_FAILED),
+    };
+    strlcpy(tx_event.device_id, tx->device_id, sizeof(tx_event.device_id));
+    gateway_event_t verifying_event = tx_event;
+    verifying_event.settings_tx_state = GW_SETTINGS_TX_VERIFYING;
     ds_tx_completion_fn cb = tx->completion;
     void *ctx = tx->context;
     uint32_t rev = rec->config_rev;
 
     /* Release lock before freeing tx (tx_free may access record). */
     unlock();
+
+    if (publish_verifying) gateway_events_publish(&verifying_event);
+    gateway_events_publish(&tx_event);
 
     /* Store result in registry and free. */
     extern void ds_tx_free(ds_transaction_t *tx);

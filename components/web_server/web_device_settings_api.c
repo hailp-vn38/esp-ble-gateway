@@ -227,6 +227,8 @@ static esp_err_t settings_put_handler(httpd_req_t *request)
         return web_send_api_error_code(request, "400 Bad Request",
                                        "Missing device_id", "invalid_request");
     }
+    char device_id_copy[GW_MSG_DEVICE_ID_LEN];
+    strlcpy(device_id_copy, device_id, sizeof(device_id_copy));
 
     /* Check device exists. */
     device_entry_t entry;
@@ -374,9 +376,10 @@ static esp_err_t settings_put_handler(httpd_req_t *request)
     }
 
     /* Submit async save. */
-    esp_err_t err = device_settings_save(device_id, changes,
+    uint64_t operation_id = 0;
+    esp_err_t err = device_settings_save(device_id_copy, changes,
                                          (uint16_t)valid_count,
-                                         expected_rev, NULL, NULL);
+                                         expected_rev, &operation_id, NULL, NULL);
     if (err == ESP_ERR_INVALID_STATE) {
         return web_send_api_error_code(request, "409 Conflict",
                                        "Active transaction in progress",
@@ -400,7 +403,11 @@ static esp_err_t settings_put_handler(httpd_req_t *request)
                                   "Out of memory");
     }
     cJSON_AddBoolToObject(resp, "success", true);
-    cJSON_AddStringToObject(resp, "operation_id", device_id);
+    char operation_id_text[24];
+    snprintf(operation_id_text, sizeof(operation_id_text), "%" PRIu64 "",
+             operation_id);
+    cJSON_AddStringToObject(resp, "device_id", device_id_copy);
+    cJSON_AddStringToObject(resp, "operation_id", operation_id_text);
     cJSON_AddStringToObject(resp, "state", "queued");
 
     httpd_resp_set_status(request, "202 Accepted");

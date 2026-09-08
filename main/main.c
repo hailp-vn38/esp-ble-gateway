@@ -277,7 +277,9 @@ void app_main(void)
         ESP_LOGE(TAG, "Device schema manager initialization failed");
         return;
     }
-    if (device_schema_register_commit_listener3(
+    /* Settings reconciliation must reserve its READ before best-effort
+     * feature-state seeding starts commands for the same device. */
+    if (device_schema_register_commit_listener2(
             on_schema_commit_for_settings, NULL) != ESP_OK) {
         ESP_LOGE(TAG, "Settings schema listener registration failed");
         return;

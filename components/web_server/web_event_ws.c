@@ -68,6 +68,24 @@ static void unlock_ws(void)
     portEXIT_CRITICAL(&s_ws.lock);
 }
 
+static const char *settings_tx_state_name(uint8_t state)
+{
+    static const char *const names[] = {
+        "queued", "validating", "starting", "applying", "committing",
+        "confirming", "waiting_reboot", "reconnecting", "verifying", "succeeded",
+        "failed", "conflict", "cancelled", "outcome_unknown",
+    };
+    return state < (sizeof(names) / sizeof(names[0])) ? names[state] : "failed";
+}
+
+static const char *settings_state_name(uint8_t state)
+{
+    static const char *const names[] = {
+        "unknown", "discovering", "reading", "ready", "unsupported", "error",
+    };
+    return state < (sizeof(names) / sizeof(names[0])) ? names[state] : "unknown";
+}
+
 static int count_clients_locked(void)
 {
     int n = 0;
@@ -282,6 +300,25 @@ static int serialize_event(const gateway_event_t *ev, char *buf, size_t len)
                      "{\"seq\":%" PRIu32 ",\"type\":\"settings.changed\""
                      ",\"deviceId\":%s,\"configRevision\":%" PRIu32 "}",
                      ev->seq, esc_device, ev->config_revision);
+        break;
+    case GW_EVENT_SETTINGS_STATE:
+        n = snprintf(buf, len,
+                     "{\"seq\":%" PRIu32 ",\"type\":\"settings.state\""
+                     ",\"deviceId\":%s,\"state\":\"%s\""
+                     ",\"schemaRevision\":%" PRIu32 ",\"configRevision\":%" PRIu32 "}",
+                     ev->seq, esc_device, settings_state_name(ev->settings_state),
+                     ev->schema_revision, ev->config_revision);
+        break;
+    case GW_EVENT_SETTINGS_TRANSACTION:
+        n = snprintf(buf, len,
+                     "{\"seq\":%" PRIu32 ",\"type\":\"settings.transaction\""
+                     ",\"deviceId\":%s,\"operationId\":\"%" PRIu64 "\""
+                     ",\"state\":\"%s\",\"current\":%u,\"total\":%u"
+                     ",\"expectedRevision\":%" PRIu32 ",\"newRevision\":%" PRIu32 "}",
+                     ev->seq, esc_device, ev->transaction_id,
+                     settings_tx_state_name(ev->settings_tx_state),
+                     ev->progress_current, ev->progress_total,
+                     ev->expected_revision, ev->new_revision);
         break;
     default:
         return -1;

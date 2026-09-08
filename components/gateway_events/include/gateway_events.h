@@ -21,6 +21,8 @@ typedef enum {
     GW_EVENT_DEVICE_RENAMED,
     GW_EVENT_DEVICE_REMOVED,
     GW_EVENT_SETTINGS_CHANGED,    /* settings values/state changed */
+    GW_EVENT_SETTINGS_STATE,
+    GW_EVENT_SETTINGS_TRANSACTION,
 } gateway_event_type_t;
 
 typedef enum {
@@ -28,6 +30,33 @@ typedef enum {
     GW_EVENT_VALUE_BOOL,
     GW_EVENT_VALUE_INT,
 } gateway_event_value_kind_t;
+
+typedef enum {
+    GW_SETTINGS_EVENT_STATE_UNKNOWN = 0,
+    GW_SETTINGS_EVENT_STATE_DISCOVERING,
+    GW_SETTINGS_EVENT_STATE_READING,
+    GW_SETTINGS_EVENT_STATE_READY,
+    GW_SETTINGS_EVENT_STATE_UNSUPPORTED,
+    GW_SETTINGS_EVENT_STATE_ERROR,
+} gateway_settings_event_state_t;
+
+/* Public wire states for the settings.transaction WebSocket event. */
+typedef enum {
+    GW_SETTINGS_TX_QUEUED = 0,
+    GW_SETTINGS_TX_VALIDATING,
+    GW_SETTINGS_TX_STARTING,
+    GW_SETTINGS_TX_APPLYING,
+    GW_SETTINGS_TX_COMMITTING,
+    GW_SETTINGS_TX_CONFIRMING,
+    GW_SETTINGS_TX_WAITING_REBOOT,
+    GW_SETTINGS_TX_RECONNECTING,
+    GW_SETTINGS_TX_VERIFYING,
+    GW_SETTINGS_TX_SUCCEEDED,
+    GW_SETTINGS_TX_FAILED,
+    GW_SETTINGS_TX_CONFLICT,
+    GW_SETTINGS_TX_CANCELLED,
+    GW_SETTINGS_TX_OUTCOME_UNKNOWN,
+} gateway_settings_tx_state_t;
 
 /* ── Event struct (fixed-size, no heap allocation) ────────────────── */
 
@@ -46,6 +75,14 @@ typedef struct {
 
     uint32_t schema_revision;
     uint32_t config_revision;    /* for settings change events */
+    uint64_t transaction_id;
+    uint32_t expected_revision;
+    uint32_t new_revision;
+    uint16_t progress_current;
+    uint16_t progress_total;
+    uint8_t settings_state;
+    uint8_t settings_tx_state;
+    uint8_t settings_tx_result;
     int64_t updated_at_ms;
 } gateway_event_t;
 

@@ -370,6 +370,7 @@ esp_err_t device_settings_save(const char *device_id,
                                const ds_change_request_t *changes,
                                uint16_t change_count,
                                uint32_t expected_config_rev,
+                               uint64_t *out_transaction_id,
                                ds_tx_completion_fn completion,
                                void *context);
 
@@ -392,6 +393,8 @@ esp_err_t device_settings_worker_init(void);
 void      device_settings_worker_deinit(void);
 void      device_settings_worker_submit(void);
 void      device_settings_worker_on_disconnect(const char *device_id);
+void      device_settings_worker_on_values_complete(const char *device_id,
+                                                     bool success);
 void      device_settings_protocol_on_disconnect(const char *device_id);
 
 /* ── Transaction internals (exposed for testing) ─────────────────── */

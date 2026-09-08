@@ -7,6 +7,7 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/timers.h"
 #include "gw_settings_view.h"
+#include "gateway_events.h"
 #include "memory_policy.h"
 
 static const char *TAG = "ds_tx";
@@ -15,6 +16,47 @@ static const char *TAG = "ds_tx";
 
 static ds_transaction_t s_txns[DEVICE_SETTINGS_MAX_DEVICES];
 static uint64_t s_next_transaction_id;
+
+static uint8_t ws_tx_state(ds_tx_state_t state)
+{
+    switch (state) {
+    case DS_TX_IDLE: return GW_SETTINGS_TX_QUEUED;
+    case DS_TX_PREVALIDATING: return GW_SETTINGS_TX_VALIDATING;
+    case DS_TX_BEGIN_SENT: return GW_SETTINGS_TX_STARTING;
+    case DS_TX_SET_SENT: return GW_SETTINGS_TX_APPLYING;
+    case DS_TX_COMMIT_SENT: return GW_SETTINGS_TX_COMMITTING;
+    case DS_TX_CONFIRM_SENT: return GW_SETTINGS_TX_CONFIRMING;
+    case DS_TX_WAITING_REBOOT: return GW_SETTINGS_TX_WAITING_REBOOT;
+    case DS_TX_VERIFYING: return GW_SETTINGS_TX_VERIFYING;
+    case DS_TX_SUCCEEDED: return GW_SETTINGS_TX_SUCCEEDED;
+    case DS_TX_CONFLICT: return GW_SETTINGS_TX_CONFLICT;
+    case DS_TX_CANCELLED: return GW_SETTINGS_TX_CANCELLED;
+    case DS_TX_OUTCOME_UNKNOWN: return GW_SETTINGS_TX_OUTCOME_UNKNOWN;
+    default: return GW_SETTINGS_TX_FAILED;
+    }
+}
+
+static void publish_tx(const ds_transaction_t *tx)
+{
+    if (tx == NULL || !tx->active) return;
+    gateway_event_t ev = { .type = GW_EVENT_SETTINGS_TRANSACTION };
+    strlcpy(ev.device_id, tx->device_id, sizeof(ev.device_id));
+    ev.transaction_id = tx->transaction_id;
+    ev.expected_revision = tx->expected_config_rev;
+    ev.new_revision = tx->new_config_rev;
+    ev.progress_current = tx->next_change_index;
+    ev.progress_total = tx->change_count;
+    ev.settings_tx_state = ws_tx_state(tx->state);
+    gateway_events_publish(&ev);
+}
+
+static void transition_tx(ds_transaction_t *tx, ds_tx_state_t state)
+{
+    if (tx == NULL) return;
+    if (tx->state == state) return;
+    tx->state = state;
+    publish_tx(tx);
+}
 
 /* ── Result registry — last completed result per device ────────────────
  * Stores the outcome of the most recent completed transaction so the
@@ -104,6 +146,11 @@ static void ds_tx_complete(ds_transaction_t *tx, ds_tx_result_t result,
                            uint32_t config_revision)
 {
     if (tx == NULL) return;
+    if (result == DS_TX_RESULT_OK) transition_tx(tx, DS_TX_SUCCEEDED);
+    else if (result == DS_TX_RESULT_DEVICE_CONFLICT) transition_tx(tx, DS_TX_CONFLICT);
+    else if (result == DS_TX_RESULT_CANCELLED) transition_tx(tx, DS_TX_CANCELLED);
+    else if (result == DS_TX_RESULT_OUTCOME_UNKNOWN) transition_tx(tx, DS_TX_OUTCOME_UNKNOWN);
+    else transition_tx(tx, DS_TX_FAILED);
     device_settings_tx_store_result(tx->device_id, result, config_revision);
     ds_tx_completion_fn cb = tx->completion;
     void *ctx = tx->context;
@@ -160,7 +207,6 @@ static void reconciliation_timeout_cb(TimerHandle_t timer)
         rec->pending_reconciliation = false;
     }
 
-    tx->state = DS_TX_FAILED;
     ds_tx_complete(tx, DS_TX_RESULT_OUTCOME_UNKNOWN, 0);
 }
 
@@ -261,7 +307,7 @@ static void submit_next_command(ds_transaction_t *tx)
     ds_device_record_t *rec = device_settings_find_record(tx->device_id);
     if (rec == NULL || rec->schema == NULL) {
         ESP_LOGE(TAG, "[%s] no schema for command dispatch", tx->device_id);
-        tx->state = DS_TX_FAILED;
+        transition_tx(tx, DS_TX_FAILED);
         ds_tx_complete(tx, DS_TX_RESULT_INTERNAL, 0);
         return;
     }
@@ -300,7 +346,7 @@ static void submit_next_command(ds_transaction_t *tx)
             break;
         }
 
-        tx->state = DS_TX_SET_SENT;
+        transition_tx(tx, DS_TX_SET_SENT);
         ESP_LOGI(TAG, "[TX_SET] device=%s tx_id=%llu sequence=%u/%u id=%s",
                  tx->device_id,
                  (unsigned long long)tx->transaction_id,
@@ -313,7 +359,7 @@ static void submit_next_command(ds_transaction_t *tx)
         if (err != ESP_OK) {
             ESP_LOGE(TAG, "[%s] SET submit failed: %s",
                      tx->device_id, esp_err_to_name(err));
-            tx->state = DS_TX_FAILED;
+            transition_tx(tx, DS_TX_FAILED);
             ds_tx_complete(tx, DS_TX_RESULT_INTERNAL, 0);
         }
         return;
@@ -327,7 +373,7 @@ static void submit_next_command(ds_transaction_t *tx)
     req.settings.has_transaction_id = true;
     req.settings.transaction_id = tx->transaction_id;
 
-    tx->state = DS_TX_COMMIT_SENT;
+    transition_tx(tx, DS_TX_COMMIT_SENT);
     ESP_LOGI(TAG, "[TX_COMMIT] device=%s tx_id=%llu", tx->device_id,
              (unsigned long long)tx->transaction_id);
 
@@ -336,7 +382,7 @@ static void submit_next_command(ds_transaction_t *tx)
     if (err != ESP_OK) {
         ESP_LOGE(TAG, "[%s] COMMIT submit failed: %s",
                  tx->device_id, esp_err_to_name(err));
-        tx->state = DS_TX_FAILED;
+        transition_tx(tx, DS_TX_FAILED);
         ds_tx_complete(tx, DS_TX_RESULT_INTERNAL, 0);
     }
 }
@@ -351,7 +397,7 @@ static void on_cmd_complete(const device_command_result_t *result,
 
     if (result == NULL) {
         ESP_LOGE(TAG, "[%s] cmd callback with NULL result", tx->device_id);
-        tx->state = DS_TX_FAILED;
+        transition_tx(tx, DS_TX_FAILED);
         ds_tx_complete(tx, DS_TX_RESULT_INTERNAL, 0);
         return;
     }
@@ -363,6 +409,7 @@ static void on_cmd_complete(const device_command_result_t *result,
             submit_next_command(tx);
         } else if (tx->state == DS_TX_SET_SENT) {
             tx->next_change_index++;
+            publish_tx(tx);
             submit_next_command(tx);
         } else if (tx->state == DS_TX_COMMIT_SENT) {
             /* COMMIT ACK received — transition to WAITING_REBOOT.
@@ -384,16 +431,16 @@ static void on_cmd_complete(const device_command_result_t *result,
             confirm.settings.transaction_id = tx->transaction_id;
             confirm.settings.has_new_revision = true;
             confirm.settings.new_revision = tx->new_config_rev;
-            tx->state = DS_TX_CONFIRM_SENT;
+            transition_tx(tx, DS_TX_CONFIRM_SENT);
             ESP_LOGI(TAG, "[TX_CONFIRM] device=%s tx_id=%llu new_config_rev=%lu",
                      tx->device_id, (unsigned long long)tx->transaction_id,
                      (unsigned long)tx->new_config_rev);
             if (device_command_service_submit(&confirm, on_cmd_complete, tx) != ESP_OK) {
-                tx->state = DS_TX_FAILED;
+                transition_tx(tx, DS_TX_FAILED);
                 ds_tx_complete(tx, DS_TX_RESULT_INTERNAL, 0);
             }
         } else if (tx->state == DS_TX_CONFIRM_SENT) {
-            tx->state = DS_TX_WAITING_REBOOT;
+            transition_tx(tx, DS_TX_WAITING_REBOOT);
             DS_DIAG_INC(tx_success);
             ESP_LOGI(TAG, "[WAIT_REBOOT] device=%s tx_id=%llu new_config_rev=%lu",
                      tx->device_id, (unsigned long long)tx->transaction_id,
@@ -416,12 +463,12 @@ static void on_cmd_complete(const device_command_result_t *result,
     case DEVICE_CMD_STATUS_REJECTED:
         ESP_LOGW(TAG, "[%s] REJECTED in state %d", tx->device_id, tx->state);
         if (tx->state == DS_TX_BEGIN_SENT) {
-            tx->state = DS_TX_CONFLICT;
+            transition_tx(tx, DS_TX_CONFLICT);
             DS_DIAG_INC(tx_conflict);
             ds_tx_complete(tx, DS_TX_RESULT_DEVICE_CONFLICT, 0);
             break;
         }
-        tx->state = DS_TX_FAILED;
+        transition_tx(tx, DS_TX_FAILED);
         DS_DIAG_INC(tx_fail);
         ds_tx_complete(tx, DS_TX_RESULT_DEVICE_REJECTED, 0);
         break;
@@ -429,7 +476,7 @@ static void on_cmd_complete(const device_command_result_t *result,
     case DEVICE_CMD_STATUS_BUSY:
         /* Device was busy — could retry, but for now fail. */
         ESP_LOGW(TAG, "[%s] BUSY in state %d", tx->device_id, tx->state);
-        tx->state = DS_TX_FAILED;
+        transition_tx(tx, DS_TX_FAILED);
         DS_DIAG_INC(tx_fail);
         ds_tx_complete(tx, DS_TX_RESULT_DEVICE_REJECTED, 0);
         break;
@@ -441,7 +488,6 @@ static void on_cmd_complete(const device_command_result_t *result,
             ESP_LOGW(TAG, "[%s] TIMEOUT during COMMIT — OUTCOME_UNKNOWN",
                      tx->device_id);
             DS_DIAG_INC(outcome_unknown);
-            tx->state = DS_TX_OUTCOME_UNKNOWN;
             ds_device_record_t *rec =
                 device_settings_find_record(tx->device_id);
             if (rec != NULL) {
@@ -449,10 +495,10 @@ static void on_cmd_complete(const device_command_result_t *result,
                 rec->reconciliation_expected_rev = tx->expected_config_rev + 1;
                 rec->reconciliation_old_rev = tx->expected_config_rev;
             }
-            tx->state = DS_TX_WAITING_REBOOT;
+            transition_tx(tx, DS_TX_WAITING_REBOOT);
             start_reconciliation_timer(tx);
         } else {
-            tx->state = DS_TX_FAILED;
+            transition_tx(tx, DS_TX_FAILED);
             DS_DIAG_INC(tx_fail);
             ds_tx_complete(tx, DS_TX_RESULT_TIMEOUT, 0);
         }
@@ -466,7 +512,6 @@ static void on_cmd_complete(const device_command_result_t *result,
             ESP_LOGW(TAG, "[%s] DISCONNECT during COMMIT — OUTCOME_UNKNOWN",
                      tx->device_id);
             DS_DIAG_INC(outcome_unknown);
-            tx->state = DS_TX_OUTCOME_UNKNOWN;
             ds_device_record_t *rec =
                 device_settings_find_record(tx->device_id);
             if (rec != NULL) {
@@ -474,10 +519,10 @@ static void on_cmd_complete(const device_command_result_t *result,
                 rec->reconciliation_expected_rev = tx->expected_config_rev + 1;
                 rec->reconciliation_old_rev = tx->expected_config_rev;
             }
-            tx->state = DS_TX_WAITING_REBOOT;
+            transition_tx(tx, DS_TX_WAITING_REBOOT);
             start_reconciliation_timer(tx);
         } else {
-            tx->state = DS_TX_FAILED;
+            transition_tx(tx, DS_TX_FAILED);
             DS_DIAG_INC(tx_fail);
             ds_tx_complete(tx, DS_TX_RESULT_DISCONNECTED, 0);
         }
@@ -485,7 +530,7 @@ static void on_cmd_complete(const device_command_result_t *result,
 
     case DEVICE_CMD_STATUS_CANCELLED:
         ESP_LOGI(TAG, "[%s] CANCELLED", tx->device_id);
-        tx->state = DS_TX_CANCELLED;
+        transition_tx(tx, DS_TX_CANCELLED);
         DS_DIAG_INC(tx_fail);
         ds_tx_complete(tx, DS_TX_RESULT_CANCELLED, 0);
         break;
@@ -493,7 +538,7 @@ static void on_cmd_complete(const device_command_result_t *result,
     default:
         ESP_LOGW(TAG, "[%s] UNEXPECTED status=%d in state %d",
                  tx->device_id, result->status, tx->state);
-        tx->state = DS_TX_FAILED;
+        transition_tx(tx, DS_TX_FAILED);
         ds_tx_complete(tx, DS_TX_RESULT_INTERNAL, 0);
         break;
     }
@@ -505,6 +550,7 @@ esp_err_t device_settings_save(const char *device_id,
                                const ds_change_request_t *changes,
                                uint16_t change_count,
                                uint32_t expected_config_rev,
+                               uint64_t *out_transaction_id,
                                ds_tx_completion_fn completion,
                                void *context)
 {
@@ -540,6 +586,7 @@ esp_err_t device_settings_save(const char *device_id,
 
     strlcpy(tx->device_id, device_id, sizeof(tx->device_id));
     tx->transaction_id = next_transaction_id();
+    if (out_transaction_id != NULL) *out_transaction_id = tx->transaction_id;
     tx->expected_config_rev = expected_config_rev;
 
     /* Deep-copy changes into PSRAM. */
@@ -555,8 +602,10 @@ esp_err_t device_settings_save(const char *device_id,
     tx->completion = completion;
     tx->context = context;
 
+    publish_tx(tx); /* queued, before validation/dispatch begins */
+
     /* Prevalidate all changes against schema. */
-    tx->state = DS_TX_PREVALIDATING;
+    transition_tx(tx, DS_TX_PREVALIDATING);
     for (uint16_t i = 0; i < change_count; i++) {
         if (!prevalidate_change(rec->schema, &tx->changes[i])) {
             ESP_LOGW(TAG, "[%s] prevalidate FAIL at change %u id='%s'",
@@ -581,7 +630,7 @@ esp_err_t device_settings_save(const char *device_id,
     req.settings.has_expected_revision = true;
     req.settings.expected_revision = expected_config_rev;
 
-    tx->state = DS_TX_BEGIN_SENT;
+    transition_tx(tx, DS_TX_BEGIN_SENT);
     esp_err_t err = device_command_service_submit(
         &req, on_cmd_complete, tx);
     if (err != ESP_OK) {

@@ -339,8 +339,14 @@ void schema_discovery_handle_ready(const char *device_id)
     }
     if (record->has_committed &&
         record->committed.state == DEVICE_SCHEMA_STATE_READY) {
+        const uint32_t revision = record->committed.revision;
         ESP_LOGI(TAG, "[%s] SCHEMA_READY_CACHE_HIT", device_id);
         schema_runtime_unlock();
+        /* A cache hit has no incoming stream and therefore no normal commit
+         * event.  Listeners (including Device Settings) still need the
+         * persisted capability metadata after a Gateway reboot.  This runs
+         * in the schema worker, not the NimBLE host callback. */
+        schema_runtime_notify_commit(device_id, revision);
         return;
     }
     if (record->operation_state == SCHEMA_OP_QUEUED ||

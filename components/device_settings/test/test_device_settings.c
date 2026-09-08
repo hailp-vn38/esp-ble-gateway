@@ -526,7 +526,7 @@ TEST_CASE("DS-TX-001..015 canonical BEGIN SET COMMIT CONFIRM flow",
     ds_change_request_t change = { .type = DS_TYPE_BOOL, .bool_val = true };
     strlcpy(change.setting_id, "setting", sizeof(change.setting_id));
     TEST_ASSERT_EQUAL(ESP_OK, device_settings_save("tx-g7", &change, 1, 7,
-                                                    tx_completion, NULL));
+                                                   NULL, tx_completion, NULL));
     vTaskDelay(pdMS_TO_TICKS(40));
     ds_transaction_t *tx = ds_tx_find("tx-g7");
     TEST_ASSERT_NOT_NULL(tx);
@@ -570,7 +570,7 @@ TEST_CASE("DS-TX-008..012 local validation rejects readonly range and enum",
     ds_change_request_t change = { .type = DS_TYPE_INT, .int_val = 105 };
     strlcpy(change.setting_id, "setting", sizeof(change.setting_id));
     TEST_ASSERT_EQUAL(ESP_ERR_INVALID_ARG,
-                      device_settings_save("tx-invalid", &change, 1, 7, NULL, NULL));
+                      device_settings_save("tx-invalid", &change, 1, 7, NULL, NULL, NULL));
     device_settings_reset_for_test();
     device_settings_deinit();
 }
@@ -656,6 +656,51 @@ TEST_CASE("DS-WORK-002: READ submitted via worker",
                              mock_cmd_last_command);
 
     /* Cleanup. */
+    rec->schema = NULL;
+    device_settings_worker_deinit();
+    device_settings_worker_reset_for_test();
+    device_settings_operation_reset_for_test();
+    device_command_service_deinit();
+    device_command_service_set_hooks(NULL);
+    device_settings_reset_for_test();
+    device_settings_deinit();
+}
+
+TEST_CASE("DS-WORK-002A: READ waits for committed values stream",
+          "[device_settings][g3]")
+{
+    device_settings_worker_deinit();
+    device_settings_worker_reset_for_test();
+    device_settings_operation_reset_for_test();
+    device_settings_deinit();
+    device_settings_reset_for_test();
+    reset_mock_cmd();
+
+    device_command_service_set_hooks(&mock_cmd_hooks);
+    TEST_ASSERT_EQUAL(ESP_OK, device_command_service_init());
+    TEST_ASSERT_EQUAL(ESP_OK, device_settings_init());
+    TEST_ASSERT_EQUAL(ESP_OK, device_settings_worker_init());
+
+    ds_device_record_t *rec =
+        device_settings_find_or_create_record("wk002a");
+    TEST_ASSERT_NOT_NULL(rec);
+    rec->schema_state = DS_SCHEMA_READY;
+    rec->schema_rev = 1;
+    rec->schema = (ds_schema_t *)(uintptr_t)1;
+
+    device_settings_get("wk002a", NULL, NULL);
+    vTaskDelay(pdMS_TO_TICKS(100));
+    uint32_t request_id = mock_cmd_last_request_id;
+    gw_message_t ack = make_settings_ack("wk002a", GW_SETTINGS_CMD_READ_SETTINGS,
+                                         request_id);
+    device_command_service_on_notify("wk002a", &ack);
+    vTaskDelay(pdMS_TO_TICKS(50));
+    TEST_ASSERT_FALSE(device_settings_worker_is_idle_for_test());
+
+    device_settings_worker_on_values_complete("wk002a", true);
+    vTaskDelay(pdMS_TO_TICKS(50));
+    TEST_ASSERT_TRUE(device_settings_worker_is_idle_for_test());
+
     rec->schema = NULL;
     device_settings_worker_deinit();
     device_settings_worker_reset_for_test();
@@ -1551,6 +1596,10 @@ TEST_CASE("DS-VAL-001..004: BOOL INT STRING ENUM decode key40",
     TEST_ASSERT_NOT_NULL(values);
     TEST_ASSERT_EQUAL_UINT32(11, values->config_revision);
     TEST_ASSERT_EQUAL_UINT16(4, values->value_count);
+    TEST_ASSERT_EQUAL_STRING("enabled", ds_string_pool_get(
+        &values->string_pool, values->values[0].id_off));
+    TEST_ASSERT_EQUAL_STRING("level", ds_string_pool_get(
+        &values->string_pool, values->values[1].id_off));
     TEST_ASSERT_TRUE(values->values[0].bool_val);
     TEST_ASSERT_EQUAL_INT32(-9, values->values[1].int_val);
     TEST_ASSERT_EQUAL_STRING("gateway", ds_string_pool_get(

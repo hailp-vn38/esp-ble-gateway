@@ -27,6 +27,21 @@ static char s_values_owner[GW_MSG_DEVICE_ID_LEN];
 static uint32_t s_values_request_id;
 static uint32_t s_values_config_revision;
 
+static void publish_settings_state(const char *device_id,
+                                   gateway_settings_event_state_t state,
+                                   uint32_t schema_revision,
+                                   uint32_t config_revision)
+{
+    gateway_event_t ev = {
+        .type = GW_EVENT_SETTINGS_STATE,
+        .schema_revision = schema_revision,
+        .config_revision = config_revision,
+        .settings_state = state,
+    };
+    strlcpy(ev.device_id, device_id, sizeof(ev.device_id));
+    gateway_events_publish(&ev);
+}
+
 /* ── settings_begin handler ────────────────────────────────────────── */
 
 static void schema_builder_discard(void)
@@ -52,6 +67,8 @@ static void schema_reject(const char *device_id, ds_device_record_t *rec,
         rec->staging_received_count = 0;
         schema_builder_discard();
         DS_DIAG_INC(discovery_schema_fail);
+        publish_settings_state(device_id, GW_SETTINGS_EVENT_STATE_ERROR,
+                               rec->schema_rev, rec->config_rev);
     }
 }
 
@@ -120,6 +137,8 @@ static void handle_begin(const char *device_id, const gw_message_t *msg)
         rec->schema_state = rec->schema != NULL ? DS_SCHEMA_READY
                                                 : DS_SCHEMA_ERROR;
         DS_DIAG_INC(discovery_schema_fail);
+        publish_settings_state(device_id, GW_SETTINGS_EVENT_STATE_ERROR,
+                               rec->schema_rev, rec->config_rev);
         return;
     }
     s_schema_builder.schema_revision = msg->has_settings_schema_revision
@@ -134,6 +153,8 @@ static void handle_begin(const char *device_id, const gw_message_t *msg)
     rec->schema_stream_active = true;
     rec->staging_expected_count = msg->total;
     rec->staging_received_count = 0;
+    publish_settings_state(device_id, GW_SETTINGS_EVENT_STATE_DISCOVERING,
+                           s_schema_builder.schema_revision, rec->config_rev);
 
     ESP_LOGI(TAG, "[SCHEMA_BEGIN] device_id=%s request_id=%lu command=%s total=%u revision=%u",
              device_id, (unsigned long)msg->request_id, msg->command,
@@ -379,6 +400,9 @@ static void handle_end(const char *device_id, const gw_message_t *msg)
              (unsigned long)schema->schema_revision);
     schema_builder_discard();
 
+    publish_settings_state(device_id, GW_SETTINGS_EVENT_STATE_READING,
+                           schema->schema_revision, rec->config_rev);
+
     /* READ is queued by the worker after DESCRIBE ACK completes.
      * No auto-GET here — the worker owns the operation lifecycle. */
 }
@@ -420,6 +444,9 @@ static void values_reject(const char *device_id, ds_device_record_t *rec,
         rec->staging_received_count = 0;
         values_builder_discard();
         DS_DIAG_INC(discovery_values_fail);
+        publish_settings_state(device_id, GW_SETTINGS_EVENT_STATE_ERROR,
+                               rec->schema_rev, rec->config_rev);
+        device_settings_worker_on_values_complete(device_id, false);
     }
 }
 
@@ -522,6 +549,8 @@ static void handle_values_begin(const char *device_id,
     rec->staging_expected_count = msg->total;
     rec->staging_received_count = 0;
     rec->staging_snapshot_id = 0;
+    publish_settings_state(device_id, GW_SETTINGS_EVENT_STATE_READING,
+                           rec->schema_rev, rec->config_rev);
     ESP_LOGI(TAG, "[VALUES_BEGIN] device_id=%s request_id=%lu total=%u config_rev=%lu",
              device_id, (unsigned long)msg->request_id, (unsigned)msg->total,
              (unsigned long)msg->capability_revision);
@@ -564,10 +593,18 @@ static void handle_values_value(const char *device_id,
     }
 
     ds_value_entry_t entry = {
-        .id_off = desc->id_off,
         .type = msg->setting_type,
         .has_value = (desc->flags & DS_FLAG_SECRET) == 0,
     };
+
+    /* Values owns a separate string pool from the schema.  Persist the
+     * setting ID in that pool so REST/UI lookup can match each value to its
+     * descriptor after both immutable snapshots are committed. */
+    if (ds_string_pool_add(&s_values_builder.string_pool, msg->setting_id,
+                           &entry.id_off) != ESP_OK) {
+        values_reject(device_id, rec, "id_string_pool_exhausted");
+        return;
+    }
 
     switch (msg->setting_type) {
     case DS_TYPE_BOOL:
@@ -687,6 +724,18 @@ static void handle_values_end(const char *device_id,
              (unsigned long)values->config_revision);
     values_builder_discard();
 
+    device_settings_worker_on_values_complete(device_id, true);
+
+    /* Reconciliation publishes terminal settings.transaction before the
+     * snapshot notifications below.  The browser must see completion before
+     * settings.changed prompts it to reload the REST snapshot. */
+    if (rec->pending_reconciliation) {
+        device_settings_reconcile(device_id);
+    }
+
+    publish_settings_state(device_id, GW_SETTINGS_EVENT_STATE_READY,
+                           rec->schema_rev, values->config_revision);
+
     /* Publish settings changed event. */
     {
         gateway_event_t ev = {
@@ -697,10 +746,6 @@ static void handle_values_end(const char *device_id,
         gateway_events_publish(&ev);
     }
 
-    /* If a reconciliation is pending (post-COMMIT reboot), verify now. */
-    if (rec->pending_reconciliation) {
-        device_settings_reconcile(device_id);
-    }
 }
 
 /* ── Public entry point ────────────────────────────────────────────── */

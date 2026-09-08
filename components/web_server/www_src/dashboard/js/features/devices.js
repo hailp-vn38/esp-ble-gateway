@@ -116,6 +116,16 @@ const devices = {
                 deviceSettings.onSettingsChanged(ev);
             }
         });
+        events.on('settings.state', (ev) => {
+            if (typeof deviceSettings !== 'undefined') {
+                deviceSettings.onSettingsState(ev);
+            }
+        });
+        events.on('settings.transaction', (ev) => {
+            if (typeof deviceSettings !== 'undefined') {
+                void deviceSettings.onTransaction(ev);
+            }
+        });
 
         events.on('resync:required', () => {
             this._syncFromSnapshot('resync');

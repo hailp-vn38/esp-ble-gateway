@@ -40,6 +40,9 @@ typedef struct {
     int        slot;     /* index into s_ops[] */
     uint32_t   generation;
     uint8_t    retry_count;
+    bool       read_ack_received;
+    bool       values_stream_complete;
+    bool       values_stream_success;
 } ds_active_op_t;
 
 static ds_active_op_t s_active_op;
@@ -60,6 +63,45 @@ static ds_worker_t s_worker;
 static void worker_task(void *arg);
 static void on_cmd_complete(const device_command_result_t *result,
                             void *context);
+static void worker_complete_op(int slot, ds_op_result_t result);
+
+static void complete_read_if_ready(void)
+{
+    if (!s_active_op.active || !s_active_op.read_ack_received ||
+        !s_active_op.values_stream_complete ||
+        s_ops_get_kind(s_active_op.slot) != DS_OP_GET) {
+        return;
+    }
+
+    int slot = s_active_op.slot;
+    ds_op_result_t result = s_active_op.values_stream_success
+                                ? DS_OP_RESULT_OK : DS_OP_RESULT_PROTOCOL_ERROR;
+    s_active_op.active = false;
+    worker_complete_op(slot, result);
+    ESP_LOGI(TAG, "[%s] READ completed after values stream: result=%d",
+             s_ops_get_device_id(slot), (int)result);
+}
+
+static bool retry_submit_later(int slot, esp_err_t error)
+{
+    if (s_active_op.retry_count >= DS_WORK_RETRY_MAX ||
+        s_worker.retry_timer == NULL) {
+        ESP_LOGE(TAG, "[%s] submit retry exhausted: %s",
+                 s_ops_get_device_id(slot), esp_err_to_name(error));
+        s_active_op.active = false;
+        worker_complete_op(slot, DS_OP_RESULT_INTERNAL);
+        return false;
+    }
+
+    uint32_t delay = s_retry_backoff_ms[s_active_op.retry_count++];
+    s_ops_set_state(slot, DS_OP_QUEUED);
+    ESP_LOGW(TAG, "[%s] submit deferred: %s retry=%u/%u",
+             s_ops_get_device_id(slot), esp_err_to_name(error),
+             (unsigned)s_active_op.retry_count, (unsigned)DS_WORK_RETRY_MAX);
+    xTimerChangePeriod(s_worker.retry_timer, pdMS_TO_TICKS(delay), 0);
+    xTimerStart(s_worker.retry_timer, 0);
+    return true;
+}
 
 /* ── Find first queued operation (external s_ops[] from operation.c) ─── */
 
@@ -190,12 +232,12 @@ static void on_cmd_complete(const device_command_result_t *result,
             s_active_op.advance_to_read = true;
             s_ops_set_state(slot, DS_OP_QUEUED);
         } else {
-            /* READ ACK — operation complete. */
-            ESP_LOGI(TAG, "[%s] [READ_ACK] slot=%d",
+            /* ACK only proves READ was accepted.  The immutable snapshot
+             * must be committed by settings_values_end before this GET is
+             * complete, otherwise reconciliation could succeed on stale data. */
+            s_active_op.read_ack_received = true;
+            ESP_LOGI(TAG, "[%s] [READ_ACK] slot=%d awaiting values stream",
                      device_id, slot);
-            s_active_op.active = false;
-            worker_complete_op(slot, DS_OP_RESULT_OK);
-            DS_DIAG_INC(discovery_values_success);
         }
         break;
 
@@ -295,10 +337,33 @@ static void worker_task(void *arg)
                     ESP_LOGI(TAG, "[%s] [START] READ after DESCRIBE_ACK",
                              s_ops_get_device_id(slot));
                 } else {
-                    s_active_op.active = false;
-                    worker_complete_op(slot, DS_OP_RESULT_INTERNAL);
+                    (void)retry_submit_later(slot, err);
                 }
             }
+        }
+
+        /* Retry a locally deferred submission (for example DCS's bounded
+         * pending pool briefly occupied by state seeding at reconnect). */
+        if ((bits & DS_WORK_BIT_CMD_COMPLETE) != 0 &&
+            s_active_op.active && !s_active_op.advance_to_read) {
+            int slot = s_active_op.slot;
+            if (slot >= 0 && s_ops_active[slot] &&
+                s_ops_get_state(slot) == DS_OP_QUEUED) {
+                esp_err_t err = submit_command(slot);
+                if (err == ESP_OK) {
+                    s_ops_set_state(slot, DS_OP_RUNNING);
+                    ESP_LOGI(TAG, "[%s] [RETRY] %s op=%d",
+                             s_ops_get_device_id(slot),
+                             s_ops_get_kind(slot) == DS_OP_DESCRIBE
+                                 ? "DESCRIBE" : "READ", slot);
+                } else {
+                    (void)retry_submit_later(slot, err);
+                }
+            }
+        }
+
+        if ((bits & DS_WORK_BIT_CMD_COMPLETE) != 0) {
+            complete_read_if_ready();
         }
 
         /* Find and start next queued operation (if none active). */
@@ -309,6 +374,9 @@ static void worker_task(void *arg)
                 s_active_op.slot = slot;
                 s_active_op.generation = s_ops_generation[slot];
                 s_active_op.retry_count = 0;
+                s_active_op.read_ack_received = false;
+                s_active_op.values_stream_complete = false;
+                s_active_op.values_stream_success = false;
 
                 s_ops_set_state(slot, DS_OP_RUNNING);
                 esp_err_t err = submit_command(slot);
@@ -319,8 +387,7 @@ static void worker_task(void *arg)
                                  ? "DESCRIBE" : "READ",
                              slot);
                 } else {
-                    s_active_op.active = false;
-                    worker_complete_op(slot, DS_OP_RESULT_INTERNAL);
+                    (void)retry_submit_later(slot, err);
                 }
             }
         }
@@ -443,6 +510,24 @@ void device_settings_worker_on_disconnect(const char *device_id)
     /* Signal worker to process remaining queued ops. */
     if (s_worker.events != NULL) {
         xEventGroupSetBits(s_worker.events, DS_WORK_BIT_WORK_QUEUED);
+    }
+}
+
+void device_settings_worker_on_values_complete(const char *device_id,
+                                               bool success)
+{
+    if (device_id == NULL || device_id[0] == '\0') return;
+    if (!s_active_op.active || s_active_op.slot < 0 ||
+        s_ops_get_kind(s_active_op.slot) != DS_OP_GET ||
+        strncmp(s_ops_get_device_id(s_active_op.slot), device_id,
+                GW_MSG_DEVICE_ID_LEN) != 0) {
+        return;
+    }
+
+    s_active_op.values_stream_complete = true;
+    s_active_op.values_stream_success = success;
+    if (s_worker.events != NULL) {
+        xEventGroupSetBits(s_worker.events, DS_WORK_BIT_CMD_COMPLETE);
     }
 }
 
