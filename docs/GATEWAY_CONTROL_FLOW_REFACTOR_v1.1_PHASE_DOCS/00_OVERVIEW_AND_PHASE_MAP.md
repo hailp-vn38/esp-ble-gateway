@@ -732,7 +732,7 @@ components/device_command_service/test/test_device_command_service.c
 
 ---
 
-### GCF-02 — Device Control Scheduler + lease/cancel/deadline
+### GCF-02 — Device Control Scheduler + lease/cancel/deadline ✅ DONE (2026-09-09)
 
 #### Mục tiêu
 
@@ -789,18 +789,18 @@ test/CMakeLists.txt
 
 #### Checklist
 
-- [ ] Fixed pool SMP-safe.
-- [ ] Exact-once contract implemented.
-- [ ] One inflight/device enforced.
-- [ ] Global inflight <= 4 enforced and static-asserted against DCS public capacity.
-- [ ] Scheduler device table capacity covers current 16-entry Device Store inventory.
-- [ ] Lease implemented/tested.
-- [ ] Targeted cancel implemented/tested.
-- [ ] Queue deadline implemented/tested.
-- [ ] Dedupe semantics documented/tested.
-- [ ] No long callback under scheduler lock.
-- [ ] Root/test builds pass.
-- [ ] Plan doc updated.
+- [x] Fixed pool SMP-safe.
+- [x] Exact-once contract implemented.
+- [x] One inflight/device enforced.
+- [x] Global inflight <= 4 enforced and static-asserted against DCS public capacity.
+- [x] Scheduler device table capacity covers current 16-entry Device Store inventory.
+- [x] Lease implemented/tested.
+- [x] Targeted cancel implemented/tested.
+- [x] Queue deadline implemented/tested.
+- [x] Dedupe semantics documented/tested.
+- [x] No long callback under scheduler lock.
+- [x] Root/test builds pass.
+- [x] Plan doc updated.
 
 ---
 
