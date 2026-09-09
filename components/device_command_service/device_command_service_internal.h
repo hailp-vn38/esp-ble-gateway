@@ -11,30 +11,52 @@
 #include "freertos/task.h"
 
 #define DCS_QUEUE_LEN                8
+#define DCS_URGENT_QUEUE_LEN         8
 #define DCS_TASK_STACK            5120
 #define DCS_TASK_PRIORITY         (tskIDLE_PRIORITY + 4)
-#define DCS_MAX_PENDING              4
+#define DCS_MAX_PENDING DEVICE_COMMAND_SERVICE_MAX_PENDING
 #define DCS_ACK_TIMEOUT_MS        2000
 #define DCS_DEINIT_WAIT_BUDGET_MS 5000
 
 typedef enum {
-    DCS_EVENT_SUBMIT = 0,
-    DCS_EVENT_ACK,
-    DCS_EVENT_DISCONNECT,
-    DCS_EVENT_CANCEL,
-    DCS_EVENT_SHUTDOWN,
-} dcs_event_type_t;
+    DCS_URGENT_EVENT_ACK = 0,
+    DCS_URGENT_EVENT_DISCONNECT,
+    DCS_URGENT_EVENT_CANCEL,
+    DCS_URGENT_EVENT_SHUTDOWN,
+} dcs_urgent_event_type_t;
 
 typedef struct {
-    dcs_event_type_t type;
     device_command_request_t request;
     device_command_completion_fn completion;
     void *context;
-    char ack_device_id[GW_MSG_DEVICE_ID_LEN];
-    gw_message_t ack_message;
-    char disconnect_device_id[GW_MSG_DEVICE_ID_LEN];
-    char cancel_device_id[GW_MSG_DEVICE_ID_LEN];
-} dcs_event_t;
+} dcs_submit_event_t;
+
+typedef struct {
+    device_id_t device_id;
+    uint32_t request_id;
+    device_command_t command;
+    bool accepted;
+    bool has_bool_value;
+    bool bool_value;
+    bool has_int_value;
+    int32_t int_value;
+    bool has_feature_value_bool;
+    bool feature_value_bool;
+    bool has_feature_value_int;
+    int32_t feature_value_int;
+} dcs_ack_event_t;
+
+typedef struct {
+    dcs_urgent_event_type_t type;
+    int64_t enqueued_us;
+    union {
+        dcs_ack_event_t ack;
+        device_id_t device_id;
+    } data;
+} dcs_urgent_event_t;
+
+_Static_assert(sizeof(dcs_ack_event_t) < sizeof(gw_message_t),
+               "urgent ACK must remain compact");
 
 typedef struct {
     bool in_use;
@@ -56,11 +78,20 @@ typedef struct {
 } dcs_pending_slot_t;
 
 typedef struct {
-    QueueHandle_t queue;
+    char device_id[GW_MSG_DEVICE_ID_LEN];
+    uint32_t request_id;
+    char command[GW_MSG_COMMAND_LEN];
+} dcs_completed_ack_t;
+
+typedef struct {
+    QueueHandle_t normal_queue;
+    QueueHandle_t urgent_queue;
     TaskHandle_t task;
     volatile bool running;
     volatile bool task_stopped;
     dcs_pending_slot_t pending[DCS_MAX_PENDING];
+    dcs_completed_ack_t completed_acks[DCS_MAX_PENDING];
+    uint32_t completed_ack_next;
     uint32_t next_request_id;
     device_command_service_stats_t stats;
     portMUX_TYPE stats_mux;
@@ -85,6 +116,11 @@ void dcs_pending_complete(dcs_pending_slot_t *slot,
                           const device_command_result_t *result);
 void dcs_pending_complete_status(dcs_pending_slot_t *slot,
                                  device_command_status_t status);
+void dcs_pending_note_completed_ack(const dcs_pending_slot_t *slot);
+bool dcs_pending_is_duplicate_ack(const dcs_ack_event_t *ack);
+bool dcs_urgent_enqueue(const dcs_urgent_event_t *event, TickType_t wait_ticks);
+void dcs_urgent_drain(void);
+void dcs_handle_submit(const dcs_submit_event_t *event);
 void dcs_service_task(void *arg);
 
 #endif

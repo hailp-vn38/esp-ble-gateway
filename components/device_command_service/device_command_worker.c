@@ -6,7 +6,7 @@
 #include "esp_timer.h"
 #include "gw_settings_view.h"
 
-static void complete_event(const dcs_event_t *event, device_command_status_t status)
+static void complete_event(const dcs_submit_event_t *event, device_command_status_t status)
 {
     device_command_result_t result = { .status = status };
     if (event->completion != NULL) {
@@ -14,7 +14,7 @@ static void complete_event(const dcs_event_t *event, device_command_status_t sta
     }
 }
 
-static void handle_submit(const dcs_event_t *event)
+void dcs_handle_submit(const dcs_submit_event_t *event)
 {
     const device_command_request_t *request = &event->request;
     gw_message_t wire_message;
@@ -26,8 +26,10 @@ static void handle_submit(const dcs_event_t *event)
         complete_event(event, validation);
         return;
     }
-    if (request->origin == DEVICE_CMD_ORIGIN_CONTROL &&
-        g_dcs.hooks.is_connected(request->device_id) <= 0) {
+    /* All origins fail before send when the link is down.  This makes Schema,
+     * State and Settings outcomes deterministic rather than transport-error
+     * dependent; validation above still has precedence. */
+    if (g_dcs.hooks.is_connected(request->device_id) <= 0) {
         complete_event(event, DEVICE_CMD_STATUS_NOT_CONNECTED);
         return;
     }
@@ -120,48 +122,62 @@ static void handle_submit(const dcs_event_t *event)
     dcs_stats_inc(&g_dcs.stats.submitted);
 }
 
-static void handle_ack(const dcs_event_t *event)
+static void handle_ack(const dcs_urgent_event_t *event)
 {
-    const gw_message_t *message = &event->ack_message;
-    if (!message->has_request_id || message->request_id == 0) {
+    const dcs_ack_event_t *ack = &event->data.ack;
+    dcs_stats_inc(&g_dcs.stats.ack_received);
+    if (ack->request_id == 0) {
         return;
     }
     dcs_pending_slot_t *slot =
-        dcs_pending_find_id(event->ack_device_id, message->request_id);
+        dcs_pending_find_id(ack->device_id, ack->request_id);
     if (slot == NULL) {
+        dcs_stats_inc(&g_dcs.stats.ack_unmatched);
+        if (dcs_pending_is_duplicate_ack(ack)) {
+            dcs_stats_inc(&g_dcs.stats.ack_duplicate);
+        }
         ESP_LOGI(DCS_TAG, "[ACK_UNMATCHED] device=%s request_id=%lu",
-                 event->ack_device_id, (unsigned long)message->request_id);
+                 ack->device_id, (unsigned long)ack->request_id);
         return;
     }
-    if (strcmp(slot->command, message->command) != 0) {
+    if (strcmp(slot->command, ack->command) != 0) {
         ESP_LOGW(DCS_TAG, "[ACK_CMD_MISMATCH] device=%s request_id=%lu expected=%s got=%s",
-                 event->ack_device_id, (unsigned long)message->request_id,
-                 slot->command, message->command);
+                 ack->device_id, (unsigned long)ack->request_id,
+                 slot->command, ack->command);
         return;
     }
 
+    if (event->enqueued_us > 0) {
+        uint32_t latency_us = (uint32_t)(esp_timer_get_time() - event->enqueued_us);
+        taskENTER_CRITICAL(&g_dcs.stats_mux);
+        if (latency_us > g_dcs.stats.ack_dispatch_latency_max_us) {
+            g_dcs.stats.ack_dispatch_latency_max_us = latency_us;
+        }
+        taskEXIT_CRITICAL(&g_dcs.stats_mux);
+    }
+
     ESP_LOGI(DCS_TAG, "[ACK] device=%s request_id=%lu command=%s accepted=%d",
-             event->ack_device_id, (unsigned long)message->request_id,
-             slot->command, message->bool_value);
+             ack->device_id, (unsigned long)ack->request_id,
+             slot->command, ack->accepted);
     device_command_result_t result = { .request_id = slot->request_id };
-    if (message->bool_value) {
+    if (ack->accepted) {
         result.status = DEVICE_CMD_STATUS_OK;
         result.accepted = true;
-        if (message->has_bool_value) {
+        if (ack->has_bool_value) {
             result.has_bool_value = true;
-            result.bool_value = message->bool_value != 0;
+            result.bool_value = ack->bool_value;
         }
-        if (message->has_int_value) {
+        if (ack->has_int_value) {
             result.has_int_value = true;
-            result.int_value = message->int_value;
+            result.int_value = ack->int_value;
         }
-        if (message->has_feature_value_bool) {
+        if (ack->has_feature_value_bool) {
             result.has_feature_value_bool = true;
-            result.feature_value_bool = message->feature_value_bool;
+            result.feature_value_bool = ack->feature_value_bool;
         }
-        if (message->has_feature_value_int) {
+        if (ack->has_feature_value_int) {
             result.has_feature_value_int = true;
-            result.feature_value_int = message->feature_value_int;
+            result.feature_value_int = ack->feature_value_int;
         }
         dcs_stats_inc(&g_dcs.stats.completed_ok);
     } else {
@@ -169,27 +185,28 @@ static void handle_ack(const dcs_event_t *event)
         result.accepted = false;
         dcs_stats_inc(&g_dcs.stats.completed_error);
     }
+    dcs_pending_note_completed_ack(slot);
     dcs_pending_complete(slot, &result);
 }
 
-static void handle_disconnect(const dcs_event_t *event)
+static void handle_disconnect(const dcs_urgent_event_t *event)
 {
     dcs_pending_slot_t *slot =
-        dcs_pending_find_device(event->disconnect_device_id);
+        dcs_pending_find_device(event->data.device_id);
     if (slot != NULL) {
         ESP_LOGI(DCS_TAG, "[DISCONNECT] device=%s request_id=%lu",
-                 event->disconnect_device_id, (unsigned long)slot->request_id);
+                 event->data.device_id, (unsigned long)slot->request_id);
         dcs_stats_inc(&g_dcs.stats.disconnect_count);
         dcs_pending_complete_status(slot, DEVICE_CMD_STATUS_NOT_CONNECTED);
     }
 }
 
-static void handle_cancel(const dcs_event_t *event)
+static void handle_cancel(const dcs_urgent_event_t *event)
 {
-    dcs_pending_slot_t *slot = dcs_pending_find_device(event->cancel_device_id);
+    dcs_pending_slot_t *slot = dcs_pending_find_device(event->data.device_id);
     if (slot != NULL) {
         ESP_LOGI(DCS_TAG, "[CANCEL] device=%s request_id=%lu",
-                 event->cancel_device_id, (unsigned long)slot->request_id);
+                 event->data.device_id, (unsigned long)slot->request_id);
         dcs_pending_complete_status(slot, DEVICE_CMD_STATUS_CANCELLED);
     }
 }
@@ -209,12 +226,44 @@ static void check_timeouts(void)
     }
 }
 
+void dcs_urgent_drain(void)
+{
+    dcs_urgent_event_t event;
+    while (xQueueReceive(g_dcs.urgent_queue, &event, 0) == pdTRUE) {
+        switch (event.type) {
+        case DCS_URGENT_EVENT_ACK:
+            handle_ack(&event);
+            break;
+        case DCS_URGENT_EVENT_DISCONNECT:
+            handle_disconnect(&event);
+            break;
+        case DCS_URGENT_EVENT_CANCEL:
+            handle_cancel(&event);
+            break;
+        case DCS_URGENT_EVENT_SHUTDOWN:
+            g_dcs.running = false;
+            break;
+        }
+        if (!g_dcs.running) break;
+    }
+}
+
 void dcs_service_task(void *arg)
 {
     (void)arg;
-    dcs_event_t event;
+    dcs_submit_event_t submit;
     uint32_t events_since_stack_check = 0;
     while (g_dcs.running) {
+        dcs_urgent_drain();
+        check_timeouts();
+        if (!g_dcs.running) break;
+
+        if (xQueueReceive(g_dcs.normal_queue, &submit, 0) == pdTRUE) {
+            dcs_handle_submit(&submit);
+            dcs_urgent_drain();
+            check_timeouts();
+        }
+
         int64_t nearest_deadline_us = esp_timer_get_time() + 1000000LL;
         for (size_t i = 0; i < DCS_MAX_PENDING; i++) {
             if (g_dcs.pending[i].in_use &&
@@ -224,24 +273,8 @@ void dcs_service_task(void *arg)
         }
         int64_t wait_us = nearest_deadline_us - esp_timer_get_time();
         TickType_t wait_ticks = wait_us > 0 ? pdMS_TO_TICKS(wait_us / 1000) : 0;
-        if (xQueueReceive(g_dcs.queue, &event, wait_ticks) == pdTRUE) {
-            switch (event.type) {
-            case DCS_EVENT_SUBMIT:
-                handle_submit(&event);
-                break;
-            case DCS_EVENT_ACK:
-                handle_ack(&event);
-                break;
-            case DCS_EVENT_DISCONNECT:
-                handle_disconnect(&event);
-                break;
-            case DCS_EVENT_CANCEL:
-                handle_cancel(&event);
-                break;
-            case DCS_EVENT_SHUTDOWN:
-                g_dcs.running = false;
-                break;
-            }
+        (void)ulTaskNotifyTake(pdTRUE, wait_ticks);
+        if (g_dcs.running) {
             if (++events_since_stack_check >= 16) {
                 events_since_stack_check = 0;
                 UBaseType_t watermark = uxTaskGetStackHighWaterMark(NULL);
@@ -252,7 +285,6 @@ void dcs_service_task(void *arg)
                 }
             }
         }
-        check_timeouts();
     }
     for (size_t i = 0; i < DCS_MAX_PENDING; i++) {
         if (g_dcs.pending[i].in_use) {

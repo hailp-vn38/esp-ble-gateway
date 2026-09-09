@@ -5,7 +5,31 @@
 void dcs_pending_reset(void)
 {
     memset(g_dcs.pending, 0, sizeof(g_dcs.pending));
+    memset(g_dcs.completed_acks, 0, sizeof(g_dcs.completed_acks));
+    g_dcs.completed_ack_next = 0;
     g_dcs.next_request_id = 0;
+}
+
+void dcs_pending_note_completed_ack(const dcs_pending_slot_t *slot)
+{
+    dcs_completed_ack_t *entry =
+        &g_dcs.completed_acks[g_dcs.completed_ack_next++ % DCS_MAX_PENDING];
+    strlcpy(entry->device_id, slot->device_id, sizeof(entry->device_id));
+    entry->request_id = slot->request_id;
+    strlcpy(entry->command, slot->command, sizeof(entry->command));
+}
+
+bool dcs_pending_is_duplicate_ack(const dcs_ack_event_t *ack)
+{
+    for (size_t i = 0; i < DCS_MAX_PENDING; i++) {
+        const dcs_completed_ack_t *entry = &g_dcs.completed_acks[i];
+        if (entry->request_id == ack->request_id &&
+            strcmp(entry->device_id, ack->device_id) == 0 &&
+            strcmp(entry->command, ack->command) == 0) {
+            return true;
+        }
+    }
+    return false;
 }
 
 dcs_pending_slot_t *dcs_pending_find_device(const char *device_id)

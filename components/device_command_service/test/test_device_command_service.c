@@ -750,6 +750,123 @@ TEST_CASE("event queue full returns bounded submit failure",
     device_command_service_deinit();
 }
 
+TEST_CASE("ACK bypasses full normal queue", "[device_command_service][gcf01]")
+{
+    reset_test_state();
+    device_command_service_set_hooks(&mock_hooks);
+    TEST_ASSERT_EQUAL(ESP_OK, device_command_service_init());
+
+    device_command_request_t active = make_control_request("dev1", "set_led");
+    active.has_bool_value = true;
+    TEST_ASSERT_EQUAL(ESP_OK, device_command_service_submit(
+                                  &active, test_completion, NULL));
+    vTaskDelay(pdMS_TO_TICKS(30));
+    uint32_t request_id = last_sent_message.request_id;
+
+    vTaskSuspend(g_dcs.task);
+    for (size_t i = 0; i < DCS_QUEUE_LEN; i++) {
+        TEST_ASSERT_EQUAL(ESP_OK, device_command_service_submit(
+                                      &active, test_completion, NULL));
+    }
+    TEST_ASSERT_EQUAL(ESP_ERR_NO_MEM, device_command_service_submit(
+                                          &active, test_completion, NULL));
+
+    gw_message_t ack = make_ack("dev1", "set_led", request_id, true);
+    TEST_ASSERT_TRUE(device_command_service_on_notify("dev1", &ack));
+    device_command_service_stats_t stats = {0};
+    device_command_service_get_stats(&stats);
+    TEST_ASSERT_EQUAL_UINT32(0, stats.urgent_queue_full);
+
+    completion_called = false;
+    completion_count = 0;
+    vTaskResume(g_dcs.task);
+    wait_for_completion();
+    TEST_ASSERT_EQUAL_UINT32(1, completion_count);
+    TEST_ASSERT_EQUAL(DEVICE_CMD_STATUS_OK, last_result.status);
+    device_command_service_deinit();
+}
+
+TEST_CASE("urgent ACK wakes idle worker", "[device_command_service][gcf01]")
+{
+    reset_test_state();
+    device_command_service_set_hooks(&mock_hooks);
+    TEST_ASSERT_EQUAL(ESP_OK, device_command_service_init());
+
+    device_command_request_t req = make_control_request("dev1", "set_led");
+    req.has_bool_value = true;
+    TEST_ASSERT_EQUAL(ESP_OK, device_command_service_submit(&req, test_completion, NULL));
+    vTaskDelay(pdMS_TO_TICKS(30));
+    gw_message_t ack = make_ack("dev1", "set_led", last_sent_message.request_id, true);
+    completion_called = false;
+    TEST_ASSERT_TRUE(device_command_service_on_notify("dev1", &ack));
+    wait_for_completion();
+    TEST_ASSERT_TRUE(completion_called);
+    device_command_service_stats_t stats = {0};
+    device_command_service_get_stats(&stats);
+    TEST_ASSERT_EQUAL_UINT32(1, stats.ack_received);
+    TEST_ASSERT_GREATER_THAN_UINT32(0, stats.ack_dispatch_latency_max_us);
+    device_command_service_deinit();
+}
+
+TEST_CASE("urgent lifecycle burst stays bounded", "[device_command_service][gcf01]")
+{
+    reset_test_state();
+    device_command_service_set_hooks(&mock_hooks);
+    TEST_ASSERT_EQUAL(ESP_OK, device_command_service_init());
+    for (uint32_t i = 0; i < 9; i++) {
+        char device_id[GW_MSG_DEVICE_ID_LEN];
+        snprintf(device_id, sizeof(device_id), "burst%lu", (unsigned long)i);
+        device_command_service_on_disconnect(device_id);
+        vTaskDelay(pdMS_TO_TICKS(2));
+    }
+    vTaskDelay(pdMS_TO_TICKS(30));
+    device_command_service_stats_t stats = {0};
+    device_command_service_get_stats(&stats);
+    TEST_ASSERT_EQUAL_UINT32(0, stats.urgent_queue_full);
+    TEST_ASSERT_TRUE(sizeof(dcs_ack_event_t) < sizeof(gw_message_t));
+    device_command_service_deinit();
+}
+
+TEST_CASE("all origins reject disconnected transport before send",
+          "[device_command_service][gcf01]")
+{
+    reset_test_state();
+    mock_connected = 0;
+    device_command_service_set_hooks(&mock_hooks);
+    TEST_ASSERT_EQUAL(ESP_OK, device_command_service_init());
+
+    device_command_request_t schema = { .origin = DEVICE_CMD_ORIGIN_SCHEMA_DISCOVERY };
+    strlcpy(schema.device_id, "dev1", sizeof(schema.device_id));
+    strlcpy(schema.command, "describe_capabilities", sizeof(schema.command));
+    TEST_ASSERT_EQUAL(ESP_OK, device_command_service_submit(&schema, test_completion, NULL));
+    wait_for_completion();
+    TEST_ASSERT_EQUAL(DEVICE_CMD_STATUS_NOT_CONNECTED, last_result.status);
+    TEST_ASSERT_EQUAL_UINT32(0, send_count);
+
+    completion_called = false;
+    device_command_request_t state = { .origin = DEVICE_CMD_ORIGIN_STATE_READ };
+    strlcpy(state.device_id, "dev1", sizeof(state.device_id));
+    strlcpy(state.command, "read_feature_state", sizeof(state.command));
+    state.has_feature_id = true;
+    strlcpy(state.feature_id, "on_off", sizeof(state.feature_id));
+    state.has_property_id = true;
+    state.property_id = 1;
+    TEST_ASSERT_EQUAL(ESP_OK, device_command_service_submit(&state, test_completion, NULL));
+    wait_for_completion();
+    TEST_ASSERT_EQUAL(DEVICE_CMD_STATUS_NOT_CONNECTED, last_result.status);
+    TEST_ASSERT_EQUAL_UINT32(0, send_count);
+
+    completion_called = false;
+    device_command_request_t settings = make_settings_request(
+        GW_SETTINGS_CMD_READ_SETTINGS);
+    TEST_ASSERT_EQUAL(ESP_OK, device_command_service_submit(
+                                  &settings, test_completion, NULL));
+    wait_for_completion();
+    TEST_ASSERT_EQUAL(DEVICE_CMD_STATUS_NOT_CONNECTED, last_result.status);
+    TEST_ASSERT_EQUAL_UINT32(0, send_count);
+    device_command_service_deinit();
+}
+
 TEST_CASE("ACK completes pending request", "[device_command_service]")
 {
     reset_test_state();
@@ -807,6 +924,9 @@ TEST_CASE("duplicate ACK completes exactly once",
     vTaskDelay(pdMS_TO_TICKS(50));
     TEST_ASSERT_EQUAL_UINT32(1, completion_count);
     TEST_ASSERT_EQUAL_UINT32(0, device_command_service_get_pending_count());
+    device_command_service_stats_t stats = {0};
+    device_command_service_get_stats(&stats);
+    TEST_ASSERT_EQUAL_UINT32(1, stats.ack_duplicate);
     device_command_service_deinit();
 }
 

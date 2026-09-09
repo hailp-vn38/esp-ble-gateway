@@ -3,6 +3,7 @@
 #include <string.h>
 
 #include "esp_log.h"
+#include "esp_timer.h"
 
 const char *DCS_TAG = "dev_cmd_svc";
 
@@ -39,13 +40,19 @@ static int default_is_connected(const char *device_id)
 
 esp_err_t device_command_service_init(void)
 {
-    if (g_dcs.queue != NULL) {
+    if (g_dcs.normal_queue != NULL) {
         return ESP_ERR_INVALID_STATE;
     }
     dcs_pending_reset();
     memset(&g_dcs.stats, 0, sizeof(g_dcs.stats));
-    g_dcs.queue = xQueueCreate(DCS_QUEUE_LEN, sizeof(dcs_event_t));
-    if (g_dcs.queue == NULL) {
+    g_dcs.normal_queue = xQueueCreate(DCS_QUEUE_LEN, sizeof(dcs_submit_event_t));
+    g_dcs.urgent_queue = xQueueCreate(DCS_URGENT_QUEUE_LEN,
+                                      sizeof(dcs_urgent_event_t));
+    if (g_dcs.normal_queue == NULL || g_dcs.urgent_queue == NULL) {
+        if (g_dcs.normal_queue != NULL) vQueueDelete(g_dcs.normal_queue);
+        if (g_dcs.urgent_queue != NULL) vQueueDelete(g_dcs.urgent_queue);
+        g_dcs.normal_queue = NULL;
+        g_dcs.urgent_queue = NULL;
         return ESP_ERR_NO_MEM;
     }
     g_dcs.running = true;
@@ -54,29 +61,38 @@ esp_err_t device_command_service_init(void)
                                      DCS_TASK_STACK, NULL,
                                      DCS_TASK_PRIORITY, &g_dcs.task);
     if (created != pdPASS) {
-        vQueueDelete(g_dcs.queue);
-        g_dcs.queue = NULL;
+        vQueueDelete(g_dcs.normal_queue);
+        vQueueDelete(g_dcs.urgent_queue);
+        g_dcs.normal_queue = NULL;
+        g_dcs.urgent_queue = NULL;
         return ESP_ERR_NO_MEM;
     }
-    ESP_LOGI(DCS_TAG, "Device command service started (queue=%d, pending=%d)",
-             DCS_QUEUE_LEN, DCS_MAX_PENDING);
+    ESP_LOGI(DCS_TAG, "Device command service started (normal=%d urgent=%d pending=%d)",
+             DCS_QUEUE_LEN, DCS_URGENT_QUEUE_LEN, DCS_MAX_PENDING);
     return ESP_OK;
 }
 
 void device_command_service_deinit(void)
 {
-    if (g_dcs.queue == NULL) {
+    if (g_dcs.normal_queue == NULL) {
         return;
     }
-    dcs_event_t shutdown = { .type = DCS_EVENT_SHUTDOWN };
-    xQueueSend(g_dcs.queue, &shutdown, pdMS_TO_TICKS(100));
+    dcs_urgent_event_t shutdown = { .type = DCS_URGENT_EVENT_SHUTDOWN };
+    if (!dcs_urgent_enqueue(&shutdown, pdMS_TO_TICKS(100))) {
+        /* Do not delete queues below a still-running task if a pathological
+         * urgent burst prevents the shutdown event from being queued. */
+        g_dcs.running = false;
+        xTaskNotifyGive(g_dcs.task);
+    }
     for (int wait_ms = 0;
          wait_ms < DCS_DEINIT_WAIT_BUDGET_MS && !g_dcs.task_stopped;
          wait_ms += 10) {
         vTaskDelay(pdMS_TO_TICKS(10));
     }
-    vQueueDelete(g_dcs.queue);
-    g_dcs.queue = NULL;
+    vQueueDelete(g_dcs.normal_queue);
+    vQueueDelete(g_dcs.urgent_queue);
+    g_dcs.normal_queue = NULL;
+    g_dcs.urgent_queue = NULL;
     g_dcs.task = NULL;
     ESP_LOGI(DCS_TAG, "Device command service stopped");
 }
@@ -88,19 +104,19 @@ esp_err_t device_command_service_submit(const device_command_request_t *request,
     if (request == NULL || completion == NULL) {
         return ESP_ERR_INVALID_ARG;
     }
-    if (g_dcs.queue == NULL || !g_dcs.running) {
+    if (g_dcs.normal_queue == NULL || !g_dcs.running) {
         return ESP_ERR_INVALID_STATE;
     }
-    dcs_event_t event = {
-        .type = DCS_EVENT_SUBMIT,
+    dcs_submit_event_t event = {
         .request = *request,
         .completion = completion,
         .context = context,
     };
-    if (xQueueSend(g_dcs.queue, &event, 0) != pdTRUE) {
+    if (xQueueSend(g_dcs.normal_queue, &event, 0) != pdTRUE) {
         dcs_stats_inc(&g_dcs.stats.queue_full);
         return ESP_ERR_NO_MEM;
     }
+    xTaskNotifyGive(g_dcs.task);
     return ESP_OK;
 }
 
@@ -110,14 +126,29 @@ bool device_command_service_on_notify(const char *device_id,
     if (device_id == NULL || message == NULL ||
         strcmp(message->type, "device_ack") != 0 ||
         !message->has_request_id || message->request_id == 0 ||
-        g_dcs.queue == NULL || !g_dcs.running) {
+        g_dcs.urgent_queue == NULL || !g_dcs.running) {
         return false;
     }
-    dcs_event_t event = { .type = DCS_EVENT_ACK };
-    strlcpy(event.ack_device_id, device_id, sizeof(event.ack_device_id));
-    event.ack_message = *message;
-    if (xQueueSend(g_dcs.queue, &event, 0) != pdTRUE) {
-        ESP_LOGW(DCS_TAG, "ACK event queue full for device=%s", device_id);
+    dcs_urgent_event_t event = {
+        .type = DCS_URGENT_EVENT_ACK,
+        .enqueued_us = esp_timer_get_time(),
+        .data.ack = {
+            .request_id = message->request_id,
+            .accepted = message->bool_value != 0,
+            .has_bool_value = message->has_bool_value,
+            .bool_value = message->bool_value != 0,
+            .has_int_value = message->has_int_value,
+            .int_value = message->int_value,
+            .has_feature_value_bool = message->has_feature_value_bool,
+            .feature_value_bool = message->feature_value_bool,
+            .has_feature_value_int = message->has_feature_value_int,
+            .feature_value_int = message->feature_value_int,
+        },
+    };
+    strlcpy(event.data.ack.device_id, device_id, sizeof(event.data.ack.device_id));
+    strlcpy(event.data.ack.command, message->command, sizeof(event.data.ack.command));
+    if (!dcs_urgent_enqueue(&event, 0)) {
+        ESP_LOGW(DCS_TAG, "ACK urgent queue full for device=%s", device_id);
         return false;
     }
     return true;
@@ -126,13 +157,12 @@ bool device_command_service_on_notify(const char *device_id,
 void device_command_service_on_disconnect(const char *device_id)
 {
     if (device_id == NULL || device_id[0] == '\0' ||
-        g_dcs.queue == NULL || !g_dcs.running) {
+        g_dcs.urgent_queue == NULL || !g_dcs.running) {
         return;
     }
-    dcs_event_t event = { .type = DCS_EVENT_DISCONNECT };
-    strlcpy(event.disconnect_device_id, device_id,
-            sizeof(event.disconnect_device_id));
-    xQueueSend(g_dcs.queue, &event, pdMS_TO_TICKS(100));
+    dcs_urgent_event_t event = { .type = DCS_URGENT_EVENT_DISCONNECT };
+    strlcpy(event.data.device_id, device_id, sizeof(event.data.device_id));
+    dcs_urgent_enqueue(&event, pdMS_TO_TICKS(100));
 }
 
 esp_err_t device_command_service_cancel_device(const char *device_id)
@@ -140,12 +170,12 @@ esp_err_t device_command_service_cancel_device(const char *device_id)
     if (device_id == NULL || device_id[0] == '\0') {
         return ESP_ERR_INVALID_ARG;
     }
-    if (g_dcs.queue == NULL || !g_dcs.running) {
+    if (g_dcs.urgent_queue == NULL || !g_dcs.running) {
         return ESP_ERR_INVALID_STATE;
     }
-    dcs_event_t event = { .type = DCS_EVENT_CANCEL };
-    strlcpy(event.cancel_device_id, device_id, sizeof(event.cancel_device_id));
-    return xQueueSend(g_dcs.queue, &event, 0) == pdTRUE
+    dcs_urgent_event_t event = { .type = DCS_URGENT_EVENT_CANCEL };
+    strlcpy(event.data.device_id, device_id, sizeof(event.data.device_id));
+    return dcs_urgent_enqueue(&event, 0)
                ? ESP_OK : ESP_ERR_NO_MEM;
 }
 

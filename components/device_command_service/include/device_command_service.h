@@ -4,113 +4,9 @@
 #include <stdbool.h>
 #include <stdint.h>
 
-#include "cbor_codec.h"
+#include "device_command_types.h"
 #include "device_types.h"
 #include "esp_err.h"
-
-/* ── Origin types ────────────────────────────────────────────────────── */
-
-typedef enum {
-    DEVICE_CMD_ORIGIN_CONTROL = 0,
-    DEVICE_CMD_ORIGIN_SCHEMA_DISCOVERY,
-    DEVICE_CMD_ORIGIN_STATE_READ,
-    DEVICE_CMD_ORIGIN_SETTINGS,
-} device_command_origin_t;
-
-/* ── Typed request ───────────────────────────────────────────────────── */
-
-/* Settings values have the same bounded string representation as the
- * Protocol v4 CBOR message.  Keep this payload separate from feature fields:
- * settings transaction keys 34 and 38--43 are not feature semantics. */
-#define GW_SETTINGS_VALUE_STR_LEN GW_SETTINGS_VALUE_MAX_LEN
-
-typedef struct {
-    bool has_transaction_id;
-    uint64_t transaction_id;
-
-    bool has_expected_revision;
-    uint32_t expected_revision;
-
-    bool has_new_revision;
-    uint32_t new_revision;
-
-    bool has_setting_id;
-    char setting_id[GW_FEATURE_ID_LEN];
-
-    bool has_setting_value;
-    uint8_t setting_type;
-    union {
-        bool bool_value;
-        int32_t int_value;
-        uint8_t enum_value;
-        char string_value[GW_SETTINGS_VALUE_STR_LEN];
-    } value;
-} device_command_settings_payload_t;
-
-typedef struct {
-    device_command_origin_t origin;
-
-    device_id_t device_id;
-    device_command_t command;
-
-    bool has_bool_value;
-    bool bool_value;
-
-    bool has_int_value;
-    int32_t int_value;
-
-    bool has_feature_id;
-    device_feature_id_t feature_id;
-
-    bool has_property_id;
-    uint8_t property_id;
-
-    device_command_settings_payload_t settings;
-} device_command_request_t;
-
-/* ── Result status ───────────────────────────────────────────────────── */
-
-typedef enum {
-    DEVICE_CMD_STATUS_OK = 0,
-    DEVICE_CMD_STATUS_INVALID_ARGUMENT,
-    DEVICE_CMD_STATUS_SCHEMA_NOT_READY,
-    DEVICE_CMD_STATUS_UNSUPPORTED_COMMAND,
-    DEVICE_CMD_STATUS_TYPE_MISMATCH,
-    DEVICE_CMD_STATUS_RANGE_ERROR,
-    DEVICE_CMD_STATUS_NOT_CONNECTED,
-    DEVICE_CMD_STATUS_BUSY,
-    DEVICE_CMD_STATUS_QUEUE_FULL,
-    DEVICE_CMD_STATUS_TRANSPORT_ERROR,
-    DEVICE_CMD_STATUS_TIMEOUT,
-    DEVICE_CMD_STATUS_REJECTED,
-    DEVICE_CMD_STATUS_CANCELLED,
-    DEVICE_CMD_STATUS_INTERNAL,
-} device_command_status_t;
-
-/* Compatibility names retained while existing consumers migrate. */
-#define DEVICE_CMD_STATUS_DEVICE_REJECTED DEVICE_CMD_STATUS_REJECTED
-#define DEVICE_CMD_STATUS_INTERNAL_ERROR DEVICE_CMD_STATUS_INTERNAL
-
-/* ── Typed result ────────────────────────────────────────────────────── */
-
-typedef struct {
-    device_command_status_t status;
-    uint32_t request_id;
-
-    bool accepted;
-
-    bool has_bool_value;
-    bool bool_value;
-
-    bool has_int_value;
-    int32_t int_value;
-
-    bool has_feature_value_bool;
-    bool feature_value_bool;
-
-    bool has_feature_value_int;
-    int32_t feature_value_int;
-} device_command_result_t;
 
 /* ── Completion callback ─────────────────────────────────────────────── */
 
@@ -136,8 +32,15 @@ typedef struct {
     uint32_t disconnect_count;
     uint32_t transport_errors;
     uint32_t queue_full;
+    uint32_t urgent_queue_full;
+    uint32_t ack_received;
+    uint32_t ack_unmatched;
+    uint32_t ack_duplicate;
+    uint32_t ack_dispatch_latency_max_us;
     uint32_t max_pending;
 } device_command_service_stats_t;
+
+#define DEVICE_COMMAND_SERVICE_MAX_PENDING 4
 
 /* ── Public API ──────────────────────────────────────────────────────── */
 
