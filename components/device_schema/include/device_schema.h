@@ -47,6 +47,12 @@ typedef struct {
     int8_t writable_tool_index; /* index into tools[], -1 = none */
 } device_schema_feature_t;
 
+typedef struct {
+    device_feature_id_t feature_id;
+    uint8_t property_id;
+    bool readable;
+} device_schema_feature_ref_t;
+
 /* ── Schema state ───────────────────────────────────────────────────── */
 
 typedef enum {
@@ -191,6 +197,11 @@ esp_err_t device_schema_refresh(const char *device_id,
 
 esp_err_t device_schema_get(const char *device_id,
                              device_schema_snapshot_t *out_snapshot);
+
+esp_err_t device_schema_get_feature_at(const char *device_id,
+                                       uint32_t expected_revision,
+                                       size_t index,
+                                       device_schema_feature_ref_t *out);
 
 esp_err_t device_schema_get_refresh_status(
     const char *device_id,

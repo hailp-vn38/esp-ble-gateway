@@ -857,7 +857,7 @@ test/CMakeLists.txt
 
 ---
 
-### GCF-04 — Sequential State Seed + targeted cancellation
+### GCF-04 — Sequential State Seed + targeted cancellation ✅ DONE (2026-09-09)
 
 #### Mục tiêu
 
@@ -904,14 +904,14 @@ components/device_schema/device_schema*.c
 
 #### Checklist
 
-- [ ] Bulk seed removed.
-- [ ] Lightweight schema accessor added.
-- [ ] Sequential seed pass.
-- [ ] Targeted cancel used, not cancel_device.
-- [ ] Revision/generation stale completion guard pass.
-- [ ] Background priority pass.
-- [ ] State cache behavior preserved.
-- [ ] Plan doc updated.
+- [x] Bulk seed removed.
+- [x] Lightweight schema accessor added.
+- [x] Sequential seed pass.
+- [x] Targeted cancel used, not cancel_device.
+- [x] Revision/generation stale completion guard pass.
+- [x] Background priority pass.
+- [x] State cache behavior preserved.
+- [x] Plan doc updated.
 
 ---
 

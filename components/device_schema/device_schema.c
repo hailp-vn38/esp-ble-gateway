@@ -188,6 +188,35 @@ esp_err_t device_schema_get(const char *device_id,
     return ESP_OK;
 }
 
+esp_err_t device_schema_get_feature_at(const char *device_id,
+                                       uint32_t expected_revision,
+                                       size_t index,
+                                       device_schema_feature_ref_t *out)
+{
+    if (device_id == NULL || out == NULL) return ESP_ERR_INVALID_ARG;
+    if (!schema_runtime_lock()) return ESP_ERR_TIMEOUT;
+    schema_record_t *record = schema_runtime_find_locked(device_id);
+    if (record == NULL || !record->has_committed) {
+        schema_runtime_unlock();
+        return ESP_ERR_NOT_FOUND;
+    }
+    if (record->committed.revision != expected_revision) {
+        schema_runtime_unlock();
+        return ESP_ERR_INVALID_STATE;
+    }
+    if (index >= record->committed.feature_count) {
+        schema_runtime_unlock();
+        return ESP_ERR_NOT_FOUND;
+    }
+    const device_schema_feature_t *feature = &record->committed.features[index];
+    memset(out, 0, sizeof(*out));
+    strlcpy(out->feature_id, feature->feature_id, sizeof(out->feature_id));
+    out->property_id = feature->property_id;
+    out->readable = feature->property_id != GW_PROP_NONE;
+    schema_runtime_unlock();
+    return ESP_OK;
+}
+
 esp_err_t device_schema_get_refresh_status(
     const char *device_id,
     device_schema_refresh_active_t *out_active,

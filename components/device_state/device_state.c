@@ -2,14 +2,12 @@
 
 #include <string.h>
 
-#include "device_command_service.h"
-#include "device_schema.h"
+#include "device_state_internal.h"
 #include "esp_log.h"
 #include "esp_timer.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/portmacro.h"
 #include "gateway_events.h"
-#include "memory_policy.h"
 
 static const char *TAG = "device_state";
 
@@ -40,64 +38,6 @@ static device_state_entry_t *allocate_entry(void)
         return &s_entries[s_count++];
     }
     return NULL;
-}
-
-/* ── State seed (commit listener) ───────────────────────────────────── */
-
-static void seed_completion(const device_command_result_t *result,
-                            void *context)
-{
-    (void)result;
-    (void)context;
-    /* Best-effort: ignore result. The cache still populates from
-     * spontaneous feature_state events even if the seed command
-     * is rejected by schema validation. */
-}
-
-static void on_schema_committed(const char *device_id, uint32_t revision,
-                                 void *context)
-{
-    (void)revision;
-    (void)context;
-
-    device_schema_snapshot_t *cap = gw_mem_alloc(
-        sizeof(*cap), GW_MEM_EXTERNAL_PREFERRED);
-    if (cap == NULL) {
-        ESP_LOGW(TAG, "[%s] could not allocate schema snapshot for state seed",
-                 device_id);
-        return;
-    }
-    if (device_schema_get(device_id, cap) != ESP_OK || !cap->has_committed) {
-        gw_mem_free(cap);
-        return;
-    }
-
-    ESP_LOGI(TAG, "[%s] seeding state for %zu features",
-             device_id, cap->feature_count);
-
-    for (size_t i = 0; i < cap->feature_count; i++) {
-        const device_schema_feature_t *f = &cap->features[i];
-        if (f->property_id == GW_PROP_NONE) {
-            continue;
-        }
-
-        device_command_request_t request = {0};
-        request.origin = DEVICE_CMD_ORIGIN_STATE_READ;
-        strlcpy(request.device_id, device_id, sizeof(request.device_id));
-        strlcpy(request.command, "read_feature_state", sizeof(request.command));
-        strlcpy(request.feature_id, f->feature_id, sizeof(request.feature_id));
-        request.has_feature_id = true;
-        request.property_id = f->property_id;
-        request.has_property_id = true;
-
-        esp_err_t err = device_command_service_submit(
-            &request, seed_completion, NULL);
-        if (err != ESP_OK) {
-            ESP_LOGD(TAG, "[%s] seed submit failed for %s: %s",
-                     device_id, f->feature_id, esp_err_to_name(err));
-        }
-    }
-    gw_mem_free(cap);
 }
 
 /* ── Shared state-apply helper ──────────────────────────────────────── */
@@ -173,8 +113,7 @@ esp_err_t device_state_init(void)
 
     /* State seeding is best-effort and follows the settings reconciliation
      * listener, so it cannot delay the post-reboot settings read. */
-    esp_err_t err = device_schema_register_commit_listener3(
-        on_schema_committed, NULL);
+    esp_err_t err = device_state_seed_init();
     if (err != ESP_OK) {
         ESP_LOGW(TAG, "commit listener3 registration failed: %s",
                  esp_err_to_name(err));
@@ -281,6 +220,7 @@ void device_state_forget(const char *device_id)
         return;
     }
 
+    device_state_seed_forget(device_id);
     size_t forgotten = 0;
 
     portENTER_CRITICAL(&s_lock);
@@ -307,6 +247,7 @@ void device_state_forget(const char *device_id)
 
 void device_state_reset_for_test(void)
 {
+    device_state_seed_reset_for_test();
     portENTER_CRITICAL(&s_lock);
     memset(s_entries, 0, sizeof(s_entries));
     s_count = 0;

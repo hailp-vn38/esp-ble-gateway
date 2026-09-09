@@ -486,6 +486,43 @@ TEST_CASE("discovery: begin → tool_item → feature_item → end commits",
                           device_schema_validate_command(&cmd, NULL));
 }
 
+TEST_CASE("feature accessor returns one committed feature with revision guard",
+          "[device_schema][gcf04]")
+{
+    reset_and_init();
+    const char *device_id = "gcf04-ref";
+    TEST_ASSERT_EQUAL_INT(ESP_OK, device_store_add(device_id, "GCF04 reference"));
+
+    gw_message_t begin = make_begin(device_id, 9401, 0, 2, 7);
+    TEST_ASSERT_TRUE(device_schema_on_notify(device_id, &begin));
+    vTaskDelay(pdMS_TO_TICKS(30));
+
+    gw_message_t feature0 = make_feature_item(device_id, 9401, 0, "light_state",
+                                               GW_FEATURE_ON_OFF_LIGHT,
+                                               GW_PROP_ON_OFF, "toggle");
+    gw_message_t feature1 = make_feature_item(device_id, 9401, 1, "temperature",
+                                               GW_FEATURE_TEMPERATURE_SENSOR,
+                                               GW_PROP_TEMPERATURE, "");
+    TEST_ASSERT_TRUE(device_schema_on_notify(device_id, &feature0));
+    TEST_ASSERT_TRUE(device_schema_on_notify(device_id, &feature1));
+    vTaskDelay(pdMS_TO_TICKS(30));
+
+    gw_message_t end = make_end(device_id, 9401, 0);
+    TEST_ASSERT_TRUE(device_schema_on_notify(device_id, &end));
+    vTaskDelay(pdMS_TO_TICKS(120));
+
+    device_schema_feature_ref_t ref = {0};
+    TEST_ASSERT_EQUAL_INT(ESP_OK,
+                          device_schema_get_feature_at(device_id, 7, 0, &ref));
+    TEST_ASSERT_EQUAL_STRING("light_state", ref.feature_id);
+    TEST_ASSERT_EQUAL_UINT8(GW_PROP_ON_OFF, ref.property_id);
+    TEST_ASSERT_TRUE(ref.readable);
+    TEST_ASSERT_EQUAL_INT(ESP_ERR_INVALID_STATE,
+                          device_schema_get_feature_at(device_id, 8, 0, &ref));
+    TEST_ASSERT_EQUAL_INT(ESP_ERR_NOT_FOUND,
+                          device_schema_get_feature_at(device_id, 7, 2, &ref));
+}
+
 TEST_CASE("discovery: missing tool_item breaks staging", "[device_schema]")
 {
     reset_and_init();
