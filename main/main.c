@@ -2,13 +2,14 @@
 #include "esp_log.h"
 #include "esp_system.h"
 #include "nvs_flash.h"
-#include <stdlib.h>
 
 #include "ble_central.h"
 #include "board_io.h"
 #include "device_command_service.h"
+#include "device_control_scheduler.h"
 #include "device_store.h"
 #include "device_schema.h"
+#include "device_schema_control_adapter.h"
 #include "device_state.h"
 #include "device_settings.h"
 #include "gateway_events.h"
@@ -73,67 +74,6 @@ static void on_device_disconnect(const char *device_id)
     device_settings_on_disconnect(device_id);
     device_state_forget(device_id);
     device_command_service_on_disconnect(device_id);
-}
-
-typedef struct {
-    device_schema_submit_done_fn done;
-    void *context;
-} capability_submit_bridge_t;
-
-static void capability_service_completion(const device_command_result_t *result,
-                                          void *context)
-{
-    capability_submit_bridge_t *bridge = context;
-    device_schema_submit_result_t outcome = DEVICE_SCHEMA_SUBMIT_INTERNAL_ERROR;
-    if (result != NULL) {
-        switch (result->status) {
-        case DEVICE_CMD_STATUS_OK:
-            outcome = DEVICE_SCHEMA_SUBMIT_OK;
-            break;
-        case DEVICE_CMD_STATUS_DEVICE_REJECTED:
-        case DEVICE_CMD_STATUS_UNSUPPORTED_COMMAND:
-            outcome = DEVICE_SCHEMA_SUBMIT_REJECTED;
-            break;
-        case DEVICE_CMD_STATUS_BUSY:
-            outcome = DEVICE_SCHEMA_SUBMIT_BUSY;
-            break;
-        case DEVICE_CMD_STATUS_TIMEOUT:
-            outcome = DEVICE_SCHEMA_SUBMIT_TIMEOUT;
-            break;
-        case DEVICE_CMD_STATUS_NOT_CONNECTED:
-            outcome = DEVICE_SCHEMA_SUBMIT_NOT_CONNECTED;
-            break;
-        case DEVICE_CMD_STATUS_TRANSPORT_ERROR:
-            outcome = DEVICE_SCHEMA_SUBMIT_TRANSPORT_ERROR;
-            break;
-        default:
-            outcome = DEVICE_SCHEMA_SUBMIT_INTERNAL_ERROR;
-            break;
-        }
-    }
-    bridge->done(outcome, bridge->context);
-    free(bridge);
-}
-
-static esp_err_t capability_submit(const gw_message_t *message,
-                                   device_schema_submit_done_fn done,
-                                   void *context)
-{
-    capability_submit_bridge_t *bridge = malloc(sizeof(*bridge));
-    if (bridge == NULL) return ESP_ERR_NO_MEM;
-    bridge->done = done;
-    bridge->context = context;
-
-    /* Build typed service request */
-    device_command_request_t request = {0};
-    request.origin = DEVICE_CMD_ORIGIN_SCHEMA_DISCOVERY;
-    strlcpy(request.device_id, message->device_id, sizeof(request.device_id));
-    strlcpy(request.command, message->command, sizeof(request.command));
-
-    esp_err_t error = device_command_service_submit(
-        &request, capability_service_completion, bridge);
-    if (error != ESP_OK) free(bridge);
-    return error;
 }
 
 static void on_board_io_event(board_io_event_t event, void *context)
@@ -313,7 +253,14 @@ void app_main(void)
         return;
     }
     gw_memory_log_checkpoint("dev_cmd_svc_ready");
-    device_schema_set_submitter(capability_submit);
+    if (device_control_scheduler_init() != ESP_OK) {
+        ESP_LOGE(TAG, "Device control scheduler initialization failed");
+        return;
+    }
+    if (device_schema_control_adapter_init() != ESP_OK) {
+        ESP_LOGE(TAG, "Schema control adapter initialization failed");
+        return;
+    }
     if (ble_central_init(on_device_notify) != 0) {
         ESP_LOGE(TAG, "BLE central initialization failed");
         return;

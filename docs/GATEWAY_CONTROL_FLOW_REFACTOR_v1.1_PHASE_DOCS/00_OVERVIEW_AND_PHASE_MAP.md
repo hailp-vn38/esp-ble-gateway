@@ -804,7 +804,7 @@ test/CMakeLists.txt
 
 ---
 
-### GCF-03 — Schema Control Adapter; no dependency cycle
+### GCF-03 — Schema Control Adapter; no dependency cycle ✅ DONE (2026-09-09)
 
 #### Mục tiêu
 
@@ -847,13 +847,13 @@ test/CMakeLists.txt
 
 #### Checklist
 
-- [ ] Adapter component added.
-- [ ] `device_schema` has no scheduler dependency.
-- [ ] Main schema bridge removed.
-- [ ] Schema requests pass scheduler.
-- [ ] Dependency graph build pass.
-- [ ] Existing schema mock submitter tests preserved.
-- [ ] Plan doc updated.
+- [x] Adapter component added.
+- [x] `device_schema` has no scheduler dependency.
+- [x] Main schema bridge removed.
+- [x] Schema requests pass scheduler.
+- [x] Dependency graph build pass.
+- [x] Existing schema mock submitter tests preserved.
+- [x] Plan doc updated.
 
 ---
 
