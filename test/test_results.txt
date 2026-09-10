@@ -1,23 +1,33 @@
 
   Component                  PASS  FAIL  Total  Status
   ───────────────────────────────────────────────────────
-  ble_central                  24     0     24  [32mALL PASS[0m
-  board_io                     64     0     64  [32mALL PASS[0m
-  cbor_codec                    9     0      9  [32mALL PASS[0m
-  device_command_service       28     0     28  [32mALL PASS[0m
-  device_management             9     0      9  [32mALL PASS[0m
-  device_schema                22     0     22  [32mALL PASS[0m
-  device_state                 19     0     19  [32mALL PASS[0m
+  ble_central                  46     0     46  [32mALL PASS[0m
+  board_io                    128     0    128  [32mALL PASS[0m
+  cbor_codec                   68     0     68  [32mALL PASS[0m
+  device_command_service       57     0     57  [32mALL PASS[0m
+  device_control_scheduler      8     0      8  [32mALL PASS[0m
+  device_management            10     0     10  [32mALL PASS[0m
+  device_schema                31     0     31  [32mALL PASS[0m
+  device_schema_control_adapter     1     0      1  [32mALL PASS[0m
+  device_settings              58     0     58  [32mALL PASS[0m
+  device_state                 20     0     20  [32mALL PASS[0m
   device_store                 10     0     10  [32mALL PASS[0m
-  device_template               7     0      7  [32mALL PASS[0m
+  device_template               8     0      8  [32mALL PASS[0m
   device_types                  1     0      1  [32mALL PASS[0m
   gateway_events               10     0     10  [32mALL PASS[0m
-  mcp_endpoint                110     0    110  [32mALL PASS[0m
-  mcp_tool_exposure             2     0      2  [32mALL PASS[0m
+  mcp_endpoint                115     0    115  [32mALL PASS[0m
+  mcp_tool_exposure            11     2     13  [31m2 FAILED[0m
   mcp_ws_bridge                18     0     18  [32mALL PASS[0m
-  memory_policy                 4     0      4  [32mALL PASS[0m
+  memory_policy                 7     0      7  [32mALL PASS[0m
   web_server                   26     0     26  [32mALL PASS[0m
   ───────────────────────────────────────────────────────
-  [31mTOTAL                       363     0    363[0m
+  [31mTOTAL                       633     2    635[0m
 
   [31mUnity summary missing: test suite did not finish.[0m
+  [31mFatal runtime errors:[0m
+    Guru Meditation Error: Core  0 panic'ed (IllegalInstruction). Exception was unhandled.
+
+  [31mFailed tests:[0m
+    line 625: semantic hints return NOT_FOUND for unknown device:Function [mcp_exposure].  Expected TRUE Was FALSE
+    line 688: semantic hints with zero capacity returns zero count:Function [mcp_exposure].  Expected FALSE Was TRUE
+
