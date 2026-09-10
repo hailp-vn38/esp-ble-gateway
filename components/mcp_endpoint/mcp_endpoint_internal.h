@@ -11,7 +11,7 @@
 #include "freertos/task.h"
 
 #include "cbor_codec.h"
-#include "device_command_service.h"
+#include "device_command_types.h"
 #include "device_store.h"
 #include "device_schema.h"
 #include "mcp_tool_exposure.h"

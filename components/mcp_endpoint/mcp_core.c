@@ -4,7 +4,7 @@
 #include <string.h>
 
 #include "cJSON.h"
-#include "device_command_service.h"
+#include "device_control_scheduler.h"
 #include "esp_log.h"
 
 #include "mcp_endpoint_internal.h"
@@ -19,6 +19,7 @@ typedef struct {
     bool semantic_control;
     char device_id[GW_MSG_DEVICE_ID_LEN];
     char feature_id[GW_FEATURE_ID_LEN];
+    device_control_result_t result;
 } mcp_async_context_t;
 
 static bool responder_valid(const mcp_responder_t *responder)
@@ -154,29 +155,71 @@ static esp_err_t send_none(const mcp_responder_t *responder)
                : ESP_ERR_INVALID_STATE;
 }
 
-static void device_command_completion(const device_command_result_t *result,
-                                      void *arg)
+static void mcp_command_result_work(void *arg)
 {
     mcp_async_context_t *context = arg;
     if (!context->notification && responder_alive(&context->responder)) {
-        mcp_rpc_error_t error = {0};
-        cJSON *payload = context->semantic_control
-            ? mcp_device_control_format_completion(
-                  context->device_id, context->feature_id, result,
-                  &context->protocol, &error)
-            : mcp_tools_format_device_result(result, &context->protocol, &error);
-        if (payload != NULL) {
-            send_result(&context->responder, payload, context->id);
+        if (context->result.terminal == DEVICE_CTRL_TERMINAL_COMMAND) {
+            mcp_rpc_error_t error = {0};
+            cJSON *payload = context->semantic_control
+                ? mcp_device_control_format_completion(
+                      context->device_id, context->feature_id,
+                      &context->result.command_result, &context->protocol, &error)
+                : mcp_tools_format_device_result(&context->result.command_result,
+                                                 &context->protocol, &error);
+            if (payload != NULL) {
+                send_result(&context->responder, payload, context->id);
+            } else {
+                send_error(&context->responder,
+                           error.code != 0 ? error.code : -32603,
+                           error.message != NULL ? error.message : "Internal error",
+                           context->id, NULL);
+            }
         } else {
-            send_error(&context->responder,
-                       error.code != 0 ? error.code : -32603,
-                       error.message != NULL ? error.message : "Internal error",
-                       context->id, NULL);
+            const bool deadline = context->result.terminal ==
+                                  DEVICE_CTRL_TERMINAL_DEADLINE_EXCEEDED;
+            send_error(&context->responder, deadline ? MCP_ERR_GATEWAY_BUSY : -32603,
+                       deadline ? "Command queue deadline exceeded"
+                                : "Command cancelled",
+                       context->id, deadline ? "504 Gateway Timeout"
+                                             : "503 Service Unavailable");
         }
     }
     cJSON_Delete(context->id);
     responder_release(&context->responder);
     free(context);
+}
+
+static void device_command_completion(const device_control_result_t *result,
+                                      void *arg)
+{
+    mcp_async_context_t *context = arg;
+    context->result = *result;
+    if (context->responder.post != NULL &&
+        context->responder.post(context->responder.context,
+                                mcp_command_result_work, context) == ESP_OK) {
+        return;
+    }
+
+    /* The result cannot be presented.  Release every accepted async object. */
+    ESP_LOGW(TAG, "Could not queue MCP command result");
+    cJSON_Delete(context->id);
+    responder_release(&context->responder);
+    free(context);
+}
+
+static esp_err_t submit_device_job(const device_command_request_t *request,
+                                   mcp_async_context_t *async)
+{
+    const device_control_job_t job = {
+        .request = *request,
+        .priority = DEVICE_CTRL_PRIORITY_HIGH,
+        .source = DEVICE_CTRL_SOURCE_MCP,
+        .dedupe = DEVICE_CTRL_DEDUPE_NONE,
+        .max_queue_wait_ms = 1200,
+    };
+    return device_control_scheduler_submit(&job, device_command_completion,
+                                           async, NULL);
 }
 
 static esp_err_t handle_tools_call(const mcp_responder_t *responder,
@@ -250,8 +293,7 @@ static esp_err_t handle_tools_call(const mcp_responder_t *responder,
             svc_req.has_property_id = true;
         }
 
-        esp_err_t submitted = device_command_service_submit(
-            &svc_req, device_command_completion, async);
+        esp_err_t submitted = submit_device_job(&svc_req, async);
         if (submitted == ESP_OK) return ESP_OK;
 
         responder_release(&async->responder);
@@ -358,8 +400,7 @@ static esp_err_t handle_tools_call(const mcp_responder_t *responder,
                                                  "Async unavailable", id,
                                                  "503 Service Unavailable");
             }
-            esp_err_t submitted = device_command_service_submit(
-                &plan.request, device_command_completion, async);
+            esp_err_t submitted = submit_device_job(&plan.request, async);
             if (submitted == ESP_OK) return ESP_OK;
             responder_release(&async->responder);
             cJSON_Delete(async->id);

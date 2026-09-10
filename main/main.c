@@ -117,7 +117,9 @@ static void on_wifi_prov_state_change(wifi_prov_state_t new_state, void *ctx)
         resolved = BOARD_STATUS_PROVISIONING;
         break;
     case WIFI_PROV_STATE_CONNECTED:
-        resolved = BOARD_STATUS_READY;
+        /* Wi-Fi only makes STA transport available.  Gateway readiness is
+         * emitted once the mandatory runtime and OTA-finalize gate succeed. */
+        resolved = BOARD_STATUS_WIFI_CONNECTING;
         break;
     case WIFI_PROV_STATE_FAILED:
         resolved = BOARD_STATUS_ERROR;
@@ -234,6 +236,28 @@ void app_main(void)
         return;
     }
     gw_memory_log_checkpoint("device_settings_ready");
+
+    /* Runtime control ownership: DCS must exist before the scheduler, and the
+     * scheduler must exist before Settings starts its actor.  The worker keeps
+     * backward-compatible test ownership but observes ESP_ERR_INVALID_STATE
+     * here and borrows the already-running scheduler. */
+    if (gateway_events_init() != ESP_OK) {
+        ESP_LOGE(TAG, "Gateway events initialization failed");
+        return;
+    }
+    if (device_command_service_init() != ESP_OK) {
+        ESP_LOGE(TAG, "Device command service initialization failed");
+        return;
+    }
+    gw_memory_log_checkpoint("dev_cmd_svc_ready");
+    esp_err_t scheduler_err = device_control_scheduler_init();
+    if (scheduler_err != ESP_OK) {
+        ESP_LOGE(TAG, "Device control scheduler initialization failed: %s",
+                 esp_err_to_name(scheduler_err));
+        return;
+    }
+    gw_memory_log_checkpoint("control_scheduler_ready");
+
     if (device_settings_worker_init() != ESP_OK) {
         ESP_LOGE(TAG, "Settings worker initialization failed");
         return;
@@ -244,19 +268,6 @@ void app_main(void)
         return;
     }
     gw_memory_log_checkpoint("mcp_exposure_ready");
-    if (gateway_events_init() != ESP_OK) {
-        ESP_LOGE(TAG, "Gateway events initialization failed");
-        return;
-    }
-    if (device_command_service_init() != ESP_OK) {
-        ESP_LOGE(TAG, "Device command service initialization failed");
-        return;
-    }
-    gw_memory_log_checkpoint("dev_cmd_svc_ready");
-    if (device_control_scheduler_init() != ESP_OK) {
-        ESP_LOGE(TAG, "Device control scheduler initialization failed");
-        return;
-    }
     if (device_schema_control_adapter_init() != ESP_OK) {
         ESP_LOGE(TAG, "Schema control adapter initialization failed");
         return;
@@ -285,6 +296,8 @@ void app_main(void)
     start_external_mcp_bridge();
     gw_memory_log_checkpoint("gateway_ready");
     if (gateway_ota_finalize("sta") != ESP_OK) return;
+
+    board_io_set_status(BOARD_STATUS_READY);
 
     ESP_LOGI(TAG, "ESP32 BLE Gateway started (Central + Web UI + JSON-RPC)");
 }

@@ -85,6 +85,8 @@ esp_err_t gateway_status_get(gateway_status_t *status)
     status->ble_notify_queue_high_watermark =
         ble_central_notify_queue_high_watermark();
     device_schema_get_queue_stats(&status->schema_queue_metrics);
+    device_control_scheduler_get_stats(&status->control_scheduler_metrics);
+    device_command_service_get_stats(&status->command_service_metrics);
 
     return ESP_OK;
 }

@@ -43,6 +43,11 @@ typedef bool (*mcp_is_alive_fn)(void *context);
 typedef esp_err_t (*mcp_responder_clone_fn)(const mcp_responder_t *source,
                                             mcp_responder_t *out);
 typedef void (*mcp_release_fn)(void *context);
+typedef void (*mcp_work_fn)(void *context);
+/* Queue completion presentation onto the responder's transport worker. */
+typedef esp_err_t (*mcp_responder_post_fn)(void *context,
+                                           mcp_work_fn work,
+                                           void *work_context);
 
 struct mcp_responder {
     void *context;
@@ -51,6 +56,7 @@ struct mcp_responder {
     mcp_is_alive_fn is_alive;
     mcp_responder_clone_fn clone;
     mcp_release_fn release;
+    mcp_responder_post_fn post;
 };
 
 // The responder is borrowed for synchronous handling. If a BLE command is

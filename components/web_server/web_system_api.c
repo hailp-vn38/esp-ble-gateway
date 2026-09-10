@@ -116,6 +116,42 @@ static esp_err_t status_get_handler(httpd_req_t *request)
             }
         }
 
+        /* Control-plane counters are intentionally exposed as raw monotonic
+         * values so a soak harness can calculate deltas and high-watermarks. */
+        cJSON *control = cJSON_AddObjectToObject(json, "control_plane");
+        if (control != NULL) {
+            const device_control_scheduler_stats_t *scheduler =
+                &status.control_scheduler_metrics;
+            cJSON *scheduler_json = cJSON_AddObjectToObject(control, "scheduler");
+            if (scheduler_json != NULL) {
+                cJSON_AddNumberToObject(scheduler_json, "submitted", scheduler->submitted);
+                cJSON_AddNumberToObject(scheduler_json, "dispatched", scheduler->dispatched);
+                cJSON_AddNumberToObject(scheduler_json, "completed", scheduler->completed);
+                cJSON_AddNumberToObject(scheduler_json, "cancelled", scheduler->cancelled);
+                cJSON_AddNumberToObject(scheduler_json, "superseded", scheduler->superseded);
+                cJSON_AddNumberToObject(scheduler_json, "deadline_exceeded", scheduler->deadline_exceeded);
+                cJSON_AddNumberToObject(scheduler_json, "queue_full", scheduler->queue_full);
+                cJSON_AddNumberToObject(scheduler_json, "dcs_busy", scheduler->dcs_busy);
+                cJSON_AddNumberToObject(scheduler_json, "max_queued", scheduler->max_queued);
+                cJSON_AddNumberToObject(scheduler_json, "max_inflight", scheduler->max_inflight);
+                cJSON_AddNumberToObject(scheduler_json, "max_active_leases", scheduler->max_active_leases);
+                cJSON_AddNumberToObject(scheduler_json, "lease_hold_max_ms", scheduler->lease_hold_max_ms);
+                cJSON_AddNumberToObject(scheduler_json, "completion_mailbox_conflict", scheduler->completion_mailbox_conflict);
+            }
+            const device_command_service_stats_t *dcs =
+                &status.command_service_metrics;
+            cJSON *dcs_json = cJSON_AddObjectToObject(control, "command_service");
+            if (dcs_json != NULL) {
+                cJSON_AddNumberToObject(dcs_json, "urgent_queue_full", dcs->urgent_queue_full);
+                cJSON_AddNumberToObject(dcs_json, "ack_received", dcs->ack_received);
+                cJSON_AddNumberToObject(dcs_json, "ack_unmatched", dcs->ack_unmatched);
+                cJSON_AddNumberToObject(dcs_json, "ack_duplicate", dcs->ack_duplicate);
+                cJSON_AddNumberToObject(dcs_json, "timeout_count", dcs->timeout_count);
+                cJSON_AddNumberToObject(dcs_json, "disconnect_count", dcs->disconnect_count);
+                cJSON_AddNumberToObject(dcs_json, "max_pending", dcs->max_pending);
+            }
+        }
+
         // WebSocket transport metrics
         cJSON *ws = cJSON_AddObjectToObject(json, "websocket");
         if (ws != NULL) {

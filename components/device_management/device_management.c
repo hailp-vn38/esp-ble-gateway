@@ -2,7 +2,8 @@
 
 #include <string.h>
 
-#include "device_command_service.h"
+#include "device_control_scheduler.h"
+#include "device_settings.h"
 #include "device_state.h"
 
 static device_management_hooks_t s_hooks;
@@ -15,9 +16,12 @@ static void reset_hooks(void)
         .get_status = ble_central_get_device_status,
         .forget_peer = ble_central_forget_peer,
         .schema_get = device_schema_get,
+        .settings_forget = device_settings_forget,
         .schema_forget = device_schema_forget,
         .state_forget = device_state_forget,
-        .cancel_commands = device_command_service_cancel_device,
+        .scheduler_block = device_control_scheduler_block_device,
+        .scheduler_unblock = device_control_scheduler_unblock_device,
+        .scheduler_quiesce = device_control_scheduler_quiesce_device,
         .store_delete = device_store_delete,
         .publish = gateway_events_publish,
     };
@@ -38,9 +42,12 @@ void device_management_set_hooks(const device_management_hooks_t *hooks)
     OVERRIDE(get_status);
     OVERRIDE(forget_peer);
     OVERRIDE(schema_get);
+    OVERRIDE(settings_forget);
     OVERRIDE(schema_forget);
     OVERRIDE(state_forget);
-    OVERRIDE(cancel_commands);
+    OVERRIDE(scheduler_block);
+    OVERRIDE(scheduler_unblock);
+    OVERRIDE(scheduler_quiesce);
     OVERRIDE(store_delete);
     OVERRIDE(publish);
 #undef OVERRIDE
@@ -138,12 +145,28 @@ device_mgmt_delete_result_t device_management_delete(const char *device_id)
         return result;
     }
 
-    esp_err_t cancel_result = s_hooks.cancel_commands(device_id);
-    result.command_cancel_requested =
-        cancel_result == ESP_OK || cancel_result == ESP_ERR_INVALID_STATE;
+    if (s_hooks.scheduler_block(device_id) != ESP_OK ||
+        s_hooks.scheduler_quiesce(device_id, 500) != ESP_OK) {
+        (void)s_hooks.scheduler_unblock(device_id);
+        result.status = DEVICE_MGMT_BUSY;
+        publish_lifecycle(GW_EVENT_DEVICE_CHANGED, device_id);
+        return result;
+    }
+    result.scheduler_quiesced = true;
+    result.command_cancel_requested = true;
+
+    if (s_hooks.settings_forget(device_id) != ESP_OK) {
+        (void)s_hooks.scheduler_unblock(device_id);
+        result.status = DEVICE_MGMT_INTERNAL;
+        publish_lifecycle(GW_EVENT_DEVICE_CHANGED, device_id);
+        return result;
+    }
+    result.settings_forgotten = true;
 
     if (s_hooks.schema_forget(device_id) != ESP_OK) {
+        (void)s_hooks.scheduler_unblock(device_id);
         result.status = DEVICE_MGMT_INTERNAL;
+        publish_lifecycle(GW_EVENT_DEVICE_CHANGED, device_id);
         return result;
     }
     result.schema_forgotten = true;
@@ -160,6 +183,8 @@ device_mgmt_delete_result_t device_management_delete(const char *device_id)
     if (result.store_deleted) {
         publish_lifecycle(GW_EVENT_DEVICE_REMOVED, device_id);
     } else {
+        /* Store deletion failed, so this device remains in inventory. */
+        (void)s_hooks.scheduler_unblock(device_id);
         publish_lifecycle(GW_EVENT_DEVICE_CHANGED, device_id);
     }
     result.status = result.ble_peer_forgotten && result.store_deleted

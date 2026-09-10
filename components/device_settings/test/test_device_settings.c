@@ -331,6 +331,20 @@ TEST_CASE("device_settings reset_for_test cleans up",
     /* Schema was freed by reset_for_test — do not access it. */
 }
 
+TEST_CASE("device_settings_forget is idempotent without a settings record",
+          "[device_settings][gcf07]")
+{
+    device_settings_reset_for_test();
+    TEST_ASSERT_EQUAL(ESP_OK, device_settings_init());
+
+    /* Devices without Settings capability never create a record.  Delete
+     * still needs their Settings purge step to be considered complete. */
+    TEST_ASSERT_EQUAL(ESP_OK, device_settings_forget("no-settings"));
+    TEST_ASSERT_EQUAL(ESP_OK, device_settings_forget("no-settings"));
+
+    device_settings_deinit();
+}
+
 /* ── Operation API tests ───────────────────────────────────────────── */
 
 static bool s_op_completed;
@@ -522,6 +536,7 @@ TEST_CASE("DS-TX-001..015 canonical BEGIN SET COMMIT CONFIRM flow",
     device_command_service_set_hooks(&mock_cmd_hooks);
     TEST_ASSERT_EQUAL(ESP_OK, device_command_service_init());
     TEST_ASSERT_EQUAL(ESP_OK, device_settings_init());
+    TEST_ASSERT_EQUAL(ESP_OK, device_settings_worker_init());
     ds_device_record_t *rec = setup_tx_schema("tx-g7", DS_TYPE_BOOL, DS_FLAG_WRITABLE);
     ds_change_request_t change = { .type = DS_TYPE_BOOL, .bool_val = true };
     strlcpy(change.setting_id, "setting", sizeof(change.setting_id));
@@ -551,8 +566,43 @@ TEST_CASE("DS-TX-001..015 canonical BEGIN SET COMMIT CONFIRM flow",
     tx_ack("tx-g7");
     TEST_ASSERT_EQUAL(DS_TX_WAITING_REBOOT, tx->state);
     TEST_ASSERT_FALSE(tx_completed);
-    rec->schema = NULL;
+
+    /* The expected peripheral reboot must release transport ownership without
+     * cancelling/freeing the transaction needed by post-reboot verification. */
+    device_settings_on_disconnect("tx-g7");
+    vTaskDelay(pdMS_TO_TICKS(80));
+    tx = ds_tx_find("tx-g7");
+    TEST_ASSERT_NOT_NULL(tx);
+    TEST_ASSERT_EQUAL(DS_TX_WAITING_REBOOT, tx->state);
+    TEST_ASSERT_EQUAL_UINT32(0, tx->lease_id);
+    TEST_ASSERT_TRUE(rec->pending_reconciliation);
+    TEST_ASSERT_FALSE(tx_completed);
+
+    /* Simulate the refreshed values stream committed after reconnect. */
+    ds_values_builder_t values_builder;
+    TEST_ASSERT_EQUAL(ESP_OK, ds_values_builder_init(&values_builder));
+    values_builder.config_revision = 8;
+    uint16_t value_id_off = 0;
+    TEST_ASSERT_EQUAL(ESP_OK, ds_string_pool_add(&values_builder.string_pool,
+                                                "setting", &value_id_off));
+    ds_value_entry_t value = {
+        .id_off = value_id_off,
+        .type = DS_TYPE_BOOL,
+        .has_value = true,
+        .bool_val = true,
+    };
+    TEST_ASSERT_EQUAL(ESP_OK, ds_values_builder_add(&values_builder, &value));
+    ds_values_t *values = ds_values_builder_commit(&values_builder);
+    TEST_ASSERT_NOT_NULL(values);
+    TEST_ASSERT_EQUAL(ESP_OK,
+                      device_settings_commit_values("tx-g7", values));
+    device_settings_reconcile("tx-g7");
+    TEST_ASSERT_TRUE(tx_completed);
+    TEST_ASSERT_EQUAL(DS_TX_RESULT_OK, tx_result);
+    TEST_ASSERT_NULL(ds_tx_find("tx-g7"));
+
     ds_tx_reset_for_test();
+    device_settings_worker_deinit();
     device_command_service_deinit();
     device_command_service_set_hooks(NULL);
     device_settings_reset_for_test();

@@ -6,7 +6,7 @@
 #include <string.h>
 
 #include "cJSON.h"
-#include "device_command_service.h"
+#include "device_control_scheduler.h"
 #include "esp_log.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
@@ -17,6 +17,7 @@ static size_t s_active_contexts;
 
 typedef struct {
     httpd_req_t *request;
+    device_control_result_t result;
 } command_async_context_t;
 
 /* ── Device command path (new service) ───────────────────────────────── */
@@ -59,15 +60,37 @@ static const char *device_error_code(const device_command_status_t status)
     }
 }
 
-static void device_command_completion(const device_command_result_t *result,
-                                      void *arg)
+static const char *scheduler_terminal_status(const device_control_result_t *result)
+{
+    switch (result->terminal) {
+    case DEVICE_CTRL_TERMINAL_DEADLINE_EXCEEDED: return "504 Gateway Timeout";
+    case DEVICE_CTRL_TERMINAL_CANCELLED: return "503 Service Unavailable";
+    case DEVICE_CTRL_TERMINAL_SUPERSEDED: return "503 Service Unavailable";
+    case DEVICE_CTRL_TERMINAL_COMMAND: return device_status_http(result->command_result.status);
+    }
+    return "500 Internal Server Error";
+}
+
+static const char *scheduler_terminal_error(const device_control_result_t *result)
+{
+    switch (result->terminal) {
+    case DEVICE_CTRL_TERMINAL_DEADLINE_EXCEEDED: return "queue_deadline_exceeded";
+    case DEVICE_CTRL_TERMINAL_CANCELLED: return "cancelled";
+    case DEVICE_CTRL_TERMINAL_SUPERSEDED: return "superseded";
+    case DEVICE_CTRL_TERMINAL_COMMAND: return device_error_code(result->command_result.status);
+    }
+    return "internal_error";
+}
+
+static void command_result_work(void *arg)
 {
     command_async_context_t *context = arg;
+    const device_command_result_t *result = &context->result.command_result;
 
-    bool ok = (result->status == DEVICE_CMD_STATUS_OK);
+    bool ok = context->result.terminal == DEVICE_CTRL_TERMINAL_COMMAND &&
+              result->status == DEVICE_CMD_STATUS_OK;
     if (!ok) {
-        httpd_resp_set_status(context->request,
-                              device_status_http(result->status));
+        httpd_resp_set_status(context->request, scheduler_terminal_status(&context->result));
     }
 
     cJSON *json = cJSON_CreateObject();
@@ -78,7 +101,7 @@ static void device_command_completion(const device_command_result_t *result,
             cJSON *error = cJSON_AddObjectToObject(json, "error");
             if (error != NULL) {
                 cJSON_AddStringToObject(error, "code",
-                                        device_error_code(result->status));
+                                        scheduler_terminal_error(&context->result));
             }
         }
         /* Authoritative feature state from device ACK */
@@ -108,6 +131,24 @@ static void device_command_completion(const device_command_result_t *result,
     free(context);
 }
 
+static void device_command_completion(const device_control_result_t *result,
+                                      void *arg)
+{
+    command_async_context_t *context = arg;
+    context->result = *result;
+    if (httpd_queue_work(context->request->handle, command_result_work,
+                         context) == ESP_OK) {
+        return;
+    }
+
+    /* The HTTPD worker cannot consume this result.  Complete and release the
+     * accepted async context so a full work queue cannot leak it. */
+    ESP_LOGW(TAG, "Could not queue asynchronous device command result");
+    (void)httpd_req_async_handler_complete(context->request);
+    __atomic_sub_fetch(&s_active_contexts, 1, __ATOMIC_RELAXED);
+    free(context);
+}
+
 static esp_err_t dispatch_device_command_async(httpd_req_t *request,
                                                const device_command_request_t *req)
 {
@@ -125,8 +166,15 @@ static esp_err_t dispatch_device_command_async(httpd_req_t *request,
     }
     __atomic_add_fetch(&s_active_contexts, 1, __ATOMIC_RELAXED);
 
-    if (device_command_service_submit(req, device_command_completion, context) !=
-        ESP_OK) {
+    const device_control_job_t job = {
+        .request = *req,
+        .priority = DEVICE_CTRL_PRIORITY_HIGH,
+        .source = DEVICE_CTRL_SOURCE_WEB,
+        .dedupe = DEVICE_CTRL_DEDUPE_NONE,
+        .max_queue_wait_ms = 1200,
+    };
+    if (device_control_scheduler_submit(&job, device_command_completion,
+                                        context, NULL) != ESP_OK) {
         web_send_api_error(context->request, "503 Service Unavailable",
                            "Command service is full");
         httpd_req_async_handler_complete(context->request);

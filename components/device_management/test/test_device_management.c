@@ -10,10 +10,15 @@
 static int s_connect_rc;
 static int s_forget_rc;
 static esp_err_t s_schema_forget_rc;
+static esp_err_t s_settings_forget_rc;
+static esp_err_t s_quiesce_rc;
 static bool s_store_delete_fails;
 static ble_central_device_status_t s_runtime;
 static device_schema_snapshot_t s_schema;
-static unsigned s_cancel_count;
+static unsigned s_scheduler_block_count;
+static unsigned s_scheduler_unblock_count;
+static unsigned s_scheduler_quiesce_count;
+static unsigned s_settings_forget_count;
 static unsigned s_state_forget_count;
 static unsigned s_publish_count;
 static gateway_event_t s_last_event;
@@ -53,17 +58,39 @@ static esp_err_t mock_schema_forget(const char *id)
     return s_schema_forget_rc;
 }
 
+static esp_err_t mock_settings_forget(const char *id)
+{
+    (void)id;
+    s_settings_forget_count++;
+    return s_settings_forget_rc;
+}
+
 static void mock_state_forget(const char *id)
 {
     (void)id;
     s_state_forget_count++;
 }
 
-static esp_err_t mock_cancel(const char *id)
+static esp_err_t mock_scheduler_block(const char *id)
 {
     (void)id;
-    s_cancel_count++;
+    s_scheduler_block_count++;
     return ESP_OK;
+}
+
+static esp_err_t mock_scheduler_unblock(const char *id)
+{
+    (void)id;
+    s_scheduler_unblock_count++;
+    return ESP_OK;
+}
+
+static esp_err_t mock_scheduler_quiesce(const char *id, uint32_t timeout_ms)
+{
+    (void)id;
+    (void)timeout_ms;
+    s_scheduler_quiesce_count++;
+    return s_quiesce_rc;
 }
 
 static device_store_result_t mock_store_delete(const char *id)
@@ -83,9 +110,12 @@ static const device_management_hooks_t s_test_hooks = {
     .get_status = mock_get_status,
     .forget_peer = mock_forget,
     .schema_get = mock_schema_get,
+    .settings_forget = mock_settings_forget,
     .schema_forget = mock_schema_forget,
     .state_forget = mock_state_forget,
-    .cancel_commands = mock_cancel,
+    .scheduler_block = mock_scheduler_block,
+    .scheduler_unblock = mock_scheduler_unblock,
+    .scheduler_quiesce = mock_scheduler_quiesce,
     .store_delete = mock_store_delete,
     .publish = mock_publish,
 };
@@ -105,10 +135,15 @@ static void reset_test(void)
     s_connect_rc = BLE_CENTRAL_OK;
     s_forget_rc = BLE_CENTRAL_OK;
     s_schema_forget_rc = ESP_OK;
+    s_settings_forget_rc = ESP_OK;
+    s_quiesce_rc = ESP_OK;
     s_store_delete_fails = false;
     memset(&s_runtime, 0, sizeof(s_runtime));
     memset(&s_schema, 0, sizeof(s_schema));
-    s_cancel_count = 0;
+    s_scheduler_block_count = 0;
+    s_scheduler_unblock_count = 0;
+    s_scheduler_quiesce_count = 0;
+    s_settings_forget_count = 0;
     s_state_forget_count = 0;
     s_publish_count = 0;
     memset(&s_last_event, 0, sizeof(s_last_event));
@@ -239,11 +274,29 @@ TEST_CASE("delete aborts after schema failure",
     s_schema_forget_rc = ESP_FAIL;
     device_mgmt_delete_result_t result = device_management_delete("dev1");
     TEST_ASSERT_EQUAL(DEVICE_MGMT_INTERNAL, result.status);
-    TEST_ASSERT_TRUE(result.command_cancel_requested);
+    TEST_ASSERT_TRUE(result.scheduler_quiesced);
+    TEST_ASSERT_TRUE(result.settings_forgotten);
     TEST_ASSERT_FALSE(result.schema_forgotten);
+    TEST_ASSERT_EQUAL_UINT32(1, s_scheduler_unblock_count);
     TEST_ASSERT_EQUAL_UINT32(0, s_state_forget_count);
     device_entry_t entry;
     TEST_ASSERT_EQUAL(DEVICE_STORE_OK, device_store_get("dev1", &entry));
+}
+
+TEST_CASE("delete failure unblocks a surviving scheduler device",
+          "[device_management][gcf07]")
+{
+    reset_test();
+    device_mgmt_add_request_t add = make_add("dev1", NULL);
+    TEST_ASSERT_EQUAL(DEVICE_MGMT_OK, device_management_add(&add).status);
+    s_settings_forget_rc = ESP_FAIL;
+    device_mgmt_delete_result_t result = device_management_delete("dev1");
+    TEST_ASSERT_EQUAL(DEVICE_MGMT_INTERNAL, result.status);
+    TEST_ASSERT_TRUE(result.scheduler_quiesced);
+    TEST_ASSERT_EQUAL_UINT32(1, s_scheduler_block_count);
+    TEST_ASSERT_EQUAL_UINT32(1, s_scheduler_quiesce_count);
+    TEST_ASSERT_EQUAL_UINT32(1, s_scheduler_unblock_count);
+    TEST_ASSERT_EQUAL_UINT32(0, s_state_forget_count);
 }
 
 TEST_CASE("delete reports degraded BLE and store cleanup",
@@ -265,6 +318,7 @@ TEST_CASE("delete reports degraded BLE and store cleanup",
     TEST_ASSERT_EQUAL(DEVICE_MGMT_DEGRADED, result.status);
     TEST_ASSERT_TRUE(result.ble_peer_forgotten);
     TEST_ASSERT_FALSE(result.store_deleted);
+    TEST_ASSERT_EQUAL_UINT32(1, s_scheduler_unblock_count);
     TEST_ASSERT_EQUAL(GW_EVENT_DEVICE_CHANGED, s_last_event.type);
 }
 
@@ -277,7 +331,7 @@ TEST_CASE("delete cancels commands publishes lifecycle and is idempotent",
     s_publish_count = 0;
     device_mgmt_delete_result_t result = device_management_delete("dev1");
     TEST_ASSERT_EQUAL(DEVICE_MGMT_OK, result.status);
-    TEST_ASSERT_EQUAL_UINT32(1, s_cancel_count);
+    TEST_ASSERT_EQUAL_UINT32(1, s_scheduler_quiesce_count);
     TEST_ASSERT_TRUE(result.command_cancel_requested);
     TEST_ASSERT_TRUE(result.schema_forgotten);
     TEST_ASSERT_TRUE(result.state_forgotten);

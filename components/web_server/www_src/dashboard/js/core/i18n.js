@@ -289,6 +289,8 @@ const i18n = {
             'device_settings.op_succeeded': 'Settings applied',
             'device_settings.op_failed': 'Update failed',
             'device_settings.op_conflict': 'Conflict — revision mismatch',
+            'device_settings.op_cancelled': 'Update cancelled',
+            'device_settings.op_outcome_unknown': 'Could not verify the update result',
             'device_settings.op_unknown': 'Verifying…'
         },
         vi: {
@@ -578,6 +580,8 @@ const i18n = {
             'device_settings.op_succeeded': 'Đã áp dụng cài đặt',
             'device_settings.op_failed': 'Cập nhật thất bại',
             'device_settings.op_conflict': 'Xung đột — phiên bản không khớp',
+            'device_settings.op_cancelled': 'Đã hủy cập nhật',
+            'device_settings.op_outcome_unknown': 'Không thể xác minh kết quả cập nhật',
             'device_settings.op_unknown': 'Đang xác minh…'
         }
     },

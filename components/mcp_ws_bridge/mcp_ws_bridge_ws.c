@@ -308,6 +308,22 @@ static void ws_responder_release(void *context)
     if (responder != NULL && responder->owned) free(responder);
 }
 
+static esp_err_t ws_responder_post(void *context, mcp_work_fn work,
+                                   void *work_context)
+{
+    ws_responder_context_t *responder = context;
+    if (responder == NULL || work == NULL || !ws_responder_is_alive(responder)) {
+        return ESP_ERR_INVALID_STATE;
+    }
+    const bridge_event_t event = {
+        .type = BRIDGE_EVENT_MCP_COMPLETION,
+        .generation = responder->generation,
+        .completion_work = work,
+        .completion_context = work_context,
+    };
+    return bridge_queue_event(&event) ? ESP_OK : ESP_ERR_NO_MEM;
+}
+
 static mcp_responder_t make_ws_responder(ws_responder_context_t *context)
 {
     const mcp_responder_t responder = {
@@ -317,6 +333,7 @@ static mcp_responder_t make_ws_responder(ws_responder_context_t *context)
         .is_alive = ws_responder_is_alive,
         .clone = ws_responder_clone,
         .release = ws_responder_release,
+        .post = ws_responder_post,
     };
     return responder;
 }

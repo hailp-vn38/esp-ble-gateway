@@ -287,8 +287,12 @@ static esp_err_t devices_delete_handler(httpd_req_t *request)
     device_mgmt_delete_result_t result = device_management_delete(device_id);
     cJSON *data = cJSON_CreateObject();
     if (data != NULL) {
+        cJSON_AddBoolToObject(data, "scheduler_quiesced",
+                              result.scheduler_quiesced);
         cJSON_AddBoolToObject(data, "command_cancel_requested",
                               result.command_cancel_requested);
+        cJSON_AddBoolToObject(data, "settings_forgotten",
+                              result.settings_forgotten);
         cJSON_AddBoolToObject(data, "schema_forgotten", result.schema_forgotten);
         cJSON_AddBoolToObject(data, "state_forgotten", result.state_forgotten);
         cJSON_AddBoolToObject(data, "ble_peer_forgotten",

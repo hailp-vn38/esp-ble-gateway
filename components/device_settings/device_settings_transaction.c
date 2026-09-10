@@ -1,7 +1,8 @@
 #include <string.h>
 
 #include "device_settings.h"
-#include "device_command_service.h"
+#include "device_control_scheduler.h"
+#include "device_settings_internal.h"
 #include "esp_log.h"
 #include "esp_timer.h"
 #include "freertos/FreeRTOS.h"
@@ -151,6 +152,10 @@ static void ds_tx_complete(ds_transaction_t *tx, ds_tx_result_t result,
     else if (result == DS_TX_RESULT_CANCELLED) transition_tx(tx, DS_TX_CANCELLED);
     else if (result == DS_TX_RESULT_OUTCOME_UNKNOWN) transition_tx(tx, DS_TX_OUTCOME_UNKNOWN);
     else transition_tx(tx, DS_TX_FAILED);
+    if (tx->lease_id != 0) {
+        (void)device_control_scheduler_release_lease(tx->lease_id);
+        tx->lease_id = 0;
+    }
     device_settings_tx_store_result(tx->device_id, result, config_revision);
     ds_tx_completion_fn cb = tx->completion;
     void *ctx = tx->context;
@@ -180,8 +185,32 @@ static uint64_t next_transaction_id(void)
 
 /* ── Command completion callback (runs from command service task) ────── */
 
-static void on_cmd_complete(const device_command_result_t *result,
-                            void *context);
+static void on_scheduler_complete(const device_control_result_t *result,
+                                  void *context)
+{
+    const ds_transaction_t *tx = context;
+    if (tx == NULL) return;
+    ds_event_t ev = { .type = DS_EVENT_COMMAND_COMPLETE, .slot = -1,
+        .generation = (uint32_t)tx->transaction_id, .owner_token = tx->owner_token };
+    strlcpy(ev.device_id, tx->device_id, sizeof(ev.device_id));
+    if (result == NULL) ev.data.command.status = DEVICE_CMD_STATUS_INTERNAL;
+    else if (result->terminal == DEVICE_CTRL_TERMINAL_COMMAND) ev.data.command = result->command_result;
+    else ev.data.command.status = DEVICE_CMD_STATUS_CANCELLED;
+    (void)ds_events_post(&ev);
+}
+
+static esp_err_t submit_tx_command(ds_transaction_t *tx,
+                                   const device_command_request_t *request)
+{
+    device_control_job_t job = {
+        .request = *request,
+        .priority = DEVICE_CTRL_PRIORITY_HIGH,
+        .source = DEVICE_CTRL_SOURCE_SETTINGS,
+        .owner_token = tx->owner_token,
+        .lease_id = tx->lease_id,
+    };
+    return device_control_scheduler_submit(&job, on_scheduler_complete, tx, NULL);
+}
 
 /* ── Reconciliation timer ─────────────────────────────────────────────
  * Fires if device does not reconnect within DS_RECONCILIATION_TIMEOUT_MS
@@ -194,20 +223,9 @@ static void reconciliation_timeout_cb(TimerHandle_t timer)
     ds_transaction_t *tx = (ds_transaction_t *)pvTimerGetTimerID(timer);
     if (tx == NULL || !tx->active) return;
 
-    tx->recon_timer = NULL;
-
-    if (tx->state != DS_TX_WAITING_REBOOT) return;
-
-    ESP_LOGW(TAG, "[OUTCOME_UNKNOWN] device=%s tx_id=%llu reason=reconcile_timeout",
-             tx->device_id, (unsigned long long)tx->transaction_id);
-    DS_DIAG_INC(outcome_unknown);
-
-    ds_device_record_t *rec = device_settings_find_record(tx->device_id);
-    if (rec != NULL) {
-        rec->pending_reconciliation = false;
-    }
-
-    ds_tx_complete(tx, DS_TX_RESULT_OUTCOME_UNKNOWN, 0);
+    ds_event_t ev = { .type = DS_EVENT_TRANSACTION_TIMEOUT };
+    strlcpy(ev.device_id, tx->device_id, sizeof(ev.device_id));
+    (void)ds_events_post(&ev);
 }
 
 static void cancel_reconciliation_timer(ds_transaction_t *tx)
@@ -219,7 +237,7 @@ static void cancel_reconciliation_timer(ds_transaction_t *tx)
 
 static void start_reconciliation_timer(ds_transaction_t *tx)
 {
-    if (tx == NULL) return;
+    if (tx == NULL || tx->recon_timer != NULL) return;
 
     TimerHandle_t t = xTimerCreate(
         "ds_recon",
@@ -236,6 +254,34 @@ static void start_reconciliation_timer(ds_transaction_t *tx)
             xTimerDelete(t, 0);
         }
     }
+}
+
+static void release_tx_lease(ds_transaction_t *tx)
+{
+    if (tx == NULL || tx->lease_id == 0) return;
+    esp_err_t err = device_control_scheduler_release_lease(tx->lease_id);
+    if (err != ESP_OK && err != ESP_ERR_NOT_FOUND) {
+        ESP_LOGW(TAG, "[%s] lease %lu release failed: %s", tx->device_id,
+                 (unsigned long)tx->lease_id, esp_err_to_name(err));
+    }
+    tx->lease_id = 0;
+}
+
+static void mark_reconciliation_pending(ds_transaction_t *tx)
+{
+    if (tx == NULL || !tx->active) return;
+
+    uint32_t expected = tx->new_config_rev != 0
+                            ? tx->new_config_rev
+                            : tx->expected_config_rev + 1;
+    ds_device_record_t *rec = device_settings_find_record(tx->device_id);
+    if (rec != NULL) {
+        rec->pending_reconciliation = true;
+        rec->reconciliation_expected_rev = expected;
+        rec->reconciliation_old_rev = tx->expected_config_rev;
+    }
+    transition_tx(tx, DS_TX_WAITING_REBOOT);
+    start_reconciliation_timer(tx);
 }
 
 /* ── Prevalidate one change against schema ──────────────────────────── */
@@ -354,8 +400,7 @@ static void submit_next_command(ds_transaction_t *tx)
                  (unsigned)tx->change_count,
                  ch->setting_id);
 
-        esp_err_t err = device_command_service_submit(
-            &req, on_cmd_complete, tx);
+        esp_err_t err = submit_tx_command(tx, &req);
         if (err != ESP_OK) {
             ESP_LOGE(TAG, "[%s] SET submit failed: %s",
                      tx->device_id, esp_err_to_name(err));
@@ -377,8 +422,7 @@ static void submit_next_command(ds_transaction_t *tx)
     ESP_LOGI(TAG, "[TX_COMMIT] device=%s tx_id=%llu", tx->device_id,
              (unsigned long long)tx->transaction_id);
 
-    esp_err_t err = device_command_service_submit(
-        &req, on_cmd_complete, tx);
+    esp_err_t err = submit_tx_command(tx, &req);
     if (err != ESP_OK) {
         ESP_LOGE(TAG, "[%s] COMMIT submit failed: %s",
                  tx->device_id, esp_err_to_name(err));
@@ -389,16 +433,33 @@ static void submit_next_command(ds_transaction_t *tx)
 
 /* ── Command completion callback ────────────────────────────────────── */
 
-static void on_cmd_complete(const device_command_result_t *result,
-                            void *context)
+void device_settings_tx_actor_command_complete(const char *device_id,
+                                               const device_command_result_t *result)
 {
-    ds_transaction_t *tx = context;
+    ds_transaction_t *tx = ds_tx_find(device_id);
     if (tx == NULL || !tx->active) return;
 
     if (result == NULL) {
         ESP_LOGE(TAG, "[%s] cmd callback with NULL result", tx->device_id);
         transition_tx(tx, DS_TX_FAILED);
         ds_tx_complete(tx, DS_TX_RESULT_INTERNAL, 0);
+        return;
+    }
+
+    /* A peripheral reboot can race the final COMMIT/CONFIRM completion with
+     * the BLE disconnect event.  Once reconciliation is pending, transport
+     * cancellation is expected and must not destroy the transaction that the
+     * post-reboot values stream will verify. */
+    if (tx->state == DS_TX_WAITING_REBOOT) {
+        if (result->status == DEVICE_CMD_STATUS_OK && result->has_int_value) {
+            tx->new_config_rev = (uint32_t)result->int_value;
+            ds_device_record_t *rec = device_settings_find_record(tx->device_id);
+            if (rec != NULL) {
+                rec->reconciliation_expected_rev = tx->new_config_rev;
+            }
+        }
+        ESP_LOGI(TAG, "[%s] ignore transport completion status=%d while waiting reboot",
+                 tx->device_id, (int)result->status);
         return;
     }
 
@@ -435,28 +496,17 @@ static void on_cmd_complete(const device_command_result_t *result,
             ESP_LOGI(TAG, "[TX_CONFIRM] device=%s tx_id=%llu new_config_rev=%lu",
                      tx->device_id, (unsigned long long)tx->transaction_id,
                      (unsigned long)tx->new_config_rev);
-            if (device_command_service_submit(&confirm, on_cmd_complete, tx) != ESP_OK) {
+            if (submit_tx_command(tx, &confirm) != ESP_OK) {
                 transition_tx(tx, DS_TX_FAILED);
                 ds_tx_complete(tx, DS_TX_RESULT_INTERNAL, 0);
             }
         } else if (tx->state == DS_TX_CONFIRM_SENT) {
-            transition_tx(tx, DS_TX_WAITING_REBOOT);
+            mark_reconciliation_pending(tx);
             DS_DIAG_INC(tx_success);
             ESP_LOGI(TAG, "[WAIT_REBOOT] device=%s tx_id=%llu new_config_rev=%lu",
                      tx->device_id, (unsigned long long)tx->transaction_id,
                      (unsigned long)tx->new_config_rev);
 
-            /* Set reconciliation state on device record. */
-            ds_device_record_t *rec =
-                device_settings_find_record(tx->device_id);
-            if (rec != NULL) {
-                rec->pending_reconciliation = true;
-                rec->reconciliation_expected_rev = tx->new_config_rev;
-                rec->reconciliation_old_rev = tx->expected_config_rev;
-            }
-
-            /* Start timeout timer. */
-            start_reconciliation_timer(tx);
         }
         break;
 
@@ -488,15 +538,8 @@ static void on_cmd_complete(const device_command_result_t *result,
             ESP_LOGW(TAG, "[%s] TIMEOUT during COMMIT — OUTCOME_UNKNOWN",
                      tx->device_id);
             DS_DIAG_INC(outcome_unknown);
-            ds_device_record_t *rec =
-                device_settings_find_record(tx->device_id);
-            if (rec != NULL) {
-                rec->pending_reconciliation = true;
-                rec->reconciliation_expected_rev = tx->expected_config_rev + 1;
-                rec->reconciliation_old_rev = tx->expected_config_rev;
-            }
-            transition_tx(tx, DS_TX_WAITING_REBOOT);
-            start_reconciliation_timer(tx);
+            mark_reconciliation_pending(tx);
+            release_tx_lease(tx);
         } else {
             transition_tx(tx, DS_TX_FAILED);
             DS_DIAG_INC(tx_fail);
@@ -512,15 +555,8 @@ static void on_cmd_complete(const device_command_result_t *result,
             ESP_LOGW(TAG, "[%s] DISCONNECT during COMMIT — OUTCOME_UNKNOWN",
                      tx->device_id);
             DS_DIAG_INC(outcome_unknown);
-            ds_device_record_t *rec =
-                device_settings_find_record(tx->device_id);
-            if (rec != NULL) {
-                rec->pending_reconciliation = true;
-                rec->reconciliation_expected_rev = tx->expected_config_rev + 1;
-                rec->reconciliation_old_rev = tx->expected_config_rev;
-            }
-            transition_tx(tx, DS_TX_WAITING_REBOOT);
-            start_reconciliation_timer(tx);
+            mark_reconciliation_pending(tx);
+            release_tx_lease(tx);
         } else {
             transition_tx(tx, DS_TX_FAILED);
             DS_DIAG_INC(tx_fail);
@@ -620,7 +656,7 @@ esp_err_t device_settings_save(const char *device_id,
              device_id, (unsigned long long)tx->transaction_id, (unsigned)change_count,
              (unsigned long)expected_config_rev);
 
-    /* Send BEGIN command. */
+    /* The actor owns the first transition and lease acquisition. */
     device_command_request_t req = {0};
     req.origin = DEVICE_CMD_ORIGIN_SETTINGS;
     strlcpy(req.device_id, device_id, sizeof(req.device_id));
@@ -630,16 +666,12 @@ esp_err_t device_settings_save(const char *device_id,
     req.settings.has_expected_revision = true;
     req.settings.expected_revision = expected_config_rev;
 
-    transition_tx(tx, DS_TX_BEGIN_SENT);
-    esp_err_t err = device_command_service_submit(
-        &req, on_cmd_complete, tx);
-    if (err != ESP_OK) {
-        ESP_LOGE(TAG, "[%s] BEGIN submit failed: %s",
-                 device_id, esp_err_to_name(err));
-        ds_tx_complete(tx, DS_TX_RESULT_INTERNAL, 0);
-        return err;
-    }
-
+    ds_event_t ev = { .type = DS_EVENT_TRANSACTION_START,
+        .generation = (uint32_t)tx->transaction_id,
+        .owner_token = (uint32_t)tx->transaction_id };
+    strlcpy(ev.device_id, device_id, sizeof(ev.device_id));
+    (void)req; /* canonical BEGIN is built in actor begin below */
+    if (!ds_events_post(&ev)) { ds_tx_free(tx); return ESP_ERR_NO_MEM; }
     return ESP_OK;
 }
 
@@ -656,12 +688,65 @@ esp_err_t device_settings_tx_cancel(const char *device_id)
 
     ESP_LOGI(TAG, "[%s] TX cancel requested", device_id);
 
-    /* Cancel any pending command in the command service. */
-    device_command_service_cancel_device(device_id);
-
-    /* The command service will call our callback with CANCELLED,
-     * which will free the transaction. */
+    ds_event_t ev = { .type = DS_EVENT_TRANSACTION_ABORT };
+    strlcpy(ev.device_id, device_id, sizeof(ev.device_id));
+    (void)ds_events_post(&ev);
     return ESP_OK;
+}
+
+void device_settings_tx_actor_begin(const char *device_id, uint32_t owner, uint32_t lease)
+{
+    ds_transaction_t *tx = ds_tx_find(device_id);
+    if (tx == NULL) { if (lease) (void)device_control_scheduler_release_lease(lease); return; }
+    tx->owner_token = owner; tx->lease_id = lease;
+    device_command_request_t req = { .origin = DEVICE_CMD_ORIGIN_SETTINGS };
+    strlcpy(req.device_id, device_id, sizeof(req.device_id));
+    strlcpy(req.command, GW_SETTINGS_CMD_TX_BEGIN, sizeof(req.command));
+    req.settings.has_transaction_id = true; req.settings.transaction_id = tx->transaction_id;
+    req.settings.has_expected_revision = true; req.settings.expected_revision = tx->expected_config_rev;
+    transition_tx(tx, DS_TX_BEGIN_SENT);
+    if (submit_tx_command(tx, &req) != ESP_OK) ds_tx_complete(tx, DS_TX_RESULT_INTERNAL, 0);
+}
+
+void device_settings_tx_actor_abort(const char *device_id)
+{
+    ds_transaction_t *tx = ds_tx_find(device_id);
+    if (tx == NULL) return;
+    (void)device_control_scheduler_cancel_source(device_id, DEVICE_CTRL_SOURCE_SETTINGS, tx->owner_token);
+    ds_tx_complete(tx, DS_TX_RESULT_CANCELLED, 0);
+}
+
+bool device_settings_tx_actor_on_disconnect(const char *device_id)
+{
+    ds_transaction_t *tx = ds_tx_find(device_id);
+    if (tx == NULL) return false;
+
+    if (tx->state != DS_TX_COMMIT_SENT &&
+        tx->state != DS_TX_CONFIRM_SENT &&
+        tx->state != DS_TX_WAITING_REBOOT) {
+        return false;
+    }
+
+    if (tx->state != DS_TX_WAITING_REBOOT) {
+        DS_DIAG_INC(outcome_unknown);
+        mark_reconciliation_pending(tx);
+    }
+    release_tx_lease(tx);
+    ESP_LOGI(TAG, "[REBOOT_DISCONNECT] device=%s tx_id=%llu preserved",
+             tx->device_id, (unsigned long long)tx->transaction_id);
+    return true;
+}
+
+void device_settings_tx_actor_timeout(const char *device_id)
+{
+    ds_transaction_t *tx = ds_tx_find(device_id);
+    if (tx == NULL) return;
+    if (tx->state != DS_TX_WAITING_REBOOT) {
+        device_settings_tx_actor_abort(device_id);
+        return;
+    }
+    DS_DIAG_INC(outcome_unknown);
+    ds_tx_complete(tx, DS_TX_RESULT_OUTCOME_UNKNOWN, 0);
 }
 
 /* ── Public API: transaction status (for web layer) ─────────────────── */

@@ -623,7 +623,13 @@ TEST_CASE("set: read-only feature denied", "[device_control]")
 TEST_CASE("set: no exposure — control denied", "[device_control]")
 {
     setup_committed_schema("dc-set-noexp", "NoExp", 4011);
-    /* Deliberately NOT calling setup_feature_exposure */
+    /* Schema commit now auto-binds semantic exposures.  Explicitly revoke
+     * that record to exercise the no-exposure policy branch. */
+    /* The schema commit queues a reconcile event.  Let that event settle,
+     * then revoke so this case observes the intended no-exposure state. */
+    vTaskDelay(pdMS_TO_TICKS(50));
+    TEST_ASSERT_EQUAL_INT(ESP_OK,
+                          mcp_tool_exposure_forget_device("dc-set-noexp"));
 
     mcp_request_context_t ctx = make_ctx_2025();
     mcp_device_control_plan_t plan = {0};

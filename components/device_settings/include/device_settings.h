@@ -6,6 +6,7 @@
 #include <stdint.h>
 
 #include "cbor_codec.h"
+#include "device_command_types.h"
 #include "device_types.h"
 #include "esp_err.h"
 
@@ -149,6 +150,9 @@ typedef struct {
 
     /* Non-zero transaction correlation ID sent in Settings key 41. */
     uint64_t            transaction_id;
+    /* Set only by the Settings actor after its logical lease is granted. */
+    uint32_t            owner_token;
+    uint32_t            lease_id;
 
     /* Expected config revision from caller's snapshot. */
     uint32_t            expected_config_rev;
@@ -330,6 +334,11 @@ bool device_settings_on_notify(const char *device_id,
 
 void device_settings_on_disconnect(const char *device_id);
 
+/* Destructive lifecycle cleanup used when a device is deleted.  Unlike an
+ * ordinary disconnect this discards retained Settings snapshots and any
+ * in-flight operation/transaction state for the device. */
+esp_err_t device_settings_forget(const char *device_id);
+
 void device_settings_on_capability(const char *device_id,
                                    bool supported,
                                    uint16_t schema_revision);
@@ -406,6 +415,13 @@ void ds_tx_reset_for_test(void);
 void device_settings_tx_store_result(const char *device_id,
                                      ds_tx_result_t result,
                                      uint32_t config_revision);
+void device_settings_tx_actor_begin(const char *device_id,
+                                    uint32_t owner_token, uint32_t lease_id);
+void device_settings_tx_actor_command_complete(const char *device_id,
+                                                const device_command_result_t *result);
+void device_settings_tx_actor_abort(const char *device_id);
+bool device_settings_tx_actor_on_disconnect(const char *device_id);
+void device_settings_tx_actor_timeout(const char *device_id);
 
 /* ── Query API ─────────────────────────────────────────────────────── */
 

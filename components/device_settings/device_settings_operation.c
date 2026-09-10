@@ -1,6 +1,7 @@
 #include <string.h>
 
 #include "device_settings.h"
+#include "device_settings_internal.h"
 #include "esp_log.h"
 
 static const char *TAG = "ds_operation";
@@ -59,25 +60,6 @@ static ds_op_record_t *alloc_op(void)
         }
     }
     return NULL;
-}
-
-static void complete_op(ds_op_record_t *op, ds_op_result_t result)
-{
-    if (op == NULL) return;
-    ds_op_completion_fn cb = op->completion;
-    void *ctx = op->context;
-    op->active = false;
-    op->state = DS_OP_IDLE;
-    /* Sync extern arrays. */
-    for (int i = 0; i < DEVICE_SETTINGS_MAX_DEVICES; i++) {
-        if (&s_ops[i] == op) {
-            s_ops_active[i] = false;
-            break;
-        }
-    }
-    if (cb != NULL) {
-        cb(result, ctx);
-    }
 }
 
 /* ── Worker accessor functions ─────────────────────────────────────── */
@@ -216,10 +198,16 @@ esp_err_t device_settings_cancel(const char *device_id)
 
     ds_op_record_t *op = find_op(device_id);
     if (op == NULL) return ESP_ERR_NOT_FOUND;
-
-    complete_op(op, DS_OP_RESULT_INTERNAL);
-    ESP_LOGI(TAG, "[%s] operation cancelled", device_id);
-    return ESP_OK;
+    /* Before the runtime actor starts (notably schema capability setup),
+     * there is no cross-task state to serialize. */
+    if (!device_settings_worker_actor_running()) {
+        int slot = (int)(op - s_ops);
+        s_ops_invoke_completion(slot, DS_OP_RESULT_INTERNAL);
+        return ESP_OK;
+    }
+    ds_event_t event = { .type = DS_EVENT_CANCEL_DEVICE };
+    strlcpy(event.device_id, device_id, sizeof(event.device_id));
+    return ds_events_post(&event) ? ESP_OK : ESP_ERR_NO_MEM;
 }
 
 /* ── Reset (test only) ────────────────────────────────────────────── */

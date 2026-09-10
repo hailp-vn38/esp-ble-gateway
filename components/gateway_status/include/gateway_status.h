@@ -6,6 +6,8 @@
 
 #include "esp_err.h"
 #include "memory_policy.h"
+#include "device_command_service.h"
+#include "device_control_scheduler.h"
 #include "device_schema.h"
 
 // Aggregated gateway snapshot. Single source of truth for
@@ -47,6 +49,11 @@ typedef struct {
     gw_task_memory_metrics_t task_memory_metrics;
     uint32_t ble_notify_queue_high_watermark;
     device_schema_queue_stats_t schema_queue_metrics;
+
+    /* Bounded-control-plane counters since boot.  These are sampled by
+     * /api/status during soak; they are not reset by a client read. */
+    device_control_scheduler_stats_t control_scheduler_metrics;
+    device_command_service_stats_t command_service_metrics;
 } gateway_status_t;
 
 // Fills status with a consistent point-in-time snapshot. Never blocks on

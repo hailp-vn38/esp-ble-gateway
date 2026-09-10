@@ -547,6 +547,8 @@ const deviceSettings = {
             succeeded:       ['text-green-600', 'device_settings.op_succeeded'],
             failed:          ['text-red-600', 'device_settings.op_failed'],
             conflict:        ['text-amber-600', 'device_settings.op_conflict'],
+            cancelled:       ['text-red-600', 'device_settings.op_cancelled'],
+            outcome_unknown: ['text-amber-600', 'device_settings.op_outcome_unknown'],
             unknown:         ['text-gray-600', 'device_settings.op_unknown']
         };
 

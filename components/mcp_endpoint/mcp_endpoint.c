@@ -221,6 +221,15 @@ static void http_responder_release(void *context)
     }
 }
 
+static esp_err_t http_responder_post(void *context, mcp_work_fn work,
+                                     void *work_context)
+{
+    httpd_req_t *request = context;
+    return request != NULL && work != NULL
+               ? httpd_queue_work(request->handle, work, work_context)
+               : ESP_ERR_INVALID_ARG;
+}
+
 static mcp_responder_t make_http_responder(httpd_req_t *request)
 {
     const mcp_responder_t responder = {
@@ -230,6 +239,7 @@ static mcp_responder_t make_http_responder(httpd_req_t *request)
         .is_alive = http_is_alive,
         .clone = http_responder_clone,
         .release = http_responder_release,
+        .post = http_responder_post,
     };
     return responder;
 }

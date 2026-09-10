@@ -45,7 +45,10 @@ typedef struct {
 
 typedef struct {
     device_mgmt_status_t status;
+    bool scheduler_quiesced;
+    /* Compatibility field for the existing REST delete response. */
     bool command_cancel_requested;
+    bool settings_forgotten;
     bool schema_forgotten;
     bool state_forgotten;
     bool ble_peer_forgotten;
@@ -77,10 +80,8 @@ device_mgmt_add_result_t device_management_add(
 device_mgmt_edit_result_t device_management_edit(
     const device_mgmt_edit_request_t *request);
 /*
- * Delete order is command cancel, schema forget, state forget, BLE peer
- * forget, store delete, then lifecycle publish. Schema failure aborts the
- * destructive remainder; BLE/store cleanup failures return DEGRADED with
- * per-step flags describing the resulting state.
+ * Delete blocks and quiesces the scheduler before forgetting settings/schema/
+ * state. A failed purge before store deletion unblocks the surviving device.
  */
 device_mgmt_delete_result_t device_management_delete(const char *device_id);
 

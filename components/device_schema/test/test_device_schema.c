@@ -16,6 +16,17 @@
 
 static void reset_and_init(void)
 {
+    /* Schema test cases register many synthetic devices.  Keep the bounded
+     * device store independent between cases so a late test cannot silently
+     * fail to allocate its record. */
+    device_entry_t entries[DEVICE_STORE_MAX_DEVICES];
+    size_t count = 0;
+    if (device_store_snapshot(entries, DEVICE_STORE_MAX_DEVICES, &count) ==
+        DEVICE_STORE_OK) {
+        for (size_t i = 0; i < count; ++i) {
+            (void)device_store_delete(entries[i].device_id);
+        }
+    }
     device_schema_reset_for_test();
     TEST_ASSERT_EQUAL_INT(ESP_OK, device_schema_init());
 }
@@ -493,21 +504,24 @@ TEST_CASE("feature accessor returns one committed feature with revision guard",
     const char *device_id = "gcf04-ref";
     TEST_ASSERT_EQUAL_INT(ESP_OK, device_store_add(device_id, "GCF04 reference"));
 
-    gw_message_t begin = make_begin(device_id, 9401, 0, 2, 7);
+    gw_message_t begin = make_begin(device_id, 9401, 1, 2, 7);
     TEST_ASSERT_TRUE(device_schema_on_notify(device_id, &begin));
     vTaskDelay(pdMS_TO_TICKS(30));
 
-    gw_message_t feature0 = make_feature_item(device_id, 9401, 0, "light_state",
+    gw_message_t tool = make_tool_item(device_id, 9401, 0, "toggle", 1,
+                                       0x01, 0, 0, 0);
+    TEST_ASSERT_TRUE(device_schema_on_notify(device_id, &tool));
+    gw_message_t feature0 = make_feature_item(device_id, 9401, 1, "light_state",
                                                GW_FEATURE_ON_OFF_LIGHT,
                                                GW_PROP_ON_OFF, "toggle");
-    gw_message_t feature1 = make_feature_item(device_id, 9401, 1, "temperature",
+    gw_message_t feature1 = make_feature_item(device_id, 9401, 2, "temperature",
                                                GW_FEATURE_TEMPERATURE_SENSOR,
                                                GW_PROP_TEMPERATURE, "");
     TEST_ASSERT_TRUE(device_schema_on_notify(device_id, &feature0));
     TEST_ASSERT_TRUE(device_schema_on_notify(device_id, &feature1));
     vTaskDelay(pdMS_TO_TICKS(30));
 
-    gw_message_t end = make_end(device_id, 9401, 0);
+    gw_message_t end = make_end(device_id, 9401, 1);
     TEST_ASSERT_TRUE(device_schema_on_notify(device_id, &end));
     vTaskDelay(pdMS_TO_TICKS(120));
 

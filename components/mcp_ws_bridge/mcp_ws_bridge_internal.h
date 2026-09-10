@@ -18,6 +18,7 @@
 #include "freertos/task.h"
 
 #include "mcp_ws_bridge.h"
+#include "mcp_core.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -35,6 +36,7 @@ typedef enum {
     BRIDGE_EVENT_RELOAD,
     BRIDGE_EVENT_STOP,
     BRIDGE_EVENT_HANDSHAKE_TIMEOUT,
+    BRIDGE_EVENT_MCP_COMPLETION,
 } bridge_event_type_t;
 
 typedef struct {
@@ -46,6 +48,8 @@ typedef struct {
     int error;
     int http_status;
     int close_code;
+    mcp_work_fn completion_work;
+    void *completion_context;
 } bridge_event_t;
 
 /* ── Shared bridge state ────────────────────────────────────────────── */

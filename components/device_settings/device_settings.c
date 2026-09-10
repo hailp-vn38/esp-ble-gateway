@@ -403,6 +403,37 @@ void device_settings_on_disconnect(const char *device_id)
     device_settings_worker_on_disconnect(device_id);
 }
 
+esp_err_t device_settings_forget(const char *device_id)
+{
+    if (device_id == NULL || device_id[0] == '\0') return ESP_ERR_INVALID_ARG;
+
+    /* The actor invalidates generation and scheduler ownership before the
+     * immutable snapshots below are discarded. */
+    device_settings_on_disconnect(device_id);
+    (void)device_settings_cancel(device_id);
+    (void)device_settings_tx_cancel(device_id);
+
+    if (!lock()) return ESP_ERR_TIMEOUT;
+    ds_device_record_t *rec = device_settings_find_record(device_id);
+    if (rec != NULL) {
+        ds_schema_t *schema = rec->schema;
+        ds_values_t *values = rec->values;
+        memset(rec, 0, sizeof(*rec));
+        unlock();
+        if (schema != NULL) ds_settings_ref_release(schema);
+        if (values != NULL) ds_values_ref_release(values);
+        return ESP_OK;
+    }
+    unlock();
+
+    /* Forget is a lifecycle purge operation, not a lookup.  A device that
+     * never advertised Settings legitimately has no runtime record, and its
+     * already-empty Settings state satisfies the postcondition.  Keep this
+     * idempotent so device deletion can continue with schema/state/BLE/store
+     * cleanup for devices without Settings support. */
+    return ESP_OK;
+}
+
 /* ── Reconciliation ───────────────────────────────────────────────────
  * Called after values are refreshed following a reconnect when a
  * device has a pending reconciliation.  Compares config_rev against

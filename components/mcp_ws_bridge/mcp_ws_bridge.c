@@ -259,6 +259,11 @@ static void bridge_task(void *arg)
         case BRIDGE_EVENT_TX_MESSAGE:
             mcp_ws_handle_tx_message(&event);
             break;
+        case BRIDGE_EVENT_MCP_COMPLETION:
+            if (event.completion_work != NULL) {
+                event.completion_work(event.completion_context);
+            }
+            break;
         case BRIDGE_EVENT_RELOAD:
             bridge_stop_timer(s_bridge.reconnect_timer);
             bridge_destroy_client();

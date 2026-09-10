@@ -14,9 +14,12 @@ typedef struct {
                                     ble_central_device_status_t *);
     int (*forget_peer)(const char *, const uint8_t *, uint8_t, bool);
     esp_err_t (*schema_get)(const char *, device_schema_snapshot_t *);
+    esp_err_t (*settings_forget)(const char *);
     esp_err_t (*schema_forget)(const char *);
     void (*state_forget)(const char *);
-    esp_err_t (*cancel_commands)(const char *);
+    esp_err_t (*scheduler_block)(const char *);
+    esp_err_t (*scheduler_unblock)(const char *);
+    esp_err_t (*scheduler_quiesce)(const char *, uint32_t timeout_ms);
     device_store_result_t (*store_delete)(const char *);
     void (*publish)(gateway_event_t *);
 } device_management_hooks_t;

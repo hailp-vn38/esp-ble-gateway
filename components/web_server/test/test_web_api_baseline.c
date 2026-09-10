@@ -4,6 +4,7 @@
 #include "lwip/sockets.h"
 
 #include "device_command_service.h"
+#include "device_control_scheduler.h"
 #include "device_management_internal.h"
 #include "device_store.h"
 #include "freertos/FreeRTOS.h"
@@ -73,6 +74,13 @@ static esp_err_t management_ok(const char *device_id)
     return ESP_OK;
 }
 
+static esp_err_t management_quiesce_ok(const char *device_id, uint32_t timeout_ms)
+{
+    (void)device_id;
+    (void)timeout_ms;
+    return ESP_OK;
+}
+
 static int management_connect(const char *device_id, const uint8_t *address,
                               uint8_t address_type)
 {
@@ -106,7 +114,10 @@ static void install_management_hooks(void)
         .forget_peer = management_forget_peer,
         .schema_get = management_schema_get,
         .schema_forget = management_ok,
-        .cancel_commands = management_ok,
+        .settings_forget = management_ok,
+        .scheduler_block = management_ok,
+        .scheduler_unblock = management_ok,
+        .scheduler_quiesce = management_quiesce_ok,
         .publish = management_publish,
     };
     s_forget_peer_ok = true;
@@ -174,6 +185,7 @@ static httpd_handle_t start_api_server(void)
      * calls real BLE central functions during tests. */
     install_command_mocks();
     (void)device_command_service_init();
+    TEST_ASSERT_EQUAL(ESP_OK, device_control_scheduler_init());
 
     httpd_config_t config = HTTPD_DEFAULT_CONFIG();
     config.server_port = BASELINE_PORT;
@@ -182,6 +194,7 @@ static httpd_handle_t start_api_server(void)
     TEST_ASSERT_EQUAL(ESP_OK, httpd_start(&server, &config));
     TEST_ASSERT_EQUAL(ESP_OK, web_device_api_register(server));
     TEST_ASSERT_EQUAL(ESP_OK, web_command_api_register(server));
+    TEST_ASSERT_EQUAL(ESP_OK, web_system_api_register_gateway(server));
     return server;
 }
 
@@ -189,6 +202,7 @@ static void stop_api_server(httpd_handle_t server)
 {
     TEST_ASSERT_EQUAL(ESP_OK, httpd_stop(server));
     vTaskDelay(pdMS_TO_TICKS(100));
+    device_control_scheduler_deinit();
     device_command_service_deinit();
     device_command_service_set_hooks(NULL);
     device_management_set_hooks(NULL);
@@ -226,6 +240,22 @@ TEST_CASE("Web command baseline rejects missing typed command fields",
     TEST_ASSERT_TRUE(request_api("POST", "/api/command", "{}", response));
     TEST_ASSERT_NOT_NULL(strstr(response, "HTTP/1.1 400"));
     TEST_ASSERT_NOT_NULL(strstr(response, "invalid_request"));
+    stop_api_server(server);
+}
+
+TEST_CASE("Gateway status exposes control-plane soak counters",
+          "[web_server][gcf08]")
+{
+    httpd_handle_t server = start_api_server();
+    char response[RESPONSE_LEN];
+
+    TEST_ASSERT_TRUE(request_api("GET", "/api/status", NULL, response));
+    TEST_ASSERT_NOT_NULL(strstr(response, "HTTP/1.1 200"));
+    TEST_ASSERT_NOT_NULL(strstr(response, "\"control_plane\":"));
+    TEST_ASSERT_NOT_NULL(strstr(response, "\"scheduler\":"));
+    TEST_ASSERT_NOT_NULL(strstr(response, "\"urgent_queue_full\":"));
+    TEST_ASSERT_NOT_NULL(strstr(response, "\"completion_mailbox_conflict\":"));
+
     stop_api_server(server);
 }
 
@@ -281,6 +311,8 @@ TEST_CASE("Web device typed CRUD preserves inventory contract",
     TEST_ASSERT_TRUE(request_api(
         "DELETE", "/api/devices?device_id=web-a", NULL, response));
     TEST_ASSERT_NOT_NULL(strstr(response, "HTTP/1.1 200"));
+    TEST_ASSERT_NOT_NULL(strstr(response, "\"scheduler_quiesced\":true"));
+    TEST_ASSERT_NOT_NULL(strstr(response, "\"settings_forgotten\":true"));
     TEST_ASSERT_NOT_NULL(strstr(response, "\"store_deleted\":true"));
 
     TEST_ASSERT_TRUE(request_api(
@@ -309,7 +341,7 @@ TEST_CASE("Web device delete exposes degraded typed cleanup",
     stop_api_server(server);
 }
 
-/* ── Phase 5: Web /api/command on device_command_service only ──────── */
+/* ── GCF-06: Web /api/command through control scheduler ───────────── */
 
 TEST_CASE("Web command rejects int_value that is not an integer",
           "[web_server][command][phase5]")
@@ -451,19 +483,51 @@ TEST_CASE("Web command active contexts tracking",
     stop_api_server(server);
 }
 
-TEST_CASE("Web command does not use legacy dispatcher or executor",
-          "[web_server][command][phase5]")
+TEST_CASE("Web command scheduler reject releases async context",
+          "[web_server][command][gcf06]")
 {
-    /* This test verifies at compile/link time that web_command_api.c
-     * links only against device_command_service, not command_executor
-     * or command_dispatcher.  The grep gate in the plan doc covers
-     * source-level verification; this test confirms the binary has
-     * no legacy symbols by checking that the handler path works
-     * end-to-end with only the service API. */
     httpd_handle_t server = start_api_server();
     char response[RESPONSE_LEN];
 
-    /* Valid command goes through device_command_service only */
+    /* A synchronous scheduler reject leaves ownership with the HTTP caller. */
+    device_control_scheduler_deinit();
+    TEST_ASSERT_TRUE(request_api("POST", "/api/command",
+        "{\"device_id\":\"d1\",\"command\":\"set_led\","
+        "\"bool_value\":true}", response));
+    TEST_ASSERT_NOT_NULL(strstr(response, "HTTP/1.1 503"));
+    TEST_ASSERT_EQUAL_UINT32(0, web_command_active_contexts());
+    TEST_ASSERT_EQUAL(ESP_OK, device_control_scheduler_init());
+
+    stop_api_server(server);
+}
+
+TEST_CASE("Web command queue deadline completes context once",
+          "[web_server][command][gcf06]")
+{
+    httpd_handle_t server = start_api_server();
+    char response[RESPONSE_LEN];
+
+    TEST_ASSERT_EQUAL(ESP_OK, device_control_scheduler_block_device("d1"));
+    TEST_ASSERT_TRUE(request_api("POST", "/api/command",
+        "{\"device_id\":\"d1\",\"command\":\"set_led\","
+        "\"bool_value\":true}", response));
+    TEST_ASSERT_NOT_NULL(strstr(response, "HTTP/1.1 504"));
+    TEST_ASSERT_NOT_NULL(strstr(response, "queue_deadline_exceeded"));
+    TEST_ASSERT_EQUAL_UINT32(0, web_command_active_contexts());
+    TEST_ASSERT_EQUAL(ESP_OK, device_control_scheduler_unblock_device("d1"));
+
+    stop_api_server(server);
+}
+
+TEST_CASE("Web command dispatches through scheduler-owned lifecycle",
+          "[web_server][command][gcf06]")
+{
+    /* The source grep gate proves DCS submit has only the scheduler caller.
+     * This exercises the HTTP async lifecycle with a scheduler worker. */
+    httpd_handle_t server = start_api_server();
+    char response[RESPONSE_LEN];
+
+    /* Valid command is accepted by the scheduler. */
     TEST_ASSERT_TRUE(request_api("POST", "/api/command",
         "{\"device_id\":\"d1\",\"command\":\"set_led\","
         "\"bool_value\":true}",
