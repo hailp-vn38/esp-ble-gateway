@@ -503,6 +503,11 @@ TEST_CASE("feature accessor returns one committed feature with revision guard",
     reset_and_init();
     const char *device_id = "gcf04-ref";
     TEST_ASSERT_EQUAL_INT(ESP_OK, device_store_add(device_id, "GCF04 reference"));
+    device_schema_set_submitter(test_submitter);
+    s_submit_called = false;
+    TEST_ASSERT_EQUAL_INT(ESP_OK, device_schema_on_ready(device_id));
+    vTaskDelay(pdMS_TO_TICKS(200));
+    TEST_ASSERT_TRUE(s_submit_called);
 
     gw_message_t begin = make_begin(device_id, 9401, 1, 2, 7);
     TEST_ASSERT_TRUE(device_schema_on_notify(device_id, &begin));
@@ -523,6 +528,8 @@ TEST_CASE("feature accessor returns one committed feature with revision guard",
 
     gw_message_t end = make_end(device_id, 9401, 1);
     TEST_ASSERT_TRUE(device_schema_on_notify(device_id, &end));
+    vTaskDelay(pdMS_TO_TICKS(120));
+    complete_discovery();
     vTaskDelay(pdMS_TO_TICKS(120));
 
     device_schema_feature_ref_t ref = {0};

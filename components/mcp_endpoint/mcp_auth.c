@@ -229,6 +229,7 @@ static mcp_gate_status_t validate_accept(httpd_req_t *req,
                                          const mcp_transport_t *io)
 {
     char *accept = io->get_header(req, "Accept");
+    const bool has_accept = accept != NULL;
     mcp_accept_state_t state;
     parse_accept_header(accept, &state);
     free(accept);
@@ -236,7 +237,7 @@ static mcp_gate_status_t validate_accept(httpd_req_t *req,
     // Default mode: accept if client can receive JSON (or no Accept header)
     if (!CONFIG_MCP_STRICT_ACCEPT_HEADER) {
         // Missing Accept or accepts JSON -> OK
-        if (state.accepts_json || (!state.accepts_json && !state.accepts_event_stream)) {
+        if (!has_accept || state.accepts_json) {
             return MCP_GATE_OK;
         }
         // Accept present but doesn't include JSON -> 406

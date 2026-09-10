@@ -307,6 +307,7 @@ TEST_CASE("device_settings_init and deinit work",
 TEST_CASE("device_settings reset_for_test cleans up",
           "[device_settings][g1]")
 {
+    device_settings_deinit();
     device_settings_reset_for_test();
     TEST_ASSERT_EQUAL(ESP_OK, device_settings_init());
 
@@ -334,6 +335,7 @@ TEST_CASE("device_settings reset_for_test cleans up",
 TEST_CASE("device_settings_forget is idempotent without a settings record",
           "[device_settings][gcf07]")
 {
+    device_settings_deinit();
     device_settings_reset_for_test();
     TEST_ASSERT_EQUAL(ESP_OK, device_settings_init());
 

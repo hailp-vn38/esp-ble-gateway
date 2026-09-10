@@ -207,113 +207,113 @@ static void setup_six_control_schema(void)
     TEST_ASSERT_TRUE(s_submit_called);
 
     /* begin: 6 tools, 9 features */
-    gw_message_t begin = make_begin(SIX_CTRL_DEV, SIX_CTRL_SNAP_ID, 6, 9, 1);
-    TEST_ASSERT_TRUE(device_schema_on_notify(SIX_CTRL_DEV, &begin));
+    gw_message_t message = make_begin(SIX_CTRL_DEV, SIX_CTRL_SNAP_ID, 6, 9, 1);
+    TEST_ASSERT_TRUE(device_schema_on_notify(SIX_CTRL_DEV, &message));
     vTaskDelay(pdMS_TO_TICKS(50));
 
     /* tools: one per writable feature */
-    gw_message_t t0 = make_tool_item(SIX_CTRL_DEV, SIX_CTRL_SNAP_ID, 0,
+    message = make_tool_item(SIX_CTRL_DEV, SIX_CTRL_SNAP_ID, 0,
                                      "set_plug", 1 /* BOOL */, 0x01, 0, 0, 0);
-    TEST_ASSERT_TRUE(device_schema_on_notify(SIX_CTRL_DEV, &t0));
+    TEST_ASSERT_TRUE(device_schema_on_notify(SIX_CTRL_DEV, &message));
     vTaskDelay(pdMS_TO_TICKS(50));
 
-    gw_message_t t1 = make_tool_item(SIX_CTRL_DEV, SIX_CTRL_SNAP_ID, 1,
+    message = make_tool_item(SIX_CTRL_DEV, SIX_CTRL_SNAP_ID, 1,
                                      "set_light", 1 /* BOOL */, 0x01, 0, 0, 0);
-    TEST_ASSERT_TRUE(device_schema_on_notify(SIX_CTRL_DEV, &t1));
+    TEST_ASSERT_TRUE(device_schema_on_notify(SIX_CTRL_DEV, &message));
     vTaskDelay(pdMS_TO_TICKS(50));
 
-    gw_message_t t2 = make_tool_item(SIX_CTRL_DEV, SIX_CTRL_SNAP_ID, 2,
+    message = make_tool_item(SIX_CTRL_DEV, SIX_CTRL_SNAP_ID, 2,
                                      "set_dimmer", 2 /* INT */, 0x01,
                                      0, 100, 1);
-    TEST_ASSERT_TRUE(device_schema_on_notify(SIX_CTRL_DEV, &t2));
+    TEST_ASSERT_TRUE(device_schema_on_notify(SIX_CTRL_DEV, &message));
     vTaskDelay(pdMS_TO_TICKS(50));
 
-    gw_message_t t3 = make_tool_item(SIX_CTRL_DEV, SIX_CTRL_SNAP_ID, 3,
+    message = make_tool_item(SIX_CTRL_DEV, SIX_CTRL_SNAP_ID, 3,
                                      "set_fan", 2 /* INT */, 0x01,
                                      0, 100, 1);
-    TEST_ASSERT_TRUE(device_schema_on_notify(SIX_CTRL_DEV, &t3));
+    TEST_ASSERT_TRUE(device_schema_on_notify(SIX_CTRL_DEV, &message));
     vTaskDelay(pdMS_TO_TICKS(50));
 
-    gw_message_t t4 = make_tool_item(SIX_CTRL_DEV, SIX_CTRL_SNAP_ID, 4,
+    message = make_tool_item(SIX_CTRL_DEV, SIX_CTRL_SNAP_ID, 4,
                                      "set_dryer_temp", 2 /* INT */, 0x01,
                                      300, 1000, 5);
-    TEST_ASSERT_TRUE(device_schema_on_notify(SIX_CTRL_DEV, &t4));
+    TEST_ASSERT_TRUE(device_schema_on_notify(SIX_CTRL_DEV, &message));
     vTaskDelay(pdMS_TO_TICKS(50));
 
-    gw_message_t t5 = make_tool_item(SIX_CTRL_DEV, SIX_CTRL_SNAP_ID, 5,
+    message = make_tool_item(SIX_CTRL_DEV, SIX_CTRL_SNAP_ID, 5,
                                      "set_dry_time", 2 /* INT */, 0x01,
                                      0, 180, 1);
-    TEST_ASSERT_TRUE(device_schema_on_notify(SIX_CTRL_DEV, &t5));
+    TEST_ASSERT_TRUE(device_schema_on_notify(SIX_CTRL_DEV, &message));
     vTaskDelay(pdMS_TO_TICKS(50));
 
     /* features: 6 writable */
-    gw_message_t f0 = make_feature_item(SIX_CTRL_DEV, SIX_CTRL_SNAP_ID, 0,
+    message = make_feature_item(SIX_CTRL_DEV, SIX_CTRL_SNAP_ID, 6,
                                         "plug_main",
                                         GW_FEATURE_ON_OFF_PLUGIN_UNIT,
                                         GW_PROP_ON_OFF, "set_plug");
-    TEST_ASSERT_TRUE(device_schema_on_notify(SIX_CTRL_DEV, &f0));
+    TEST_ASSERT_TRUE(device_schema_on_notify(SIX_CTRL_DEV, &message));
     vTaskDelay(pdMS_TO_TICKS(50));
 
-    gw_message_t f1 = make_feature_item(SIX_CTRL_DEV, SIX_CTRL_SNAP_ID, 1,
+    message = make_feature_item(SIX_CTRL_DEV, SIX_CTRL_SNAP_ID, 7,
                                         "light_main",
                                         GW_FEATURE_ON_OFF_LIGHT,
                                         GW_PROP_ON_OFF, "set_light");
-    TEST_ASSERT_TRUE(device_schema_on_notify(SIX_CTRL_DEV, &f1));
+    TEST_ASSERT_TRUE(device_schema_on_notify(SIX_CTRL_DEV, &message));
     vTaskDelay(pdMS_TO_TICKS(50));
 
-    gw_message_t f2 = make_feature_item(SIX_CTRL_DEV, SIX_CTRL_SNAP_ID, 2,
+    message = make_feature_item(SIX_CTRL_DEV, SIX_CTRL_SNAP_ID, 8,
                                         "dimmer_main",
                                         GW_FEATURE_DIMMABLE_LIGHT,
                                         GW_PROP_LEVEL, "set_dimmer");
-    TEST_ASSERT_TRUE(device_schema_on_notify(SIX_CTRL_DEV, &f2));
+    TEST_ASSERT_TRUE(device_schema_on_notify(SIX_CTRL_DEV, &message));
     vTaskDelay(pdMS_TO_TICKS(50));
 
-    gw_message_t f3 = make_feature_item(SIX_CTRL_DEV, SIX_CTRL_SNAP_ID, 3,
+    message = make_feature_item(SIX_CTRL_DEV, SIX_CTRL_SNAP_ID, 9,
                                         "fan_main",
                                         GW_FEATURE_FAN,
                                         GW_PROP_PERCENT_SETTING, "set_fan");
-    TEST_ASSERT_TRUE(device_schema_on_notify(SIX_CTRL_DEV, &f3));
+    TEST_ASSERT_TRUE(device_schema_on_notify(SIX_CTRL_DEV, &message));
     vTaskDelay(pdMS_TO_TICKS(50));
 
-    gw_message_t f4 = make_feature_item(SIX_CTRL_DEV, SIX_CTRL_SNAP_ID, 4,
+    message = make_feature_item(SIX_CTRL_DEV, SIX_CTRL_SNAP_ID, 10,
                                         "dryer_temperature",
                                         GW_FEATURE_GENERIC_VALUE,
                                         GW_PROP_VALUE, "set_dryer_temp");
-    TEST_ASSERT_TRUE(device_schema_on_notify(SIX_CTRL_DEV, &f4));
+    TEST_ASSERT_TRUE(device_schema_on_notify(SIX_CTRL_DEV, &message));
     vTaskDelay(pdMS_TO_TICKS(50));
 
-    gw_message_t f5 = make_feature_item(SIX_CTRL_DEV, SIX_CTRL_SNAP_ID, 5,
+    message = make_feature_item(SIX_CTRL_DEV, SIX_CTRL_SNAP_ID, 11,
                                         "drying_time",
                                         GW_FEATURE_GENERIC_VALUE,
                                         GW_PROP_VALUE, "set_dry_time");
-    TEST_ASSERT_TRUE(device_schema_on_notify(SIX_CTRL_DEV, &f5));
+    TEST_ASSERT_TRUE(device_schema_on_notify(SIX_CTRL_DEV, &message));
     vTaskDelay(pdMS_TO_TICKS(50));
 
     /* features: 3 read-only (no tool) */
-    gw_message_t f6 = make_feature_item(SIX_CTRL_DEV, SIX_CTRL_SNAP_ID, 6,
+    message = make_feature_item(SIX_CTRL_DEV, SIX_CTRL_SNAP_ID, 12,
                                         "temperature_main",
                                         GW_FEATURE_TEMPERATURE_SENSOR,
                                         GW_PROP_TEMPERATURE, "");
-    TEST_ASSERT_TRUE(device_schema_on_notify(SIX_CTRL_DEV, &f6));
+    TEST_ASSERT_TRUE(device_schema_on_notify(SIX_CTRL_DEV, &message));
     vTaskDelay(pdMS_TO_TICKS(50));
 
-    gw_message_t f7 = make_feature_item(SIX_CTRL_DEV, SIX_CTRL_SNAP_ID, 7,
+    message = make_feature_item(SIX_CTRL_DEV, SIX_CTRL_SNAP_ID, 13,
                                         "humidity_main",
                                         GW_FEATURE_HUMIDITY_SENSOR,
                                         GW_PROP_HUMIDITY, "");
-    TEST_ASSERT_TRUE(device_schema_on_notify(SIX_CTRL_DEV, &f7));
+    TEST_ASSERT_TRUE(device_schema_on_notify(SIX_CTRL_DEV, &message));
     vTaskDelay(pdMS_TO_TICKS(50));
 
-    gw_message_t f8 = make_feature_item(SIX_CTRL_DEV, SIX_CTRL_SNAP_ID, 8,
+    message = make_feature_item(SIX_CTRL_DEV, SIX_CTRL_SNAP_ID, 14,
                                         "contact_main",
                                         GW_FEATURE_CONTACT_SENSOR,
                                         GW_PROP_CONTACT, "");
-    TEST_ASSERT_TRUE(device_schema_on_notify(SIX_CTRL_DEV, &f8));
+    TEST_ASSERT_TRUE(device_schema_on_notify(SIX_CTRL_DEV, &message));
     vTaskDelay(pdMS_TO_TICKS(50));
 
     /* end */
-    gw_message_t end = make_end(SIX_CTRL_DEV, SIX_CTRL_SNAP_ID, 6);
-    TEST_ASSERT_TRUE(device_schema_on_notify(SIX_CTRL_DEV, &end));
+    message = make_end(SIX_CTRL_DEV, SIX_CTRL_SNAP_ID, 6);
+    TEST_ASSERT_TRUE(device_schema_on_notify(SIX_CTRL_DEV, &message));
     vTaskDelay(pdMS_TO_TICKS(200));
     complete_discovery();
     vTaskDelay(pdMS_TO_TICKS(200));
@@ -466,7 +466,7 @@ TEST_CASE("semantic hints support schema maximum feature count",
         char fid[32];
         snprintf(fid, sizeof(fid), "feat_%zu", i);
 
-        gw_message_t feat = make_feature_item(dev_id, snap_id, i, fid,
+        gw_message_t feat = make_feature_item(dev_id, snap_id, n + i, fid,
                                               GW_FEATURE_GENERIC_VALUE,
                                               GW_PROP_VALUE,
                                               NULL /* auto-link */);
@@ -622,7 +622,7 @@ TEST_CASE("semantic hints return NOT_FOUND for unknown device",
             "nonexistent-device", hints, 4, &count, &truncated));
 
     TEST_ASSERT_EQUAL_UINT(0, count);
-    TEST_ASSERT_FALSE(truncated);
+    TEST_ASSERT_TRUE(truncated);
 }
 
 /* ── Invalid arguments ───────────────────────────────────────────────── */

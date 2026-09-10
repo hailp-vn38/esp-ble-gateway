@@ -129,7 +129,7 @@ import sys
 import time
 
 port, baud, timeout, log_path = sys.argv[1], int(sys.argv[2]), float(sys.argv[3]), sys.argv[4]
-ser = serial.Serial(port, baud, timeout=1)
+ser = serial.Serial(port, baud, timeout=1, write_timeout=1)
 time.sleep(0.3)
 ser.reset_input_buffer()
 
@@ -164,8 +164,11 @@ try:
         else:
             # No data for 3s — device might be at Unity menu, send Enter
             if time.monotonic() - last_output_at > 3.0:
-                ser.write(b'\n')
-                ser.flush()
+                try:
+                    ser.write(b'\n')
+                    ser.flush()
+                except serial.SerialTimeoutException:
+                    print("[auto] Enter write timed out", flush=True)
                 last_output_at = time.monotonic()
                 print("[auto] Sent Enter (idle 3s)", flush=True)
         if summary_seen_at is not None and time.monotonic() - summary_seen_at >= 2.0:
